@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QPalette>
 #include <QString>
 
 // Design tokens from the "Anchor" handoff (notebook section 12).
@@ -148,7 +149,13 @@ inline constexpr int kColumnHeader = 10;
 inline constexpr int kMeta = 10;          // 9.5 rounded, mono
 }  // namespace type
 
-// Application-wide stylesheet built from the tokens above.
+// Application palette built from the tokens above. Preferred over a blanket
+// `QWidget { background: ... }` stylesheet rule, which propagates into every
+// subclass and stops custom-painted widgets from drawing their own chrome.
+QPalette palette();
+
+// Stylesheet for the widget classes the palette cannot express. Deliberately
+// scoped to named classes only.
 QString styleSheet();
 
 }  // namespace comp::ui::theme

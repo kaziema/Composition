@@ -1,6 +1,23 @@
 # Internal notebook — not for the repo
 NOTEBOOK.md
 
+# --- Open-core boundary (decision D6) ----------------------------------------
+# The delivery module is proprietary and never enters the public repo.
+# Its public interface (src/delivery/include) IS tracked so the open build
+# compiles and links against a stub; only the implementation is withheld.
+src/delivery/private/
+
+# First-party preset packs and their assets are commercial content, not code.
+content/packs/
+assets/packs/
+
+# Signing keys, license material, release credentials.
+secrets/
+private/
+*.pem
+*.p12
+*.mobileprovision
+
 # Build
 build/
 out/

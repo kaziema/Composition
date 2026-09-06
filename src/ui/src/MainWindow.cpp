@@ -228,10 +228,6 @@ QWidget* MainWindow::makePlaceholder(const QString& note) {
     layout->addWidget(label);
     layout->addStretch();
 
-    page->setAutoFillBackground(true);
-    QPalette pp = page->palette();
-    pp.setColor(QPalette::Window, kPanelBody);
-    page->setPalette(pp);
     return page;
 }
 

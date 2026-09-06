@@ -8,6 +8,7 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName(QStringLiteral("Composition"));
     QApplication::setOrganizationName(QStringLiteral("Composition"));
     QApplication::setStyle(QStringLiteral("Fusion"));
+    app.setPalette(comp::ui::theme::palette());
     app.setStyleSheet(comp::ui::theme::styleSheet());
 
     comp::ui::MainWindow window;

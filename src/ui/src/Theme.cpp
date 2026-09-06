@@ -38,20 +38,45 @@ QString monoFontFamily() {
     return family;
 }
 
-QString styleSheet() {
-    return QStringLiteral(R"(
-QWidget {
-    background: %1;
-    color: %2;
-    font-family: "%3";
-    font-size: %4px;
+QPalette palette() {
+    QPalette pal;
+
+    pal.setColor(QPalette::Window, kPanelBody);
+    pal.setColor(QPalette::WindowText, kTextBody);
+    pal.setColor(QPalette::Base, kFieldBg);
+    pal.setColor(QPalette::AlternateBase, kSubToolbar);
+    pal.setColor(QPalette::Text, kTextBody);
+    pal.setColor(QPalette::PlaceholderText, kTextFaint);
+
+    pal.setColor(QPalette::Button, kButtonBg);
+    pal.setColor(QPalette::ButtonText, kButtonText);
+    pal.setColor(QPalette::BrightText, kTextPrimary);
+
+    pal.setColor(QPalette::Highlight, kRowSelected);
+    pal.setColor(QPalette::HighlightedText, kTextPrimary);
+
+    pal.setColor(QPalette::ToolTipBase, kSubToolbar);
+    pal.setColor(QPalette::ToolTipText, kTextPrimary);
+
+    pal.setColor(QPalette::Light, kPanelBorder);
+    pal.setColor(QPalette::Mid, kPanelBorder);
+    pal.setColor(QPalette::Dark, kDivider);
+    pal.setColor(QPalette::Shadow, kDivider);
+
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, kTextFaint);
+    pal.setColor(QPalette::Disabled, QPalette::Text, kTextFaint);
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, kTextFaint);
+
+    return pal;
 }
 
-QMainWindow, QMainWindow > QWidget { background: %5; }
-
+QString styleSheet() {
+    // Scoped to named classes. No blanket QWidget rule: it would paint over the
+    // custom widgets that draw their own panel borders and tab strips.
+    return QStringLiteral(R"(
 QMenuBar {
-    background: %6;
-    color: %7;
+    background: %1;
+    color: %2;
     padding: 0px 4px;
 }
 QMenuBar::item {
@@ -59,55 +84,54 @@ QMenuBar::item {
     border-radius: 3px;
     background: transparent;
 }
-QMenuBar::item:selected, QMenuBar::item:pressed { background: %8; color: %2; }
+QMenuBar::item:selected, QMenuBar::item:pressed { background: %3; color: %4; }
 
 QMenu {
-    background: %6;
-    color: %7;
-    border: 1px solid %9;
+    background: %1;
+    color: %2;
+    border: 1px solid %5;
     padding: 3px;
 }
 QMenu::item { padding: 4px 22px 4px 12px; border-radius: 2px; }
-QMenu::item:selected { background: %8; color: %2; }
-QMenu::separator { height: 1px; background: %9; margin: 3px 6px; }
+QMenu::item:selected { background: %3; color: %4; }
+QMenu::item:disabled { color: %6; }
+QMenu::separator { height: 1px; background: %5; margin: 3px 6px; }
 
 QStatusBar {
-    background: %10;
-    color: %11;
-    border-top: 1px solid %9;
+    background: %7;
+    color: %6;
+    border-top: 1px solid %5;
 }
 QStatusBar::item { border: none; }
 
 QToolTip {
-    background: %10;
-    color: %2;
-    border: 1px solid %9;
+    background: %7;
+    color: %4;
+    border: 1px solid %5;
     padding: 3px 6px;
 }
 
-QSplitter::handle { background: %5; }
-QSplitter::handle:horizontal { width: %12px; }
-QSplitter::handle:vertical { height: %12px; }
+QSplitter::handle { background: %8; }
+QSplitter::handle:horizontal { width: %9px; }
+QSplitter::handle:vertical { height: %9px; }
 
-QScrollBar:vertical { background: %1; width: 10px; margin: 0; }
-QScrollBar:horizontal { background: %1; height: 10px; margin: 0; }
+QScrollBar:vertical { background: %10; width: 10px; margin: 0; }
+QScrollBar:horizontal { background: %10; height: 10px; margin: 0; }
 QScrollBar::handle { background: #3a3a3a; min-height: 24px; min-width: 24px; }
 QScrollBar::handle:hover { background: #4a4a4a; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 )")
-        .arg(hex(kPanelBody))            // 1
-        .arg(hex(kTextBody))             // 2
-        .arg(uiFontFamily())             // 3
-        .arg(type::kTabLabel)            // 4
-        .arg(hex(kGutter))               // 5
-        .arg(hex(kMenuBar))              // 6
-        .arg(hex(kMenuLabel))            // 7
-        .arg(hex(kMenuActive))           // 8
-        .arg(hex(kDivider))              // 9
-        .arg(hex(kSubToolbar))           // 10
-        .arg(hex(kTextDim))              // 11
-        .arg(metrics::kGutter);          // 12
+        .arg(hex(kMenuBar))       // 1
+        .arg(hex(kMenuLabel))     // 2
+        .arg(hex(kMenuActive))    // 3
+        .arg(hex(kTextPrimary))   // 4
+        .arg(hex(kDivider))       // 5
+        .arg(hex(kTextDim))       // 6
+        .arg(hex(kSubToolbar))    // 7
+        .arg(hex(kGutter))        // 8
+        .arg(metrics::kGutter)    // 9
+        .arg(hex(kPanelBody));    // 10
 }
 
 }  // namespace comp::ui::theme

@@ -129,8 +129,11 @@ private:
 // --- PanelFrame --------------------------------------------------------------
 
 PanelFrame::PanelFrame(const QStringList& tabs, QWidget* parent) : QWidget(parent) {
+    // 1px inset so the panel border painted in paintEvent is never covered by
+    // the tab strip or the page content. Depth in this design comes entirely from
+    // 1px borders and value steps, so the border has to actually be visible.
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(1, 1, 1, 1);
     layout->setSpacing(0);
 
     strip_ = new TabStrip(tabs, this);
@@ -143,11 +146,13 @@ PanelFrame::PanelFrame(const QStringList& tabs, QWidget* parent) : QWidget(paren
         stack_->setCurrentIndex(index);
         emit currentChanged(index);
     };
+}
 
-    setAutoFillBackground(true);
-    QPalette pal = palette();
-    pal.setColor(QPalette::Window, kPanelBody);
-    setPalette(pal);
+void PanelFrame::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), kPanelBody);
+    p.setPen(kPanelBorder);
+    p.drawRect(rect().adjusted(0, 0, -1, -1));
 }
 
 void PanelFrame::addPage(QWidget* page) { stack_->addWidget(page); }

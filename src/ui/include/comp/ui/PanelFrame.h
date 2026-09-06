@@ -26,6 +26,9 @@ public:
 signals:
     void currentChanged(int index);
 
+protected:
+    void paintEvent(QPaintEvent*) override;
+
 private:
     class TabStrip;
 
