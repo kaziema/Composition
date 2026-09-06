@@ -287,7 +287,13 @@ QWidget* MainWindow::buildBody() {
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);
     outerSplit_->setStretchFactor(0, 1);
-    outerSplit_->setSizes({428, 280});
+
+    // The design allots 280px of *tracks*. The panel also carries a 26px tab strip and
+    // a 26px sub-toolbar, so it needs 332 for the timeline itself to get its 280.
+    // Sizing this to 280 was clipping the bottom layer on first launch.
+    constexpr int kTimelineChrome = metrics::kTabStripH + metrics::kSubToolbarH;
+    constexpr int kTimelineTracks = 280;
+    outerSplit_->setSizes({428, kTimelineTracks + kTimelineChrome});
 
     outerSplit_->setAutoFillBackground(true);
     QPalette pal = outerSplit_->palette();

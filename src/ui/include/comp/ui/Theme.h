@@ -47,6 +47,12 @@ inline const QColor kPrimaryText{"#ffffff"};
 inline const QColor kToggleActiveBg{"#4a4a4a"};
 inline const QColor kToggleActiveText{"#f0f0f0"};
 
+// Scrollbars are not in the handoff. Track is darker than the panel so it reads as a
+// groove rather than a border, and the handle is light enough to look like a control.
+inline const QColor kScrollTrack{"#161616"};
+inline const QColor kScrollHandle{"#4a4a4a"};
+inline const QColor kScrollHandleHover{"#5f5f5f"};
+
 // --- Text -------------------------------------------------------------------
 inline const QColor kTextPrimary{"#e5e5e5"};
 inline const QColor kTextBody{"#d5d5d5"};
@@ -125,6 +131,7 @@ inline constexpr int kToolButtonW = 24;
 inline constexpr int kToolButtonH = 22;
 inline constexpr int kLayerBarH = 15;
 inline constexpr int kKeyframeSize = 8;
+inline constexpr int kScrollBarW = 12;
 
 // "All UI transitions should be effectively instant. This is a dense pro tool."
 inline constexpr int kMaxTransitionMs = 80;

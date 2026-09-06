@@ -115,10 +115,25 @@ QSplitter::handle { background: %8; }
 QSplitter::handle:horizontal { width: %9px; }
 QSplitter::handle:vertical { height: %9px; }
 
-QScrollBar:vertical { background: %10; width: 10px; margin: 0; }
-QScrollBar:horizontal { background: %10; height: 10px; margin: 0; }
-QScrollBar::handle { background: #3a3a3a; min-height: 24px; min-width: 24px; }
-QScrollBar::handle:hover { background: #4a4a4a; }
+QScrollBar:vertical {
+    background: %10;
+    width: %11px;
+    margin: 0;
+    border-left: 1px solid %12;
+}
+QScrollBar:horizontal {
+    background: %10;
+    height: %11px;
+    margin: 0;
+    border-top: 1px solid %12;
+}
+QScrollBar::handle {
+    background: %13;
+    min-height: 30px;
+    min-width: 30px;
+    margin: 2px;
+}
+QScrollBar::handle:hover { background: %14; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 )")
@@ -129,9 +144,13 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         .arg(hex(kDivider))       // 5
         .arg(hex(kTextDim))       // 6
         .arg(hex(kSubToolbar))    // 7
-        .arg(hex(kGutter))        // 8
-        .arg(metrics::kGutter)    // 9
-        .arg(hex(kPanelBody));    // 10
+        .arg(hex(kGutter))              // 8
+        .arg(metrics::kGutter)          // 9
+        .arg(hex(kScrollTrack))         // 10
+        .arg(metrics::kScrollBarW)      // 11
+        .arg(hex(kDivider))             // 12
+        .arg(hex(kScrollHandle))        // 13
+        .arg(hex(kScrollHandleHover));  // 14
 }
 
 }  // namespace comp::ui::theme
