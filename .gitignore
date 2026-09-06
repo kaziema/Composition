@@ -2,14 +2,22 @@
 NOTEBOOK.md
 
 # --- Open-core boundary (decision D6) ----------------------------------------
-# The delivery module is proprietary and never enters the public repo.
-# Its public interface (src/delivery/include) IS tracked so the open build
-# compiles and links against a stub; only the implementation is withheld.
+# Three things never enter the public repo. Two modules:
+#   delivery  render + export
+#   beat      beat detection, beat map, cut-to-beat, auto-layer
+# ...and the handcrafted preset packs, further down.
+# Each module's public interface (src/<mod>/include) IS tracked so the public
+# build compiles and links against a stub. Only the implementations are withheld.
 src/delivery/private/
+src/beat/private/
 
-# First-party preset packs and their assets are commercial content, not code.
+# The handcrafted preset packs that ship with the paid app. Commercial content,
+# not code, built by hand in a separate project. The effects they are built ON
+# are public — see src/effects — because a preset is worthless if the effect
+# underneath it is missing (Pillar 1). Only the authored packs are withheld.
 content/packs/
 assets/packs/
+presets/packs/
 
 # Signing keys, license material, release credentials.
 secrets/
