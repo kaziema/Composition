@@ -622,6 +622,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
         }
         emit currentTimeChanged(seconds);
     });
+    connect(view_, &TimelineView::selectionChanged, this,
+            &TimelinePanel::selectionChanged);
 }
 
 void TimelinePanel::syncScrollRange() {
@@ -638,6 +640,11 @@ void TimelinePanel::resizeEvent(QResizeEvent* e) {
 void TimelinePanel::setComposition(core::Composition* comp) {
     view_->setComposition(comp);
     syncScrollRange();
+    // setComposition picks an initial selection, so announce it or the inspector starts
+    // out empty while a layer is visibly highlighted.
+    if (const auto initial = view_->selectedLayer(); initial.has_value()) {
+        emit selectionChanged(*initial);
+    }
     if (comp != nullptr) {
         bar_->setState(view_->currentTime(), comp->fps,
                        static_cast<int>(comp->layers.size()), comp->totalKeyframes());

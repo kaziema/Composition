@@ -10,6 +10,7 @@ qt_add_library(comp_ui STATIC
     src/ToolIcons.cpp
     src/MainWindow.cpp
     src/TimelineView.cpp
+    src/InspectorView.cpp
     src/DemoProject.cpp
     include/comp/ui/Theme.h
     include/comp/ui/PanelFrame.h
@@ -17,6 +18,7 @@ qt_add_library(comp_ui STATIC
     include/comp/ui/ToolIcons.h
     include/comp/ui/MainWindow.h
     include/comp/ui/TimelineView.h
+    include/comp/ui/InspectorView.h
     include/comp/ui/DemoProject.h
 )
 add_library(comp::ui ALIAS comp_ui)

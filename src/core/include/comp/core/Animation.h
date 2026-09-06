@@ -75,6 +75,9 @@ struct Property {
     PropertyId id = 0;
     std::string key;    // stable, matches the effect schema's parameter key (D1)
     std::string label;  // display only
+    // Which collapsible group this row sits under in the inspector: "Transform", or the
+    // display name of the effect instance that owns it.
+    std::string group = "Transform";
     SpatialUnit unit = SpatialUnit::Normalized;
 
     Value staticValue;           // used when there are no keyframes

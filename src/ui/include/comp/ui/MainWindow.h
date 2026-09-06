@@ -10,6 +10,7 @@ class QSplitter;
 namespace comp::ui {
 
 class EditorToolBar;
+class InspectorView;
 class PanelFrame;
 
 // Shell matching the handoff's main-editor layout:
@@ -33,6 +34,7 @@ private:
     core::Project project_;  // TEMPORARY demo content
     EditorToolBar* toolBar_ = nullptr;
     QLabel* viewerTimecode_ = nullptr;
+    InspectorView* inspector_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;
 };

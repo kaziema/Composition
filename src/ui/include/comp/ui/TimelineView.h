@@ -114,6 +114,7 @@ public:
 
 signals:
     void currentTimeChanged(double seconds);
+    void selectionChanged(core::LayerId layer);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

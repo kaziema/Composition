@@ -11,6 +11,7 @@
 
 #include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
+#include "comp/ui/InspectorView.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"
 #include "comp/ui/TimelineView.h"
@@ -271,9 +272,11 @@ QWidget* MainWindow::buildBody() {
 
     // Handoff merges Transform and Effect Controls into one inspector rather than
     // letting two panels fight for the same dock.
-    auto* inspector = makePanel(
-        {QStringLiteral("Inspector"), QStringLiteral("Align")},
-        QStringLiteral("transform + effect stack for the selected layer"));
+    auto* inspector = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
+    inspector_ = new InspectorView;
+    inspector_->setComposition(&comp);
+    inspector->addPage(inspector_);
+    inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
 
     bodySplit_->addWidget(project);
     bodySplit_->addWidget(viewer);
@@ -303,6 +306,15 @@ QWidget* MainWindow::buildBody() {
     if (viewerTimecode_ != nullptr) {
         viewerTimecode_->setText(formatTimecode(3.14, fps));
     }
+
+    connect(timelinePanel, &TimelinePanel::selectionChanged, inspector_,
+            [this](core::LayerId id) { inspector_->setSelectedLayer(id); });
+    connect(timelinePanel, &TimelinePanel::currentTimeChanged, inspector_,
+            [this](double seconds) { inspector_->setCurrentTime(seconds); });
+    inspector_->setSelectedLayer(comp.layers.empty()
+                                     ? std::optional<core::LayerId>{}
+                                     : std::optional<core::LayerId>{comp.layers.front().id});
+    inspector_->setCurrentTime(3.14);
 
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);

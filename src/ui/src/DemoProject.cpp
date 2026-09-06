@@ -21,10 +21,12 @@ void keyAt(Property& p, const TimeContext& ctx, std::initializer_list<double> ti
     }
 }
 
-Property makeProp(std::string key, std::string label, SpatialUnit unit, Value initial) {
+Property makeProp(std::string key, std::string label, std::string group, SpatialUnit unit,
+                  Value initial) {
     Property p;
     p.key = std::move(key);
     p.label = std::move(label);
+    p.group = std::move(group);
     p.unit = unit;
     p.staticValue = initial;
     return p;
@@ -56,7 +58,7 @@ Project sampleProject() {
     captions.outPoint = TimeValue::seconds(10.6);
     captions.expanded = true;
     {
-        Property hits = makeProp("word_pop", "word_pop", SpatialUnit::Normalized,
+        Property hits = makeProp("word_pop", "word_pop", "Source", SpatialUnit::Normalized,
                                  Value::scalar(8.0));
         keyAt(hits, ctx, {1.4, 2.3, 3.1, 4.2, 5.4, 6.6, 8.0, 9.4});
         captions.properties.push_back(std::move(hits));
@@ -87,7 +89,7 @@ Project sampleProject() {
         if (scale != nullptr) {
             keyAt(*scale, ctx, {0.6, 1.1, 2.66});
         }
-        Property tracking = makeProp("tracking", "Tracking", SpatialUnit::Normalized,
+        Property tracking = makeProp("tracking", "Tracking", "Text", SpatialUnit::Normalized,
                                      Value::scalar(12.0));
         keyAt(tracking, ctx, {0.6, 2.0});
         title.properties.push_back(std::move(tracking));
