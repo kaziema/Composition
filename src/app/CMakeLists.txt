@@ -13,6 +13,9 @@ target_link_libraries(composition
         comp_warnings
 )
 
+# Puts libwebgpu_dawn.dylib beside the executable so it resolves at runtime.
+target_copy_webgpu_binaries(composition)
+
 set_target_properties(composition PROPERTIES
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE

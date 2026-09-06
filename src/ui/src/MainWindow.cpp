@@ -12,6 +12,7 @@
 #include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
 #include "comp/ui/Format.h"
+#include "comp/ui/GpuViewport.h"
 #include "comp/ui/InspectorView.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"
@@ -58,14 +59,18 @@ private:
 
 // Returns the page; `timecodeOut` receives the label so the viewer's readout can be
 // driven by the timeline instead of sitting at zero forever.
-QWidget* makeViewerPage(const QString& compName, QLabel** timecodeOut) {
+QWidget* makeViewerPage(QLabel** timecodeOut, GpuViewport** viewportOut) {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(16, 16, 16, 0);
     layout->setSpacing(0);
 
-    auto* canvas = new StripedCanvas(compName);
+    // The striped placeholder is gone: this is a real swapchain now.
+    auto* canvas = new GpuViewport;
     layout->addWidget(canvas, 1);
+    if (viewportOut != nullptr) {
+        *viewportOut = canvas;
+    }
 
     auto* bottom = new QWidget;
     bottom->setFixedHeight(metrics::kSubToolbarH);
@@ -112,7 +117,8 @@ QWidget* makeViewerPage(const QString& compName, QLabel** timecodeOut) {
 
 }  // namespace
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
+    : QMainWindow(parent), gpu_(device) {
     setWindowTitle(QStringLiteral("Composition"));
     resize(1440, 900);
 
@@ -133,7 +139,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     setCentralWidget(root);
 
-    statusBar()->showMessage(QStringLiteral("Chrome only. No engine behind it yet."));
+    statusBar()->showMessage(gpu_ != nullptr
+                                 ? QStringLiteral("GPU: %1")
+                                       .arg(QString::fromStdString(gpu_->description()))
+                                 : QStringLiteral("No GPU adapter. Viewport disabled."));
 }
 
 namespace {
@@ -267,7 +276,7 @@ QWidget* MainWindow::buildBody() {
 
     auto* viewer = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
                                    QStringLiteral("Footage"), QStringLiteral("Layer")});
-    viewer->addPage(makeViewerPage(compName, &viewerTimecode_));
+    viewer->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
     viewer->addPage(makePlaceholder(QStringLiteral("footage viewer")));
     viewer->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
@@ -318,6 +327,10 @@ QWidget* MainWindow::buildBody() {
     inspector_->setCurrentTime(3.14);
     connect(inspector_, &InspectorView::propertyEdited, timelinePanel,
             &TimelinePanel::refresh);
+
+    if (viewport_ != nullptr && gpu_ != nullptr) {
+        viewport_->setDevice(gpu_);
+    }
 
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);

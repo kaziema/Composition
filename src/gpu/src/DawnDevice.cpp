@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "NativeSurface.h"
 #include "comp/gpu/GpuDevice.h"
 
 // Dawn backend. This is the only file in the project that knows WebGPU exists;
@@ -72,6 +73,26 @@ private:
     TextureDesc desc_;
 };
 
+// The swapchain owns its backbuffers, so this wraps one without taking ownership of
+// the allocation. It only lives as long as the frame it was acquired for.
+class SwapchainTexture final : public Texture {
+public:
+    SwapchainTexture(wgpu::Texture texture, std::uint32_t w, std::uint32_t h)
+        : texture_(std::move(texture)), width_(w), height_(h) {}
+
+    [[nodiscard]] std::uint32_t width() const noexcept override { return width_; }
+    [[nodiscard]] std::uint32_t height() const noexcept override { return height_; }
+    [[nodiscard]] TextureFormat format() const noexcept override {
+        return TextureFormat::RGBA8Unorm;  // surfaces are BGRA8; callers only need 8-bit
+    }
+    [[nodiscard]] const wgpu::Texture& handle() const noexcept { return texture_; }
+
+private:
+    wgpu::Texture texture_;
+    std::uint32_t width_ = 0;
+    std::uint32_t height_ = 0;
+};
+
 class DawnBuffer final : public Buffer {
 public:
     DawnBuffer(wgpu::Buffer buffer, std::size_t bytes)
@@ -103,6 +124,27 @@ public:
     void bind_storage_texture(std::uint32_t, const TextureHandle&) override {}
     void bind_uniforms(std::uint32_t, const BufferHandle&) override {}
 
+    void clear(const TextureHandle& target, float r, float g, float b, float a) override {
+        const wgpu::Texture* texture = wgpuTextureOf(target);
+        if (texture == nullptr) {
+            return;
+        }
+        wgpu::RenderPassColorAttachment attachment{};
+        attachment.view = texture->CreateView();
+        attachment.loadOp = wgpu::LoadOp::Clear;
+        attachment.storeOp = wgpu::StoreOp::Store;
+        attachment.clearValue = {static_cast<double>(r), static_cast<double>(g),
+                                 static_cast<double>(b), static_cast<double>(a)};
+
+        wgpu::RenderPassDescriptor pass{};
+        pass.colorAttachmentCount = 1;
+        pass.colorAttachments = &attachment;
+
+        // A render pass that only clears is exactly a clear. No draws needed.
+        wgpu::RenderPassEncoder encoder = encoder_.BeginRenderPass(&pass);
+        encoder.End();
+    }
+
     void copy_texture(const TextureHandle& src, const TextureHandle& dst) override {
         const auto* from = dynamic_cast<const DawnTexture*>(src.get());
         const auto* to = dynamic_cast<const DawnTexture*>(dst.get());
@@ -119,20 +161,114 @@ public:
 
     [[nodiscard]] wgpu::CommandBuffer finish() { return encoder_.Finish(); }
 
+    // Both texture kinds carry a wgpu::Texture; the difference is only who owns it.
+    static const wgpu::Texture* wgpuTextureOf(const TextureHandle& handle) {
+        if (const auto* owned = dynamic_cast<const DawnTexture*>(handle.get())) {
+            return &owned->handle();
+        }
+        if (const auto* borrowed = dynamic_cast<const SwapchainTexture*>(handle.get())) {
+            return &borrowed->handle();
+        }
+        return nullptr;
+    }
+
 private:
     wgpu::Device device_;
     wgpu::CommandEncoder encoder_;
+};
+
+// --- Surface -----------------------------------------------------------------
+
+class DawnSurface final : public Surface {
+public:
+    DawnSurface(wgpu::Surface surface, wgpu::Device device, wgpu::TextureFormat format)
+        : surface_(std::move(surface)), device_(std::move(device)), format_(format) {}
+
+    void configure(std::uint32_t width, std::uint32_t height) override {
+        if (width == 0 || height == 0) {
+            return;  // a collapsed splitter produces a zero-sized widget
+        }
+        if (width == width_ && height == height_) {
+            return;
+        }
+        width_ = width;
+        height_ = height;
+
+        wgpu::SurfaceConfiguration config{};
+        config.device = device_;
+        config.format = format_;
+        config.usage = wgpu::TextureUsage::RenderAttachment;
+        config.width = width;
+        config.height = height;
+        config.presentMode = wgpu::PresentMode::Fifo;
+        config.alphaMode = wgpu::CompositeAlphaMode::Opaque;
+        surface_.Configure(&config);
+        configured_ = true;
+    }
+
+    TextureHandle acquire() override {
+        if (!configured_) {
+            return nullptr;
+        }
+        wgpu::SurfaceTexture current{};
+        surface_.GetCurrentTexture(&current);
+        if (current.texture == nullptr) {
+            return nullptr;
+        }
+        return std::make_shared<SwapchainTexture>(current.texture, width_, height_);
+    }
+
+    void present() override {
+        if (configured_) {
+            surface_.Present();
+        }
+    }
+
+private:
+    wgpu::Surface surface_;
+    wgpu::Device device_;
+    wgpu::TextureFormat format_ = wgpu::TextureFormat::BGRA8Unorm;
+    std::uint32_t width_ = 0;
+    std::uint32_t height_ = 0;
+    bool configured_ = false;
 };
 
 // --- Device ------------------------------------------------------------------
 
 class DawnDevice final : public GpuDevice {
 public:
-    DawnDevice(wgpu::Instance instance, wgpu::Device device, std::string description)
+    DawnDevice(wgpu::Instance instance, wgpu::Adapter adapter, wgpu::Device device,
+               std::string description)
         : instance_(std::move(instance)),
+          adapter_(std::move(adapter)),
           device_(std::move(device)),
           queue_(device_.GetQueue()),
           description_(std::move(description)) {}
+
+    SurfaceHandle create_surface(void* native_window) override {
+        void* layer = prepareNativeSurface(native_window);
+        if (layer == nullptr) {
+            return nullptr;
+        }
+
+        wgpu::SurfaceSourceMetalLayer fromLayer{};
+        fromLayer.layer = layer;
+
+        wgpu::SurfaceDescriptor desc{};
+        desc.nextInChain = &fromLayer;
+        wgpu::Surface surface = instance_.CreateSurface(&desc);
+        if (surface == nullptr) {
+            return nullptr;
+        }
+
+        // Take whatever format the platform prefers rather than assuming BGRA8.
+        wgpu::SurfaceCapabilities caps{};
+        surface.GetCapabilities(adapter_, &caps);
+        const wgpu::TextureFormat format =
+            (caps.formatCount > 0) ? caps.formats[0] : wgpu::TextureFormat::BGRA8Unorm;
+
+        return std::make_shared<DawnSurface>(std::move(surface), device_, format);
+    }
 
     TextureHandle create_texture(const TextureDesc& desc) override {
         wgpu::TextureDescriptor td{};
@@ -209,6 +345,7 @@ public:
 
 private:
     wgpu::Instance instance_;
+    wgpu::Adapter adapter_;
     wgpu::Device device_;
     wgpu::Queue queue_;
     std::string description_;
@@ -287,8 +424,8 @@ std::unique_ptr<GpuDevice> create_dawn_device() {
         return nullptr;
     }
 
-    return std::make_unique<DawnDevice>(std::move(instance), std::move(device),
-                                        description);
+    return std::make_unique<DawnDevice>(std::move(instance), std::move(adapter),
+                                        std::move(device), description);
 }
 
 }  // namespace comp::gpu

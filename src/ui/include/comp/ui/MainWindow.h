@@ -3,6 +3,7 @@
 #include <QMainWindow>
 
 #include "comp/core/Document.h"
+#include "comp/gpu/GpuDevice.h"
 
 class QLabel;
 class QSplitter;
@@ -10,6 +11,7 @@ class QSplitter;
 namespace comp::ui {
 
 class EditorToolBar;
+class GpuViewport;
 class InspectorView;
 class PanelFrame;
 
@@ -22,7 +24,10 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    // The GPU device is owned by the application, not by this window. Null is a legal
+    // state: the UI runs fine, the viewport just stays blank. That also keeps headless
+    // tests from having to bring up a graphics stack to open a menu.
+    explicit MainWindow(gpu::GpuDevice* device = nullptr, QWidget* parent = nullptr);
 
 private:
     void buildMenus();
@@ -35,6 +40,8 @@ private:
     EditorToolBar* toolBar_ = nullptr;
     QLabel* viewerTimecode_ = nullptr;
     InspectorView* inspector_ = nullptr;
+    GpuViewport* viewport_ = nullptr;
+    gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;
 };

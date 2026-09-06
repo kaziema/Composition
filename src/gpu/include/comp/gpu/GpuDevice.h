@@ -78,6 +78,23 @@ using TextureHandle = std::shared_ptr<Texture>;
 using BufferHandle = std::shared_ptr<Buffer>;
 using ComputePipelineHandle = std::shared_ptr<ComputePipeline>;
 
+// A window we can present to. The native handle is the only platform-specific thing
+// in the whole interface: an NSView* on macOS, an HWND on Windows.
+class Surface {
+public:
+    virtual ~Surface() = default;
+
+    virtual void configure(std::uint32_t width, std::uint32_t height) = 0;
+
+    // The next backbuffer, or null if it could not be acquired (resizing, occluded,
+    // device lost). Callers must handle null rather than assume a frame is always ready.
+    [[nodiscard]] virtual TextureHandle acquire() = 0;
+
+    virtual void present() = 0;
+};
+
+using SurfaceHandle = std::shared_ptr<Surface>;
+
 class GpuDevice {
 public:
     virtual ~GpuDevice() = default;
@@ -96,6 +113,9 @@ public:
     // Shaders. Source is Slang, compiled to the backend's target offline or on load.
     [[nodiscard]] virtual ComputePipelineHandle create_compute_pipeline(
         std::string_view slang_module, std::string_view entry_point) = 0;
+
+    // Presentation. `native_window` is an NSView* on macOS, an HWND on Windows.
+    [[nodiscard]] virtual SurfaceHandle create_surface(void* native_window) = 0;
 
     // Work submission
     [[nodiscard]] virtual std::unique_ptr<CommandRecorder> begin_commands(
@@ -126,6 +146,10 @@ public:
     virtual void bind_uniforms(std::uint32_t slot, const BufferHandle& buf) = 0;
 
     virtual void copy_texture(const TextureHandle& src, const TextureHandle& dst) = 0;
+
+    // Fills a render target with a colour. Components are 0..1 in linear light, which is
+    // the working space everything composites in.
+    virtual void clear(const TextureHandle& target, float r, float g, float b, float a) = 0;
 };
 
 // Backend factory. Returns nullptr if no suitable adapter exists.
