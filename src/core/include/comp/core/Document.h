@@ -106,6 +106,10 @@ struct Layer {
     BlendMode blend = BlendMode::Normal;
     std::optional<LayerId> parent;
     std::optional<CompId> source;  // set on Precomp layers
+    // TEMPORARY: a direct file path. Becomes a reference into a project-level media pool
+    // once the Project panel exists, so media is shared between layers rather than
+    // reopened per layer.
+    std::optional<std::string> mediaPath;
 
     bool enabled = true;
     bool solo = false;

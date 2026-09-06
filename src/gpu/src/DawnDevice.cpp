@@ -136,7 +136,8 @@ private:
 
 class DawnRecorder final : public CommandRecorder {
 public:
-    DawnRecorder(wgpu::Device device, std::string_view label) : device_(std::move(device)) {
+    DawnRecorder(wgpu::Device device, wgpu::Sampler sampler, std::string_view label)
+        : device_(std::move(device)), sampler_(std::move(sampler)) {
         wgpu::CommandEncoderDescriptor desc{};
         desc.label = wgpu::StringView(label.data(), label.size());
         encoder_ = device_.CreateCommandEncoder(&desc);
@@ -176,23 +177,37 @@ public:
         }
     }
 
+    void set_scissor(std::uint32_t x, std::uint32_t y, std::uint32_t width,
+                     std::uint32_t height) override {
+        if (pass_ == nullptr) {
+            return;
+        }
+        pass_.SetScissorRect(x, y, width, height);
+    }
+
     void draw(const RenderPipelineHandle& pipeline, const BufferHandle& uniforms,
-              std::uint32_t vertex_count) override {
+              const TextureHandle& texture, std::uint32_t vertex_count) override {
         const auto* dawnPipeline = dynamic_cast<const DawnRenderPipeline*>(pipeline.get());
         const auto* dawnBuffer = dynamic_cast<const DawnBuffer*>(uniforms.get());
-        if (pass_ == nullptr || dawnPipeline == nullptr || dawnBuffer == nullptr) {
+        const wgpu::Texture* wgpuTexture = wgpuTextureOf(texture);
+        if (pass_ == nullptr || dawnPipeline == nullptr || dawnBuffer == nullptr ||
+            wgpuTexture == nullptr) {
             return;
         }
 
-        wgpu::BindGroupEntry entry{};
-        entry.binding = 0;
-        entry.buffer = dawnBuffer->handle();
-        entry.size = dawnBuffer->size();
+        wgpu::BindGroupEntry entries[3]{};
+        entries[0].binding = 0;
+        entries[0].buffer = dawnBuffer->handle();
+        entries[0].size = dawnBuffer->size();
+        entries[1].binding = 1;
+        entries[1].sampler = sampler_;
+        entries[2].binding = 2;
+        entries[2].textureView = wgpuTexture->CreateView();
 
         wgpu::BindGroupDescriptor bgDesc{};
         bgDesc.layout = dawnPipeline->handle().GetBindGroupLayout(0);
-        bgDesc.entryCount = 1;
-        bgDesc.entries = &entry;
+        bgDesc.entryCount = 3;
+        bgDesc.entries = entries;
 
         pass_.SetPipeline(dawnPipeline->handle());
         pass_.SetBindGroup(0, device_.CreateBindGroup(&bgDesc));
@@ -228,6 +243,7 @@ public:
 
 private:
     wgpu::Device device_;
+    wgpu::Sampler sampler_;
     wgpu::CommandEncoder encoder_;
     wgpu::RenderPassEncoder pass_;
 };
@@ -303,7 +319,16 @@ public:
           adapter_(std::move(adapter)),
           device_(std::move(device)),
           queue_(device_.GetQueue()),
-          description_(std::move(description)) {}
+          description_(std::move(description)) {
+        // One sampler for everything. Linear filtering with clamped edges is right for
+        // every 2D image op we do; anything needing otherwise can get its own later.
+        wgpu::SamplerDescriptor sd{};
+        sd.magFilter = wgpu::FilterMode::Linear;
+        sd.minFilter = wgpu::FilterMode::Linear;
+        sd.addressModeU = wgpu::AddressMode::ClampToEdge;
+        sd.addressModeV = wgpu::AddressMode::ClampToEdge;
+        sampler_ = device_.CreateSampler(&sd);
+    }
 
     SurfaceHandle create_surface(void* native_window) override {
         void* layer = prepareNativeSurface(native_window);
@@ -439,7 +464,7 @@ public:
     }
 
     std::unique_ptr<CommandRecorder> begin_commands(std::string_view label) override {
-        return std::make_unique<DawnRecorder>(device_, label);
+        return std::make_unique<DawnRecorder>(device_, sampler_, label);
     }
 
     void submit(std::unique_ptr<CommandRecorder> recorder) override {
@@ -464,6 +489,7 @@ private:
     wgpu::Adapter adapter_;
     wgpu::Device device_;
     wgpu::Queue queue_;
+    wgpu::Sampler sampler_;
     std::string description_;
 };
 

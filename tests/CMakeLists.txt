@@ -15,6 +15,17 @@ target_link_libraries(test_gpu PRIVATE comp::gpu comp_warnings)
 target_copy_webgpu_binaries(test_gpu)
 add_test(NAME test_gpu COMMAND test_gpu)
 
+# Decoding needs a real file. COMP_TEST_VIDEO can be overridden; the test reports a
+# skip rather than failing when it is unset.
+set(COMP_TEST_VIDEO "" CACHE STRING "Path to a video file for the media test")
+add_executable(test_media test_media.cpp)
+target_link_libraries(test_media PRIVATE comp::media comp_warnings)
+add_test(NAME test_media COMMAND test_media)
+if(COMP_TEST_VIDEO)
+    set_tests_properties(test_media PROPERTIES
+        ENVIRONMENT "COMP_TEST_VIDEO=${COMP_TEST_VIDEO}")
+endif()
+
 # UI tests need Qt and run offscreen.
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 

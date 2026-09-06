@@ -4,7 +4,12 @@
 #include <vector>
 
 #include "comp/core/Document.h"
+#include <memory>
+#include <string>
+#include <unordered_map>
+
 #include "comp/gpu/GpuDevice.h"
+#include "comp/media/VideoDecoder.h"
 
 namespace comp::engine {
 
@@ -31,12 +36,26 @@ private:
         float color[4];
     };
 
+    // An opened file plus the texture its current frame lives in. Kept per path so two
+    // layers using the same clip share one decoder.
+    struct Source {
+        std::unique_ptr<media::VideoDecoder> decoder;
+        gpu::TextureHandle texture;
+        double uploadedTime = -1.0;
+    };
+
     // Uniform buffers are recycled across frames rather than reallocated per layer.
     [[nodiscard]] gpu::BufferHandle uniformBuffer(std::size_t index);
+
+    // Decodes and uploads the frame for `path` at `seconds`, returning the texture to
+    // sample. Null when the file will not open, which leaves the layer flat.
+    [[nodiscard]] gpu::TextureHandle textureFor(const std::string& path, double seconds);
 
     gpu::GpuDevice& device_;
     gpu::RenderPipelineHandle quads_;
     std::vector<gpu::BufferHandle> uniforms_;
+    gpu::TextureHandle white_;  // stand-in so layers without media use one pipeline
+    std::unordered_map<std::string, Source> sources_;
 };
 
 }  // namespace comp::engine

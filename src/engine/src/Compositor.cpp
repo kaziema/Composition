@@ -14,19 +14,31 @@ struct Uniforms {
     transform : mat4x4<f32>,
     color     : vec4<f32>,
 };
-@group(0) @binding(0) var<uniform> u : Uniforms;
+@group(0) @binding(0) var<uniform> u   : Uniforms;
+@group(0) @binding(1) var        samp : sampler;
+@group(0) @binding(2) var        tex  : texture_2d<f32>;
+
+struct VsOut {
+    @builtin(position) position : vec4<f32>,
+    @location(0)       uv       : vec2<f32>,
+};
 
 @vertex
-fn vs(@builtin(vertex_index) index : u32) -> @builtin(position) vec4<f32> {
+fn vs(@builtin(vertex_index) index : u32) -> VsOut {
     var corners = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
         vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0));
-    return u.transform * vec4<f32>(corners[index], 0.0, 1.0);
+    var out : VsOut;
+    out.position = u.transform * vec4<f32>(corners[index], 0.0, 1.0);
+    out.uv = corners[index];
+    return out;
 }
 
 @fragment
-fn fs() -> @location(0) vec4<f32> {
-    return u.color;
+fn fs(in : VsOut) -> @location(0) vec4<f32> {
+    // Layers without media sample a 1x1 white texture, so one pipeline covers both
+    // cases instead of two that have to be kept in step.
+    return textureSample(tex, samp, in.uv) * u.color;
 }
 )";
 
@@ -78,6 +90,56 @@ Compositor::Compositor(gpu::GpuDevice& device, gpu::TextureFormat targetFormat)
     : device_(device) {
     quads_ = device_.create_render_pipeline(kQuadShader, "vs", "fs", targetFormat,
                                             "composite quads");
+
+    gpu::TextureDesc desc;
+    desc.width = 1;
+    desc.height = 1;
+    desc.format = gpu::TextureFormat::RGBA8Unorm;
+    desc.usage = gpu::TextureUsage::Sampled | gpu::TextureUsage::CopyDst;
+    desc.debug_label = "white";
+    white_ = device_.create_texture(desc);
+
+    const std::uint8_t pixel[4] = {255, 255, 255, 255};
+    device_.write_texture(white_, pixel, sizeof(pixel), 4);
+}
+
+gpu::TextureHandle Compositor::textureFor(const std::string& path, double seconds) {
+    auto it = sources_.find(path);
+    if (it == sources_.end()) {
+        Source source;
+        source.decoder = media::VideoDecoder::open(path);
+        it = sources_.emplace(path, std::move(source)).first;
+    }
+    Source& source = it->second;
+    if (source.decoder == nullptr) {
+        return nullptr;  // unopenable file; the layer stays flat rather than vanishing
+    }
+
+    const media::VideoFrame* frame = source.decoder->frameAt(seconds);
+    if (frame == nullptr || !frame->valid()) {
+        return source.texture;
+    }
+
+    if (source.texture == nullptr) {
+        gpu::TextureDesc desc;
+        desc.width = static_cast<std::uint32_t>(frame->width);
+        desc.height = static_cast<std::uint32_t>(frame->height);
+        // sRGB so sampling converts to linear for us; the working space is linear light.
+        desc.format = gpu::TextureFormat::RGBA8UnormSrgb;
+        desc.usage = gpu::TextureUsage::Sampled | gpu::TextureUsage::CopyDst;
+        desc.debug_label = "video frame";
+        source.texture = device_.create_texture(desc);
+        source.uploadedTime = -1.0;
+    }
+
+    // Re-uploading an unchanged frame is 8MB of pointless traffic per repaint, and the
+    // viewer repaints for reasons that have nothing to do with time.
+    if (source.uploadedTime != frame->pts) {
+        device_.write_texture(source.texture, frame->rgba.data(), frame->rgba.size(),
+                              static_cast<std::uint32_t>(frame->width) * 4);
+        source.uploadedTime = frame->pts;
+    }
+    return source.texture;
 }
 
 gpu::BufferHandle Compositor::uniformBuffer(std::size_t index) {
@@ -114,9 +176,21 @@ void Compositor::render(const core::Composition& comp, double seconds,
     // Outside the frame is near-black so the letterbox reads as "not your picture".
     commands->begin_pass(target, 0.008f, 0.008f, 0.008f, 1.0f);
 
+    // Everything from here on is clipped to the composition frame. A layer that animates
+    // off the edge has to actually leave the picture; without this it keeps drawing over
+    // the letterbox and the frame boundary means nothing. The clear above is unaffected,
+    // since it applies to the whole attachment rather than the scissor.
+    const auto clampToTarget = [](float value, float limit) {
+        return static_cast<std::uint32_t>(std::clamp(value, 0.0f, limit));
+    };
+    commands->set_scissor(clampToTarget(frameX, viewW), clampToTarget(frameY, viewH),
+                          clampToTarget(frameW, viewW - frameX),
+                          clampToTarget(frameH, viewH - frameY));
+
     // Draw the frame itself, so an empty composition still shows where it is.
     std::size_t slot = 0;
-    const auto pushQuad = [&](float x, float y, float w, float h, Rgb color, float alpha) {
+    const auto pushQuad = [&](float x, float y, float w, float h, Rgb color, float alpha,
+                              const gpu::TextureHandle& texture) {
         // Pixel rect -> normalised device coordinates. Y flips because NDC is up-positive
         // and our layout is top-down.
         const float sx = 2.0f * w / viewW;
@@ -139,10 +213,11 @@ void Compositor::render(const core::Composition& comp, double seconds,
 
         const gpu::BufferHandle buffer = uniformBuffer(slot++);
         device_.write_buffer(buffer, &u, sizeof(u));
-        commands->draw(quads_, buffer, 6);
+        commands->draw(quads_, buffer, texture != nullptr ? texture : white_, 6);
     };
 
-    pushQuad(frameX, frameY, frameW, frameH, linearFrom8Bit(0x14, 0x14, 0x14), 1.0f);
+    pushQuad(frameX, frameY, frameW, frameH, linearFrom8Bit(0x14, 0x14, 0x14), 1.0f,
+             nullptr);
 
     // Bottom layer first, so index 0 (the topmost) lands last.
     for (auto it = comp.layers.rbegin(); it != comp.layers.rend(); ++it) {
@@ -169,15 +244,30 @@ void Compositor::render(const core::Composition& comp, double seconds,
         const auto syPct = static_cast<float>(componentOr(scale, 1, 100.0, seconds, ctx));
         const auto alpha = static_cast<float>(componentOr(opacity, 0, 100.0, seconds, ctx));
 
-        // Placeholder geometry: 60% of the frame, so layers are legible and overlap
-        // visibly. Real layer content replaces this, not the transform maths.
-        const float w = frameW * 0.6f * (sxPct / 100.0f);
-        const float h = frameH * 0.6f * (syPct / 100.0f);
+        // Footage and precomps fill the frame, the way real source material does.
+        // Graphics layers have no content yet, so they stand in at 60% of the frame,
+        // which also keeps them from completely hiding the footage underneath.
+        const bool fillsFrame = layer.kind == core::LayerKind::Footage ||
+                                layer.kind == core::LayerKind::Precomp;
+        const float base = fillsFrame ? 1.0f : 0.6f;
+
+        const float w = frameW * base * (sxPct / 100.0f);
+        const float h = frameH * base * (syPct / 100.0f);
         const float cx = frameX + frameW * (px / 100.0f);
         const float cy = frameY + frameH * (py / 100.0f);
 
-        pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, colorFor(layer.label),
-                 std::clamp(alpha / 100.0f, 0.0f, 1.0f));
+        // Media fills the quad; without it the label colour stands in.
+        gpu::TextureHandle content;
+        Rgb tint = colorFor(layer.label);
+        if (layer.mediaPath.has_value()) {
+            content = textureFor(*layer.mediaPath, seconds - in);
+            if (content != nullptr) {
+                tint = {1.0f, 1.0f, 1.0f};  // do not tint real footage
+            }
+        }
+
+        pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, tint,
+                 std::clamp(alpha / 100.0f, 0.0f, 1.0f), content);
     }
 
     commands->end_pass();

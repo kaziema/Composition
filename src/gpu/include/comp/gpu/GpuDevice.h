@@ -178,10 +178,17 @@ public:
                             float a) = 0;
     virtual void end_pass() = 0;
 
+    // Restricts drawing to a rectangle of the target, in pixels. Everything outside is
+    // left untouched, including by the clear, which applies to the whole attachment.
+    virtual void set_scissor(std::uint32_t x, std::uint32_t y, std::uint32_t width,
+                             std::uint32_t height) = 0;
+
     // Draws `vertex_count` vertices with the given pipeline and uniform block. Vertices
     // are generated in the shader, so there is no vertex buffer to bind.
+    // `texture` is sampled by the pipeline. Callers that want a flat colour bind a 1x1
+    // white texture rather than there being two pipelines to keep in step.
     virtual void draw(const RenderPipelineHandle& pipeline, const BufferHandle& uniforms,
-                      std::uint32_t vertex_count) = 0;
+                      const TextureHandle& texture, std::uint32_t vertex_count) = 0;
 };
 
 // Backend factory. Returns nullptr if no suitable adapter exists.

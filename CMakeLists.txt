@@ -29,6 +29,7 @@ include(cmake/FetchWebGPU.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/gpu)
+add_subdirectory(src/media)
 add_subdirectory(src/engine)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)

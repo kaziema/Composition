@@ -1,6 +1,9 @@
 #include "comp/ui/DemoProject.h"
 
+#include <cstdlib>
 #include <initializer_list>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace comp::ui::demo {
@@ -47,6 +50,24 @@ Property makeProp(std::string key, std::string label, std::string group, Spatial
 
 }  // namespace
 
+namespace {
+
+// TEMPORARY. Real media arrives through import once the Project panel exists. Until
+// then the paths come from the command line, so nothing machine-specific lands in the
+// repo. No paths means the footage layers stay flat, which is a fine fallback.
+std::vector<std::string> g_mediaPaths;
+
+std::optional<std::string> mediaPath(std::size_t index) {
+    if (index >= g_mediaPaths.size() || g_mediaPaths[index].empty()) {
+        return std::nullopt;
+    }
+    return g_mediaPaths[index];
+}
+
+}  // namespace
+
+void setMediaPaths(std::vector<std::string> paths) { g_mediaPaths = std::move(paths); }
+
 Project sampleProject() {
     Project project;
     Composition& comp = project.addComposition("sneaker_drop_v4", 1080, 1920, 30.0, 12.0);
@@ -61,15 +82,22 @@ Project sampleProject() {
     Layer& broll = project.addLayer(comp, "b-roll_street.mp4", LayerKind::Footage);
     broll.inPoint = TimeValue::seconds(6.8);
     broll.outPoint = TimeValue::seconds(12.0);
+    broll.mediaPath = mediaPath(1);
 
     Layer& sneaker = project.addLayer(comp, "sneaker_a4.mp4", LayerKind::Footage);
     sneaker.inPoint = TimeValue::seconds(0.0);
     sneaker.outPoint = TimeValue::seconds(7.2);
+    sneaker.mediaPath = mediaPath(0);
 
     Layer& captions = project.addLayer(comp, "captions", LayerKind::Precomp);
     captions.inPoint = TimeValue::seconds(1.2);
     captions.outPoint = TimeValue::seconds(10.6);
     captions.expanded = true;
+    // A precomp fills the frame, and this one has no content to render, so drop it back
+    // to let the footage underneath show through.
+    if (Property* op = captions.find("opacity"); op != nullptr) {
+        op->staticValue = Value::scalar(35.0);
+    }
     {
         Property hits = makeProp("word_pop", "word_pop", "Source", SpatialUnit::Normalized,
                                  Value::scalar(0.0));
