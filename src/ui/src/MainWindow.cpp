@@ -316,6 +316,8 @@ QWidget* MainWindow::buildBody() {
                                      ? std::optional<core::LayerId>{}
                                      : std::optional<core::LayerId>{comp.layers.front().id});
     inspector_->setCurrentTime(3.14);
+    connect(inspector_, &InspectorView::propertyEdited, timelinePanel,
+            &TimelinePanel::refresh);
 
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);

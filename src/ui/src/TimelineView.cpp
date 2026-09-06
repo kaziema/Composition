@@ -613,6 +613,15 @@ void TimelinePanel::resizeEvent(QResizeEvent* e) {
     syncScrollRange();
 }
 
+void TimelinePanel::refresh() {
+    core::Composition* comp = view_->composition();
+    if (comp != nullptr) {
+        bar_->setState(view_->currentTime(), comp->fps,
+                       static_cast<int>(comp->layers.size()), comp->totalKeyframes());
+    }
+    view_->update();
+}
+
 void TimelinePanel::setComposition(core::Composition* comp) {
     view_->setComposition(comp);
     syncScrollRange();

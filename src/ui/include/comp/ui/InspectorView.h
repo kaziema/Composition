@@ -4,7 +4,10 @@
 #include <string>
 #include <vector>
 
+#include <QRect>
 #include <QWidget>
+
+class QLineEdit;
 
 #include "comp/core/Document.h"
 
@@ -27,9 +30,17 @@ public:
     void setSelectedLayer(std::optional<core::LayerId> layer);
     void setCurrentTime(double seconds);
 
+signals:
+    // A value was scrubbed or typed. The timeline shows the same numbers and may have
+    // gained a keyframe, so it needs to repaint.
+    void propertyEdited();
+
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void mouseReleaseEvent(QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
 
 private:
     struct GroupRow {
@@ -38,13 +49,37 @@ private:
         bool expanded = true;
     };
 
+    // One editable number on screen. A vec2 property contributes two of these, because
+    // you scrub x and y independently.
+    struct ValueField {
+        int property = -1;
+        int component = 0;
+        QRect rect;
+    };
+
     void rebuildGroups();
     [[nodiscard]] const core::Layer* layer() const;
+    [[nodiscard]] core::Layer* mutableLayer();
+
+    [[nodiscard]] const ValueField* fieldAt(const QPoint& pos) const;
+    [[nodiscard]] double componentValue(const ValueField& field) const;
+    void applyValue(const ValueField& field, double value);
+    void commitEditor();
 
     core::Composition* comp_ = nullptr;
     std::optional<core::LayerId> selected_;
     double currentTime_ = 0.0;
     std::vector<GroupRow> groups_;
+
+    std::vector<ValueField> fields_;  // rebuilt every paint
+    bool dragging_ = false;
+    ValueField dragField_;
+    double dragStartValue_ = 0.0;
+    int dragStartX_ = 0;
+    bool dragMoved_ = false;
+
+    QLineEdit* editor_ = nullptr;
+    ValueField editField_;
 };
 
 }  // namespace comp::ui

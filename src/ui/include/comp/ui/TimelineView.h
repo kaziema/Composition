@@ -108,6 +108,10 @@ public:
 
     void setComposition(core::Composition* comp);
 
+    // The inspector edits the same properties this panel draws, and an edit can add a
+    // keyframe, so the counts in the sub-toolbar move too.
+    void refresh();
+
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);

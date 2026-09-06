@@ -1,5 +1,6 @@
 #include "comp/ui/InspectorView.h"
 
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -17,6 +18,22 @@ using core::Property;
 namespace {
 
 constexpr int kSubtitleH = 22;
+constexpr int kComponentGap = 6;
+
+// How much one pixel of horizontal drag moves the value. Percentages and angles want a
+// coarser step than a normalised 0..1 control, or scrubbing opacity feels glacial.
+double dragStep(core::SpatialUnit unit) noexcept {
+    switch (unit) {
+        case core::SpatialUnit::Px:                return 1.0;
+        case core::SpatialUnit::Degrees:           return 0.5;
+        case core::SpatialUnit::Percent:
+        case core::SpatialUnit::PercentOfWidth:
+        case core::SpatialUnit::PercentOfHeight:
+        case core::SpatialUnit::PercentOfDiagonal: return 0.25;
+        case core::SpatialUnit::Normalized:        return 0.01;
+    }
+    return 0.25;
+}
 constexpr int kLabelX = 26;
 constexpr int kLabelW = 76;
 constexpr int kEdgePad = 9;
@@ -34,6 +51,14 @@ InspectorView::InspectorView(QWidget* parent) : QWidget(parent) {
     QFont f = font();
     f.setPixelSize(type::kPropertyLabel);
     setFont(f);
+    setMouseTracking(true);  // so the cursor can change over a scrubbable value
+}
+
+core::Layer* InspectorView::mutableLayer() {
+    if (comp_ == nullptr || !selected_.has_value()) {
+        return nullptr;
+    }
+    return comp_->find(*selected_);
 }
 
 const Layer* InspectorView::layer() const {
@@ -97,6 +122,7 @@ void InspectorView::rebuildGroups() {
 void InspectorView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), kPanelBody);
+    fields_.clear();
 
     const Layer* l = layer();
     if (l == nullptr) {
@@ -188,29 +214,145 @@ void InspectorView::paintEvent(QPaintEvent*) {
                        QString::fromStdString(prop.label));
 
             // Scrubbable values are orange with a dotted underline, per the design.
-            p.setFont(monoFont(type::kMeta));
-            const QString text = formatPropertyValue(prop, currentTime_, ctx);
-            const QRect valueRect(kLabelX + kLabelW, y,
-                                  width() - kLabelX - kLabelW - kEdgePad,
-                                  metrics::kInspectorRowH);
-            p.setPen(kValueScrubbable);
-            p.drawText(valueRect, Qt::AlignVCenter | Qt::AlignRight, text);
+            // Each component gets its own rect so x and y can be scrubbed separately.
+            const QFont valueFont = monoFont(type::kMeta);
+            const QFontMetrics fm(valueFont);
+            p.setFont(valueFont);
 
-            const int textW = QFontMetrics(monoFont(type::kMeta)).horizontalAdvance(text);
-            p.setPen(QPen(kValueUnderline, 1.0, Qt::DotLine));
-            p.drawLine(valueRect.right() - textW, cy + 7, valueRect.right(), cy + 7);
+            const core::Value v = prop.evaluate(currentTime_, ctx);
+            const QString suffix = QString::fromUtf8(core::unitSuffix(prop.unit));
+
+            QStringList parts;
+            for (int c = 0; c < v.count; ++c) {
+                parts << QString::number(v.c[static_cast<std::size_t>(c)], 'f', 1);
+            }
+
+            int totalW = fm.horizontalAdvance(suffix);
+            for (int c = 0; c < parts.size(); ++c) {
+                totalW += fm.horizontalAdvance(parts.at(c));
+                if (c + 1 < parts.size()) {
+                    totalW += kComponentGap + fm.horizontalAdvance(QStringLiteral(","));
+                }
+            }
+
+            int x = width() - kEdgePad - totalW;
+            for (int c = 0; c < parts.size(); ++c) {
+                const int w = fm.horizontalAdvance(parts.at(c));
+                const QRect field(x, y, w, metrics::kInspectorRowH);
+
+                p.setPen(kValueScrubbable);
+                p.drawText(field, Qt::AlignVCenter | Qt::AlignRight, parts.at(c));
+                p.setPen(QPen(kValueUnderline, 1.0, Qt::DotLine));
+                p.drawLine(field.left(), cy + 7, field.right(), cy + 7);
+
+                fields_.push_back({index, c, field});
+                x += w;
+
+                if (c + 1 < parts.size()) {
+                    p.setPen(kValueScrubbable);
+                    const int commaW = fm.horizontalAdvance(QStringLiteral(","));
+                    p.drawText(QRect(x, y, commaW + kComponentGap,
+                                     metrics::kInspectorRowH),
+                               Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral(","));
+                    x += commaW + kComponentGap;
+                }
+            }
+            if (!suffix.isEmpty()) {
+                p.setPen(kValueScrubbable);
+                p.drawText(QRect(x, y, fm.horizontalAdvance(suffix),
+                                 metrics::kInspectorRowH),
+                           Qt::AlignVCenter | Qt::AlignLeft, suffix);
+            }
 
             y += metrics::kInspectorRowH;
         }
     }
 }
 
-void InspectorView::mousePressEvent(QMouseEvent* e) {
-    const int y = e->position().toPoint().y();
-    int cursor = kSubtitleH;
+const InspectorView::ValueField* InspectorView::fieldAt(const QPoint& pos) const {
+    for (const ValueField& f : fields_) {
+        // Vertical slop only. Horizontal has to stay tight or adjacent components fight.
+        if (pos.x() >= f.rect.left() && pos.x() <= f.rect.right() &&
+            pos.y() >= f.rect.top() && pos.y() < f.rect.bottom()) {
+            return &f;
+        }
+    }
+    return nullptr;
+}
 
+double InspectorView::componentValue(const ValueField& field) const {
+    const core::Layer* l = layer();
+    if (l == nullptr || field.property < 0) {
+        return 0.0;
+    }
+    const Property& prop = l->properties[static_cast<std::size_t>(field.property)];
+    const core::Value v = prop.evaluate(currentTime_, comp_->timeContext());
+    return v.c[static_cast<std::size_t>(field.component)];
+}
+
+void InspectorView::applyValue(const ValueField& field, double value) {
+    core::Layer* l = mutableLayer();
+    if (l == nullptr || field.property < 0) {
+        return;
+    }
+    Property& prop = l->properties[static_cast<std::size_t>(field.property)];
+    const core::TimeContext ctx = comp_->timeContext();
+
+    core::Value v = prop.evaluate(currentTime_, ctx);
+    v.c[static_cast<std::size_t>(field.component)] = value;
+
+    if (prop.animated()) {
+        // A keyframed property records the edit at the playhead, which is what AE does
+        // once the stopwatch is on. Ease matches whatever the previous key used, so a
+        // hand edit does not drop a linear key into an eased run.
+        core::Keyframe k;
+        k.time = core::TimeValue::seconds(currentTime_);
+        k.value = v;
+        k.interp = core::Interpolation::Bezier;
+        k.easeIn = prop.keys.front().easeIn;
+        k.easeOut = prop.keys.front().easeOut;
+        prop.addKey(k, ctx);
+    } else {
+        prop.staticValue = v;
+    }
+    emit propertyEdited();
+    update();
+}
+
+void InspectorView::commitEditor() {
+    if (editor_ == nullptr) {
+        return;
+    }
+    bool ok = false;
+    const double typed = editor_->text().toDouble(&ok);
+    QLineEdit* dying = editor_;
+    editor_ = nullptr;  // cleared first: deleteLater can re-enter through focus events
+    dying->deleteLater();
+    if (ok) {
+        applyValue(editField_, typed);
+    }
+    update();
+}
+
+void InspectorView::mousePressEvent(QMouseEvent* e) {
+    const QPoint pos = e->position().toPoint();
+
+    if (editor_ != nullptr) {
+        commitEditor();
+    }
+
+    if (const ValueField* field = fieldAt(pos); field != nullptr) {
+        dragging_ = true;
+        dragMoved_ = false;
+        dragField_ = *field;
+        dragStartValue_ = componentValue(*field);
+        dragStartX_ = pos.x();
+        return;
+    }
+
+    int cursor = kSubtitleH;
     for (GroupRow& group : groups_) {
-        if (y >= cursor && y < cursor + metrics::kInspectorGroupH) {
+        if (pos.y() >= cursor && pos.y() < cursor + metrics::kInspectorGroupH) {
             group.expanded = !group.expanded;
             update();
             return;
@@ -220,6 +362,58 @@ void InspectorView::mousePressEvent(QMouseEvent* e) {
             cursor += metrics::kInspectorRowH * static_cast<int>(group.properties.size());
         }
     }
+}
+
+void InspectorView::mouseMoveEvent(QMouseEvent* e) {
+    const QPoint pos = e->position().toPoint();
+
+    if (!dragging_) {
+        setCursor(fieldAt(pos) != nullptr ? Qt::SizeHorCursor : Qt::ArrowCursor);
+        return;
+    }
+
+    const int delta = pos.x() - dragStartX_;
+    if (delta != 0) {
+        dragMoved_ = true;
+    }
+
+    const core::Layer* l = layer();
+    if (l == nullptr) {
+        return;
+    }
+    const Property& prop = l->properties[static_cast<std::size_t>(dragField_.property)];
+
+    double step = dragStep(prop.unit);
+    if (e->modifiers().testFlag(Qt::ShiftModifier)) {
+        step *= 0.1;  // fine adjust
+    }
+    applyValue(dragField_, dragStartValue_ + static_cast<double>(delta) * step);
+}
+
+void InspectorView::mouseReleaseEvent(QMouseEvent*) {
+    dragging_ = false;
+    dragMoved_ = false;
+}
+
+void InspectorView::mouseDoubleClickEvent(QMouseEvent* e) {
+    const QPoint pos = e->position().toPoint();
+    const ValueField* field = fieldAt(pos);
+    if (field == nullptr) {
+        return;
+    }
+    dragging_ = false;
+    editField_ = *field;
+
+    editor_ = new QLineEdit(this);
+    editor_->setFont(monoFont(type::kMeta));
+    editor_->setText(QString::number(componentValue(*field), 'f', 2));
+    editor_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    editor_->setGeometry(field->rect.adjusted(-30, 0, 2, 0));
+    editor_->selectAll();
+    editor_->show();
+    editor_->setFocus();
+
+    connect(editor_, &QLineEdit::editingFinished, this, &InspectorView::commitEditor);
 }
 
 }  // namespace comp::ui
