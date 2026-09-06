@@ -85,6 +85,18 @@ LabelColor defaultLabelFor(LayerKind kind) noexcept {
     return LabelColor::Gray;
 }
 
+Property* EffectInstance::find(std::string_view key) noexcept {
+    const auto it = std::find_if(params.begin(), params.end(),
+                                 [key](const Property& p) { return p.key == key; });
+    return it == params.end() ? nullptr : &*it;
+}
+
+const Property* EffectInstance::find(std::string_view key) const noexcept {
+    const auto it = std::find_if(params.begin(), params.end(),
+                                 [key](const Property& p) { return p.key == key; });
+    return it == params.end() ? nullptr : &*it;
+}
+
 Property* Layer::find(std::string_view key) noexcept {
     const auto it = std::find_if(properties.begin(), properties.end(),
                                  [key](const Property& p) { return p.key == key; });
@@ -101,6 +113,11 @@ int Layer::keyframeCount() const noexcept {
     int total = 0;
     for (const Property& p : properties) {
         total += static_cast<int>(p.keys.size());
+    }
+    for (const EffectInstance& effect : effects) {
+        for (const Property& p : effect.params) {
+            total += static_cast<int>(p.keys.size());
+        }
     }
     return total;
 }

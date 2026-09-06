@@ -94,6 +94,22 @@ enum class LabelColor {
 
 [[nodiscard]] LabelColor defaultLabelFor(LayerKind kind) noexcept;
 
+// One effect applied to a layer.
+//
+// Parameters are Properties, so every effect control animates for free and shows up in
+// the timeline like any other. `effectId` and `schema` are the D1 identity pair: the id
+// is immortal and the schema version decides which migrations a loaded preset runs.
+struct EffectInstance {
+    std::string effectId;
+    int schema = 1;
+    std::string displayName;  // cached from the registry for the inspector
+    bool enabled = true;
+    std::vector<Property> params;
+
+    [[nodiscard]] Property* find(std::string_view key) noexcept;
+    [[nodiscard]] const Property* find(std::string_view key) const noexcept;
+};
+
 struct Layer {
     LayerId id = 0;
     std::string name;
@@ -116,6 +132,7 @@ struct Layer {
     bool expanded = false;  // twirled open in the timeline
 
     std::vector<Property> properties;
+    std::vector<EffectInstance> effects;  // applied in order, top to bottom
 
     [[nodiscard]] Property* find(std::string_view key) noexcept;
     [[nodiscard]] const Property* find(std::string_view key) const noexcept;

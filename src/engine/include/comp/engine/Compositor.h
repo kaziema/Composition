@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "comp/engine/EffectRegistry.h"
 #include "comp/gpu/GpuDevice.h"
 #include "comp/media/VideoDecoder.h"
 
@@ -44,8 +45,32 @@ private:
         double uploadedTime = -1.0;
     };
 
+    // Two working textures a layer ping-pongs between while its effect stack runs.
+    // Allocated at the source's own resolution, in the linear working format.
+    struct Workspace {
+        gpu::TextureHandle a;
+        gpu::TextureHandle b;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+    };
+
     // Uniform buffers are recycled across frames rather than reallocated per layer.
     [[nodiscard]] gpu::BufferHandle uniformBuffer(std::size_t index);
+
+    // Compiled lazily, then kept. One pipeline per effect id.
+    [[nodiscard]] gpu::RenderPipelineHandle pipelineFor(const EffectDef& def);
+
+    [[nodiscard]] Workspace& workspaceFor(core::LayerId layer, std::uint32_t width,
+                                          std::uint32_t height);
+
+    // Runs a layer's effect stack and returns the texture to sample. Returns `source`
+    // unchanged when the layer has no enabled effects, so the common case costs nothing.
+    [[nodiscard]] gpu::TextureHandle applyEffects(gpu::CommandRecorder& commands,
+                                                  const core::Layer& layer,
+                                                  const gpu::TextureHandle& source,
+                                                  double seconds,
+                                                  const core::TimeContext& ctx,
+                                                  std::size_t& slot);
 
     // A layer's source material: the texture to sample plus the size it wants to be.
     // Size matters as much as the pixels; a 1920x1080 clip is not a 1080x1920 layer.
@@ -64,6 +89,8 @@ private:
     std::vector<gpu::BufferHandle> uniforms_;
     gpu::TextureHandle white_;  // stand-in so layers without media use one pipeline
     std::unordered_map<std::string, Source> sources_;
+    std::unordered_map<std::string, gpu::RenderPipelineHandle> effectPipelines_;
+    std::unordered_map<core::LayerId, Workspace> workspaces_;
 };
 
 }  // namespace comp::engine

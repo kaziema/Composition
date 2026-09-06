@@ -1,5 +1,7 @@
 #include "comp/ui/DemoProject.h"
 
+#include "comp/engine/EffectRegistry.h"
+
 #include <cstdlib>
 #include <initializer_list>
 #include <optional>
@@ -88,6 +90,20 @@ Project sampleProject() {
     sneaker.inPoint = TimeValue::seconds(0.0);
     sneaker.outPoint = TimeValue::seconds(7.2);
     sneaker.mediaPath = mediaPath(0);
+    {
+        // A graded footage layer, with the grade animated so the effect is obviously
+        // doing something over time rather than being a static look.
+        EffectInstance grade = engine::EffectRegistry::instance().instantiate(
+            "core.color.grade");
+        if (Property* saturation = grade.find("saturation"); saturation != nullptr) {
+            animate(*saturation, ctx, {0.0, 3.5, 7.0}, Value::scalar(0.0),
+                    Value::scalar(160.0));
+        }
+        if (Property* contrast = grade.find("contrast"); contrast != nullptr) {
+            contrast->staticValue = Value::scalar(118.0);
+        }
+        sneaker.effects.push_back(std::move(grade));
+    }
 
     Layer& captions = project.addLayer(comp, "captions", LayerKind::Precomp);
     captions.inPoint = TimeValue::seconds(1.2);

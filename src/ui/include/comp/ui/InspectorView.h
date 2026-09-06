@@ -43,23 +43,39 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* e) override;
 
 private:
+    // Points at a property that may live on the layer itself or on one of its effects.
+    // `effect` is -1 for the layer's own transform properties.
+    struct PropRef {
+        int effect = -1;
+        int index = 0;
+
+        [[nodiscard]] bool operator==(const PropRef& other) const noexcept {
+            return effect == other.effect && index == other.index;
+        }
+    };
+
     struct GroupRow {
         std::string name;
-        std::vector<int> properties;  // indices into the layer's property list
+        std::vector<PropRef> properties;
         bool expanded = true;
+        int effect = -1;  // which effect this group belongs to, -1 for Transform
     };
 
     // One editable number on screen. A vec2 property contributes two of these, because
     // you scrub x and y independently.
     struct ValueField {
-        int property = -1;
+        PropRef property;
         int component = 0;
         QRect rect;
+        bool valid = false;
     };
 
     void rebuildGroups();
     [[nodiscard]] const core::Layer* layer() const;
     [[nodiscard]] core::Layer* mutableLayer();
+
+    [[nodiscard]] const core::Property* resolve(const PropRef& ref) const;
+    [[nodiscard]] core::Property* resolveMutable(const PropRef& ref);
 
     [[nodiscard]] const ValueField* fieldAt(const QPoint& pos) const;
     [[nodiscard]] double componentValue(const ValueField& field) const;

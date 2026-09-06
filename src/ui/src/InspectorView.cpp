@@ -54,6 +54,29 @@ InspectorView::InspectorView(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);  // so the cursor can change over a scrubbable value
 }
 
+const Property* InspectorView::resolve(const PropRef& ref) const {
+    const Layer* l = layer();
+    if (l == nullptr) {
+        return nullptr;
+    }
+    if (ref.effect < 0) {
+        const auto i = static_cast<std::size_t>(ref.index);
+        return i < l->properties.size() ? &l->properties[i] : nullptr;
+    }
+    const auto e = static_cast<std::size_t>(ref.effect);
+    if (e >= l->effects.size()) {
+        return nullptr;
+    }
+    const auto i = static_cast<std::size_t>(ref.index);
+    return i < l->effects[e].params.size() ? &l->effects[e].params[i] : nullptr;
+}
+
+Property* InspectorView::resolveMutable(const PropRef& ref) {
+    // const_cast rather than duplicating the lookup: the two walks are identical and
+    // keeping them in step by hand is how they drift.
+    return const_cast<Property*>(resolve(ref));
+}
+
 core::Layer* InspectorView::mutableLayer() {
     if (comp_ == nullptr || !selected_.has_value()) {
         return nullptr;
@@ -99,22 +122,43 @@ void InspectorView::rebuildGroups() {
         return;
     }
 
-    // Groups appear in the order their first property does, so Transform stays on top.
-    for (std::size_t i = 0; i < l->properties.size(); ++i) {
-        const std::string& name = l->properties[i].group;
+    const auto restoreExpansion = [&was](const std::string& name) {
+        const auto prev = std::find_if(
+            was.begin(), was.end(),
+            [&name](const std::pair<std::string, bool>& e) { return e.first == name; });
+        return (prev == was.end()) ? true : prev->second;
+    };
+
+    const auto addTo = [this, &restoreExpansion](const std::string& name, int effect,
+                                                 const PropRef& ref) {
         const auto it = std::find_if(groups_.begin(), groups_.end(),
                                      [&name](const GroupRow& g) { return g.name == name; });
         if (it == groups_.end()) {
             GroupRow g;
             g.name = name;
-            g.properties.push_back(static_cast<int>(i));
-            const auto prev = std::find_if(
-                was.begin(), was.end(),
-                [&name](const std::pair<std::string, bool>& e) { return e.first == name; });
-            g.expanded = (prev == was.end()) ? true : prev->second;
+            g.effect = effect;
+            g.expanded = restoreExpansion(name);
+            g.properties.push_back(ref);
             groups_.push_back(std::move(g));
         } else {
-            it->properties.push_back(static_cast<int>(i));
+            it->properties.push_back(ref);
+        }
+    };
+
+    // The layer's own properties first, so Transform stays at the top.
+    for (std::size_t i = 0; i < l->properties.size(); ++i) {
+        addTo(l->properties[i].group, -1, PropRef{-1, static_cast<int>(i)});
+    }
+
+    // Then one group per effect, in the order the stack applies them. This is the design's
+    // merged inspector: transform and the effect stack in a single panel.
+    for (std::size_t e = 0; e < l->effects.size(); ++e) {
+        const core::EffectInstance& effect = l->effects[e];
+        const std::string name =
+            effect.displayName.empty() ? effect.effectId : effect.displayName;
+        for (std::size_t i = 0; i < effect.params.size(); ++i) {
+            addTo(name, static_cast<int>(e),
+                  PropRef{static_cast<int>(e), static_cast<int>(i)});
         }
     }
 }
@@ -159,23 +203,22 @@ void InspectorView::paintEvent(QPaintEvent*) {
         p.drawText(QRect(kEdgePad, y, 12, metrics::kInspectorGroupH), Qt::AlignCenter,
                    group.expanded ? QStringLiteral("▾") : QStringLiteral("▸"));
 
-        // Uniform swatch. The design gives effect groups a green fx marker, but nothing
-        // here is an effect yet, and labelling a Text or Source group "fx" is just wrong.
-        // The green marker comes back when the effect system does and groups can say what
-        // they are.
+        // Effect groups get the design's green fx marker; property groups stay neutral.
+        // The group knows which it is now that effects are real.
         p.fillRect(QRect(kEdgePad + 14, y + (metrics::kInspectorGroupH - 9) / 2, 9, 9),
-                   QColor("#4a4a4a"));
+                   group.effect >= 0 ? kExpressionText : QColor("#4a4a4a"));
 
         p.setPen(kTextPrimary);
         p.drawText(QRect(kEdgePad + 28, y, width() - kEdgePad * 2 - 28,
                          metrics::kInspectorGroupH),
                    Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(group.name));
 
-        if (group.name == "Transform") {
+        if (group.name == "Transform" || group.effect >= 0) {
             p.setFont(monoFont(type::kMeta));
             p.setPen(kTextFaint);
             p.drawText(QRect(0, y, width() - kEdgePad, metrics::kInspectorGroupH),
-                       Qt::AlignVCenter | Qt::AlignRight, QStringLiteral("reset"));
+                       Qt::AlignVCenter | Qt::AlignRight,
+                       group.effect >= 0 ? QStringLiteral("fx") : QStringLiteral("reset"));
         }
         y += metrics::kInspectorGroupH;
 
@@ -183,8 +226,12 @@ void InspectorView::paintEvent(QPaintEvent*) {
             continue;
         }
 
-        for (const int index : group.properties) {
-            const Property& prop = l->properties[static_cast<std::size_t>(index)];
+        for (const PropRef& ref : group.properties) {
+            const Property* found = resolve(ref);
+            if (found == nullptr) {
+                continue;
+            }
+            const Property& prop = *found;
             const int cy = y + metrics::kInspectorRowH / 2;
 
             // Keyframe indicator: accent when the property is animated.
@@ -245,7 +292,7 @@ void InspectorView::paintEvent(QPaintEvent*) {
                 p.setPen(QPen(kValueUnderline, 1.0, Qt::DotLine));
                 p.drawLine(field.left(), cy + 7, field.right(), cy + 7);
 
-                fields_.push_back({index, c, field});
+                fields_.push_back({ref, c, field, true});
                 x += w;
 
                 if (c + 1 < parts.size()) {
@@ -281,21 +328,20 @@ const InspectorView::ValueField* InspectorView::fieldAt(const QPoint& pos) const
 }
 
 double InspectorView::componentValue(const ValueField& field) const {
-    const core::Layer* l = layer();
-    if (l == nullptr || field.property < 0) {
+    const Property* prop = resolve(field.property);
+    if (prop == nullptr || comp_ == nullptr) {
         return 0.0;
     }
-    const Property& prop = l->properties[static_cast<std::size_t>(field.property)];
-    const core::Value v = prop.evaluate(currentTime_, comp_->timeContext());
+    const core::Value v = prop->evaluate(currentTime_, comp_->timeContext());
     return v.c[static_cast<std::size_t>(field.component)];
 }
 
 void InspectorView::applyValue(const ValueField& field, double value) {
-    core::Layer* l = mutableLayer();
-    if (l == nullptr || field.property < 0) {
+    Property* found = resolveMutable(field.property);
+    if (found == nullptr || comp_ == nullptr) {
         return;
     }
-    Property& prop = l->properties[static_cast<std::size_t>(field.property)];
+    Property& prop = *found;
     const core::TimeContext ctx = comp_->timeContext();
 
     core::Value v = prop.evaluate(currentTime_, ctx);
@@ -377,13 +423,12 @@ void InspectorView::mouseMoveEvent(QMouseEvent* e) {
         dragMoved_ = true;
     }
 
-    const core::Layer* l = layer();
-    if (l == nullptr) {
+    const Property* prop = resolve(dragField_.property);
+    if (prop == nullptr) {
         return;
     }
-    const Property& prop = l->properties[static_cast<std::size_t>(dragField_.property)];
 
-    double step = dragStep(prop.unit);
+    double step = dragStep(prop->unit);
     if (e->modifiers().testFlag(Qt::ShiftModifier)) {
         step *= 0.1;  // fine adjust
     }
