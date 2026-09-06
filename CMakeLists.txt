@@ -25,6 +25,7 @@ if(APPLE AND NOT CMAKE_PREFIX_PATH)
 endif()
 
 include(cmake/CompilerWarnings.cmake)
+include(cmake/FetchWebGPU.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/gpu)

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 
 // --- GPU abstraction (decision D5) -------------------------------------------
@@ -12,7 +13,8 @@
 // backend behind this interface means swapping it costs an afternoon rather than
 // a rewrite, which matters because Dawn tracks an evolving standard.
 //
-// STATUS: interface only. No implementation yet. Dawn gets wired in behind this.
+// STATUS: Dawn backend implemented for device, textures, buffers and command
+// submission. Compute pipelines wait on the Slang shader toolchain.
 
 namespace comp::gpu {
 
@@ -49,12 +51,29 @@ struct TextureDesc {
     std::string_view debug_label;
 };
 
-class Texture;
-class Buffer;
-class ComputePipeline;
 class CommandRecorder;
 
-// Opaque handles owned by the device.
+// Opaque resource handles. Backends subclass these; nothing above this header knows
+// what a WGPUTexture is.
+class Texture {
+public:
+    virtual ~Texture() = default;
+    [[nodiscard]] virtual std::uint32_t width() const noexcept = 0;
+    [[nodiscard]] virtual std::uint32_t height() const noexcept = 0;
+    [[nodiscard]] virtual TextureFormat format() const noexcept = 0;
+};
+
+class Buffer {
+public:
+    virtual ~Buffer() = default;
+    [[nodiscard]] virtual std::size_t size() const noexcept = 0;
+};
+
+class ComputePipeline {
+public:
+    virtual ~ComputePipeline() = default;
+};
+
 using TextureHandle = std::shared_ptr<Texture>;
 using BufferHandle = std::shared_ptr<Buffer>;
 using ComputePipelineHandle = std::shared_ptr<ComputePipeline>;
@@ -85,6 +104,9 @@ public:
 
     // Blocks until all submitted work completes. Export path only; never the UI thread.
     virtual void wait_idle() = 0;
+
+    // Human-readable adapter description, for diagnostics and the about box.
+    [[nodiscard]] virtual std::string description() const = 0;
 
 protected:
     GpuDevice() = default;
