@@ -5,6 +5,7 @@
 #include <QPainterPath>
 #include <algorithm>
 
+#include "comp/ui/Format.h"
 #include "comp/ui/Theme.h"
 
 namespace comp::ui {
@@ -19,21 +20,6 @@ constexpr int kSubtitleH = 22;
 constexpr int kLabelX = 26;
 constexpr int kLabelW = 76;
 constexpr int kEdgePad = 9;
-
-QString formatValue(const Property& p, double seconds, const core::TimeContext& ctx) {
-    const core::Value v = p.evaluate(seconds, ctx);
-    QString out;
-    for (int i = 0; i < v.count; ++i) {
-        if (i > 0) {
-            out += QStringLiteral(", ");
-        }
-        out += QString::number(v.c[static_cast<std::size_t>(i)], 'f', 1);
-    }
-    if (p.unit == core::SpatialUnit::Degrees) {
-        out += QStringLiteral("°");
-    }
-    return out;
-}
 
 QFont monoFont(int px) {
     QFont f;
@@ -147,23 +133,24 @@ void InspectorView::paintEvent(QPaintEvent*) {
         p.drawText(QRect(kEdgePad, y, 12, metrics::kInspectorGroupH), Qt::AlignCenter,
                    group.expanded ? QStringLiteral("▾") : QStringLiteral("▸"));
 
-        // 9px swatch: accent for Transform, green for anything effect-shaped.
-        const QColor swatch =
-            (group.name == "Transform") ? QColor("#4a4a4a") : kExpressionText;
+        // Uniform swatch. The design gives effect groups a green fx marker, but nothing
+        // here is an effect yet, and labelling a Text or Source group "fx" is just wrong.
+        // The green marker comes back when the effect system does and groups can say what
+        // they are.
         p.fillRect(QRect(kEdgePad + 14, y + (metrics::kInspectorGroupH - 9) / 2, 9, 9),
-                   swatch);
+                   QColor("#4a4a4a"));
 
         p.setPen(kTextPrimary);
         p.drawText(QRect(kEdgePad + 28, y, width() - kEdgePad * 2 - 28,
                          metrics::kInspectorGroupH),
                    Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(group.name));
 
-        p.setFont(monoFont(type::kMeta));
-        p.setPen(kTextFaint);
-        p.drawText(QRect(0, y, width() - kEdgePad, metrics::kInspectorGroupH),
-                   Qt::AlignVCenter | Qt::AlignRight,
-                   group.name == "Transform" ? QStringLiteral("reset")
-                                             : QStringLiteral("fx"));
+        if (group.name == "Transform") {
+            p.setFont(monoFont(type::kMeta));
+            p.setPen(kTextFaint);
+            p.drawText(QRect(0, y, width() - kEdgePad, metrics::kInspectorGroupH),
+                       Qt::AlignVCenter | Qt::AlignRight, QStringLiteral("reset"));
+        }
         y += metrics::kInspectorGroupH;
 
         if (!group.expanded) {
@@ -202,7 +189,7 @@ void InspectorView::paintEvent(QPaintEvent*) {
 
             // Scrubbable values are orange with a dotted underline, per the design.
             p.setFont(monoFont(type::kMeta));
-            const QString text = formatValue(prop, currentTime_, ctx);
+            const QString text = formatPropertyValue(prop, currentTime_, ctx);
             const QRect valueRect(kLabelX + kLabelW, y,
                                   width() - kLabelX - kLabelW - kEdgePad,
                                   metrics::kInspectorRowH);

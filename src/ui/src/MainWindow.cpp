@@ -11,6 +11,7 @@
 
 #include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
+#include "comp/ui/Format.h"
 #include "comp/ui/InspectorView.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"

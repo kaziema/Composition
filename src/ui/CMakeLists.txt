@@ -5,6 +5,7 @@ qt_standard_project_setup()
 
 qt_add_library(comp_ui STATIC
     src/Theme.cpp
+    src/Format.cpp
     src/PanelFrame.cpp
     src/EditorToolBar.cpp
     src/ToolIcons.cpp
@@ -13,6 +14,7 @@ qt_add_library(comp_ui STATIC
     src/InspectorView.cpp
     src/DemoProject.cpp
     include/comp/ui/Theme.h
+    include/comp/ui/Format.h
     include/comp/ui/PanelFrame.h
     include/comp/ui/EditorToolBar.h
     include/comp/ui/ToolIcons.h

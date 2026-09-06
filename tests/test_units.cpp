@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <string>
 
 #include "comp/core/Units.h"
 
@@ -92,10 +93,20 @@ void spatial_units_survive_resolution_changes() {
     // Round trip.
     for (const SpatialUnit u : {SpatialUnit::Px, SpatialUnit::PercentOfWidth,
                                 SpatialUnit::PercentOfHeight, SpatialUnit::PercentOfDiagonal,
-                                SpatialUnit::Degrees, SpatialUnit::Normalized}) {
+                                SpatialUnit::Degrees, SpatialUnit::Percent,
+                                SpatialUnit::Normalized}) {
         const double px = resolve_spatial(37.5, u, vertical);
         check_near(store_spatial(px, u, vertical), 37.5, "spatial round trip");
     }
+}
+
+// The suffix is what the UI shows after the number, so a percentage has to look like one.
+void units_carry_a_display_suffix() {
+    check(std::string(unitSuffix(SpatialUnit::Percent)) == "%", "percent shows %");
+    check(std::string(unitSuffix(SpatialUnit::PercentOfWidth)) == "%",
+          "percent-of-width shows % too");
+    check(std::string(unitSuffix(SpatialUnit::Degrees)) != "", "degrees has a suffix");
+    check(std::string(unitSuffix(SpatialUnit::Normalized)) == "", "normalized has none");
 }
 
 void degenerate_contexts_do_not_explode() {
@@ -117,6 +128,7 @@ int main() {
     beats_survive_tempo_changes();
     frames_mode_passes_through_exactly();
     spatial_units_survive_resolution_changes();
+    units_carry_a_display_suffix();
     degenerate_contexts_do_not_explode();
 
     if (failures != 0) {

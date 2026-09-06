@@ -62,8 +62,14 @@ enum class SpatialUnit {
     PercentOfHeight,
     PercentOfDiagonal,
     Degrees,
-    Normalized,   // unitless 0..1
+    // A plain percentage that is already resolution independent: scale, opacity, effect
+    // amounts. Distinct from PercentOfWidth and friends, which resolve against the frame.
+    Percent,
+    Normalized,  // unitless, no suffix
 };
+
+// Suffix shown after the number in the UI. Empty for units that do not take one.
+[[nodiscard]] const char* unitSuffix(SpatialUnit unit) noexcept;
 
 struct FrameGeometry {
     int width = 1920;

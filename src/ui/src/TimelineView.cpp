@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "comp/ui/Format.h"
 #include "comp/ui/Theme.h"
 
 namespace comp::ui {
@@ -54,21 +55,6 @@ QString blendName(core::BlendMode m) {
     return QStringLiteral("Normal");
 }
 
-QString formatValue(const Property& p, double seconds, const core::TimeContext& ctx) {
-    const core::Value v = p.evaluate(seconds, ctx);
-    QString out;
-    for (int i = 0; i < v.count; ++i) {
-        if (i > 0) {
-            out += QStringLiteral(", ");
-        }
-        out += QString::number(v.c[static_cast<std::size_t>(i)], 'f', 1);
-    }
-    if (p.unit == core::SpatialUnit::Degrees) {
-        out += QStringLiteral("°");
-    }
-    return out;
-}
-
 QFont monoFont(int px) {
     QFont f;
     f.setFamily(monoFontFamily());
@@ -77,17 +63,6 @@ QFont monoFont(int px) {
 }
 
 }  // namespace
-
-QString formatTimecode(double seconds, double fps) {
-    const int rate = std::max(1, static_cast<int>(std::round(fps)));
-    const int totalFrames = static_cast<int>(std::round(seconds * static_cast<double>(rate)));
-    const int f = totalFrames % rate;
-    const int totalSeconds = totalFrames / rate;
-    return QStringLiteral("%1:%2:%3")
-        .arg(totalSeconds / 60, 2, 10, QLatin1Char('0'))
-        .arg(totalSeconds % 60, 2, 10, QLatin1Char('0'))
-        .arg(f, 2, 10, QLatin1Char('0'));
-}
 
 // --- TimelineView ------------------------------------------------------------
 
@@ -388,7 +363,8 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
     p.setPen(kValueScrubbable);
     p.drawText(QRect(kPropIndent + 120, row.top, trackLeft() - kPropIndent - 120 - kNavW,
                      row.height),
-               Qt::AlignVCenter | Qt::AlignRight, formatValue(prop, currentTime_, ctx));
+               Qt::AlignVCenter | Qt::AlignRight,
+               formatPropertyValue(prop, currentTime_, ctx));
 
     // Keyframe navigator.
     p.setFont(font());

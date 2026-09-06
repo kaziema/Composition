@@ -1,23 +1,36 @@
 #include "comp/ui/DemoProject.h"
 
+#include <initializer_list>
+#include <vector>
+
 namespace comp::ui::demo {
 
 using namespace core;
 
 namespace {
 
-// The handoff lists keyframe positions in seconds against a 12 second window.
-void keyAt(Property& p, const TimeContext& ctx, std::initializer_list<double> times) {
-    double v = 0.0;
-    for (const double t : times) {
+// Writes keys at the given times, walking the value from `from` to `to`.
+//
+// Keyframe values must keep the shape of the property they belong to. Writing a scalar
+// onto a vec2 property makes it evaluate to one number the moment it is animated, which
+// showed up in the inspector as Position rendering "30.0" instead of a pair.
+void animate(Property& p, const TimeContext& ctx, std::initializer_list<double> times,
+             const Value& from, const Value& to) {
+    p.staticValue = from;
+
+    const std::vector<double> at(times);
+    const auto count = static_cast<double>(at.size());
+
+    for (std::size_t i = 0; i < at.size(); ++i) {
+        const double t = (at.size() < 2) ? 1.0 : static_cast<double>(i) / (count - 1.0);
+
         Keyframe k;
-        k.time = TimeValue::seconds(t);
-        k.value = Value::scalar(v);
+        k.time = TimeValue::seconds(at[i]);
+        k.value = lerp(from, to, t);
         k.interp = Interpolation::Bezier;
         k.easeOut = 0.68;
         k.easeIn = 0.68;
         p.addKey(k, ctx);
-        v += 10.0;
     }
 }
 
@@ -59,8 +72,9 @@ Project sampleProject() {
     captions.expanded = true;
     {
         Property hits = makeProp("word_pop", "word_pop", "Source", SpatialUnit::Normalized,
-                                 Value::scalar(8.0));
-        keyAt(hits, ctx, {1.4, 2.3, 3.1, 4.2, 5.4, 6.6, 8.0, 9.4});
+                                 Value::scalar(0.0));
+        animate(hits, ctx, {1.4, 2.3, 3.1, 4.2, 5.4, 6.6, 8.0, 9.4}, Value::scalar(1.0),
+                Value::scalar(8.0));
         captions.properties.push_back(std::move(hits));
     }
 
@@ -68,11 +82,9 @@ Project sampleProject() {
     wipe.inPoint = TimeValue::seconds(3.9);
     wipe.outPoint = TimeValue::seconds(5.3);
     wipe.blend = BlendMode::Add;
-    {
-        Property* pos = wipe.find("position");
-        if (pos != nullptr) {
-            keyAt(*pos, ctx, {4.0, 4.6, 5.2});
-        }
+    if (Property* pos = wipe.find("position"); pos != nullptr) {
+        animate(*pos, ctx, {4.0, 4.6, 5.2}, Value::vec2(-20.0, 50.0),
+                Value::vec2(120.0, 50.0));
     }
 
     Layer& title = project.addLayer(comp, "DROP 09.12", LayerKind::Text);
@@ -80,18 +92,19 @@ Project sampleProject() {
     title.outPoint = TimeValue::seconds(5.0);
     title.expanded = true;
     {
-        Property* pos = title.find("position");
-        if (pos != nullptr) {
-            keyAt(*pos, ctx, {0.6, 1.3, 2.66, 4.4});
-            pos->staticValue = Value::vec2(60.0, 812.0);
+        // Position is a percentage of the frame (D1), so it rises from below the lower
+        // third to just under centre rather than being stored in pixels.
+        if (Property* pos = title.find("position"); pos != nullptr) {
+            animate(*pos, ctx, {0.6, 1.3, 2.66, 4.4}, Value::vec2(50.0, 88.0),
+                    Value::vec2(50.0, 42.0));
         }
-        Property* scale = title.find("scale");
-        if (scale != nullptr) {
-            keyAt(*scale, ctx, {0.6, 1.1, 2.66});
+        if (Property* scale = title.find("scale"); scale != nullptr) {
+            animate(*scale, ctx, {0.6, 1.1, 2.66}, Value::vec2(0.0, 0.0),
+                    Value::vec2(100.0, 100.0));
         }
         Property tracking = makeProp("tracking", "Tracking", "Text", SpatialUnit::Normalized,
-                                     Value::scalar(12.0));
-        keyAt(tracking, ctx, {0.6, 2.0});
+                                     Value::scalar(0.0));
+        animate(tracking, ctx, {0.6, 2.0}, Value::scalar(0.0), Value::scalar(12.0));
         title.properties.push_back(std::move(tracking));
     }
 

@@ -127,7 +127,7 @@ std::vector<Property> defaultTransform() {
     Property scale;
     scale.key = "scale";
     scale.label = "Scale";
-    scale.unit = SpatialUnit::Normalized;
+    scale.unit = SpatialUnit::Percent;
     scale.staticValue = Value::vec2(100.0, 100.0);
     t.push_back(scale);
 
@@ -141,7 +141,7 @@ std::vector<Property> defaultTransform() {
     Property opacity;
     opacity.key = "opacity";
     opacity.label = "Opacity";
-    opacity.unit = SpatialUnit::Normalized;
+    opacity.unit = SpatialUnit::Percent;
     opacity.staticValue = Value::scalar(100.0);
     t.push_back(opacity);
 

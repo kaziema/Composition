@@ -40,6 +40,7 @@ double resolve_spatial(double value, SpatialUnit unit, const FrameGeometry& g) n
         case SpatialUnit::PercentOfDiagonal:
             return value * 0.01 * diagonal(g);
         case SpatialUnit::Degrees:
+        case SpatialUnit::Percent:
         case SpatialUnit::Normalized:
             return value;
     }
@@ -59,10 +60,28 @@ double store_spatial(double pixels, SpatialUnit unit, const FrameGeometry& g) no
             return d > 0.0 ? pixels * 100.0 / d : 0.0;
         }
         case SpatialUnit::Degrees:
+        case SpatialUnit::Percent:
         case SpatialUnit::Normalized:
             return pixels;
     }
     return pixels;
+}
+
+const char* unitSuffix(SpatialUnit unit) noexcept {
+    switch (unit) {
+        case SpatialUnit::PercentOfWidth:
+        case SpatialUnit::PercentOfHeight:
+        case SpatialUnit::PercentOfDiagonal:
+        case SpatialUnit::Percent:
+            return "%";
+        case SpatialUnit::Degrees:
+            return "\u00b0";
+        case SpatialUnit::Px:
+            return " px";
+        case SpatialUnit::Normalized:
+            return "";
+    }
+    return "";
 }
 
 }  // namespace comp::core

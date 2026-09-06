@@ -8,10 +8,6 @@ class QScrollBar;
 
 namespace comp::ui {
 
-// MM:SS:FF at the composition's frame rate. Shared so the timeline sub-toolbar and the
-// viewer's readout cannot drift apart.
-[[nodiscard]] QString formatTimecode(double seconds, double fps);
-
 // Identifies one keyframe. Positional for now, which is fine while keys cannot be
 // reordered; it becomes a real id the moment retiming lands.
 struct KeyRef {
