@@ -54,13 +54,15 @@ private:
     QString caption_;
 };
 
-QWidget* makeViewerPage() {
+// Returns the page; `timecodeOut` receives the label so the viewer's readout can be
+// driven by the timeline instead of sitting at zero forever.
+QWidget* makeViewerPage(const QString& compName, QLabel** timecodeOut) {
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(16, 16, 16, 0);
     layout->setSpacing(0);
 
-    auto* canvas = new StripedCanvas(QStringLiteral("no composition open"));
+    auto* canvas = new StripedCanvas(compName);
     layout->addWidget(canvas, 1);
 
     auto* bottom = new QWidget;
@@ -78,7 +80,7 @@ QWidget* makeViewerPage() {
     mono.setFamily(monoFontFamily());
     mono.setPixelSize(type::kMeta);
 
-    for (const QString& text : {QStringLiteral("42%"), QStringLiteral("0:00:00:00"),
+    for (const QString& text : {QStringLiteral("42%"), QStringLiteral("00:00:00"),
                                 QStringLiteral("Full"), QStringLiteral("Active Camera")}) {
         auto* label = new QLabel(text);
         label->setFont(mono);
@@ -86,6 +88,9 @@ QWidget* makeViewerPage() {
         lp.setColor(QPalette::WindowText, kTextDim);
         label->setPalette(lp);
         bottomLayout->addWidget(label);
+        if (text == QStringLiteral("00:00:00") && timecodeOut != nullptr) {
+            *timecodeOut = label;
+        }
     }
     bottomLayout->addStretch();
 
@@ -115,6 +120,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* layout = new QVBoxLayout(root);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
+
+    // TEMPORARY: a demo composition so the timeline has something to draw.
+    // Goes away once the app can open a project file.
+    project_ = demo::sampleProject();
 
     toolBar_ = new EditorToolBar;
     layout->addWidget(toolBar_);
@@ -251,9 +260,12 @@ QWidget* MainWindow::buildBody() {
         {QStringLiteral("Project"), QStringLiteral("Comp Map"), QStringLiteral("Media")},
         QStringLiteral("media pool, comps, imported assets"));
 
-    auto* viewer = new PanelFrame({QStringLiteral("Composition"), QStringLiteral("Footage"),
-                                   QStringLiteral("Layer")});
-    viewer->addPage(makeViewerPage());
+    core::Composition& comp = project_.compositions().front();
+    const QString compName = QString::fromStdString(comp.name);
+
+    auto* viewer = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
+                                   QStringLiteral("Footage"), QStringLiteral("Layer")});
+    viewer->addPage(makeViewerPage(compName, &viewerTimecode_));
     viewer->addPage(makePlaceholder(QStringLiteral("footage viewer")));
     viewer->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
@@ -274,15 +286,23 @@ QWidget* MainWindow::buildBody() {
     outerSplit_->setHandleWidth(metrics::kGutter);
     outerSplit_->setChildrenCollapsible(false);
 
-    // TEMPORARY: a demo composition so the timeline has something to draw.
-    // Goes away once the app can open a project file.
-    project_ = demo::sampleProject();
-
-    auto* timeline = new PanelFrame({QString::fromStdString(
-        project_.compositions().front().name)});
+    auto* timeline = new PanelFrame({compName});
     auto* timelinePanel = new TimelinePanel;
-    timelinePanel->setComposition(&project_.compositions().front());
+    timelinePanel->setComposition(&comp);
     timeline->addPage(timelinePanel);
+
+    // The viewer used to claim nothing was open while the timeline showed a comp, and its
+    // timecode sat at zero. Both now follow the timeline.
+    const double fps = comp.fps;
+    connect(timelinePanel, &TimelinePanel::currentTimeChanged, this,
+            [this, fps](double seconds) {
+                if (viewerTimecode_ != nullptr) {
+                    viewerTimecode_->setText(formatTimecode(seconds, fps));
+                }
+            });
+    if (viewerTimecode_ != nullptr) {
+        viewerTimecode_->setText(formatTimecode(3.14, fps));
+    }
 
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);

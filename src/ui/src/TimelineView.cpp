@@ -78,6 +78,17 @@ QFont monoFont(int px) {
 
 }  // namespace
 
+QString formatTimecode(double seconds, double fps) {
+    const int rate = std::max(1, static_cast<int>(std::round(fps)));
+    const int totalFrames = static_cast<int>(std::round(seconds * static_cast<double>(rate)));
+    const int f = totalFrames % rate;
+    const int totalSeconds = totalFrames / rate;
+    return QStringLiteral("%1:%2:%3")
+        .arg(totalSeconds / 60, 2, 10, QLatin1Char('0'))
+        .arg(totalSeconds % 60, 2, 10, QLatin1Char('0'))
+        .arg(f, 2, 10, QLatin1Char('0'));
+}
+
 // --- TimelineView ------------------------------------------------------------
 
 TimelineView::TimelineView(QWidget* parent) : QWidget(parent) {
@@ -167,6 +178,60 @@ void TimelineView::rebuildRows() {
     contentHeight_ = y;
     scrollY_ = std::clamp(scrollY_, 0, std::max(0, contentHeight_ - height()));
     emit contentHeightChanged(contentHeight_);
+}
+
+bool TimelineView::isKeySelected(const KeyRef& ref) const {
+    return std::find(selectedKeys_.begin(), selectedKeys_.end(), ref) != selectedKeys_.end();
+}
+
+void TimelineView::toggleKeySelection(const KeyRef& ref, bool additive) {
+    if (!additive) {
+        const bool alreadyOnly = selectedKeys_.size() == 1 && selectedKeys_.front() == ref;
+        selectedKeys_.clear();
+        if (alreadyOnly) {
+            return;  // clicking the only selected key again deselects it
+        }
+        selectedKeys_.push_back(ref);
+        return;
+    }
+    const auto it = std::find(selectedKeys_.begin(), selectedKeys_.end(), ref);
+    if (it == selectedKeys_.end()) {
+        selectedKeys_.push_back(ref);
+    } else {
+        selectedKeys_.erase(it);
+    }
+}
+
+std::optional<KeyRef> TimelineView::keyAt(const QPoint& pos) const {
+    if (comp_ == nullptr) {
+        return std::nullopt;
+    }
+    const core::TimeContext ctx = comp_->timeContext();
+    const int contentY = pos.y() + scrollY_;
+
+    for (const Row& row : rows_) {
+        if (row.propertyIndex < 0) {
+            continue;
+        }
+        if (contentY < row.top || contentY >= row.top + row.height) {
+            continue;
+        }
+        const Layer* layer = comp_->find(row.layer);
+        if (layer == nullptr) {
+            return std::nullopt;
+        }
+        const Property& prop =
+            layer->properties[static_cast<std::size_t>(row.propertyIndex)];
+
+        for (std::size_t i = 0; i < prop.keys.size(); ++i) {
+            const double kx = xForTime(to_seconds(prop.keys[i].time, ctx));
+            if (std::fabs(kx - static_cast<double>(pos.x())) <= 6.0) {
+                return KeyRef{row.layer, row.propertyIndex, static_cast<int>(i)};
+            }
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 void TimelineView::paintHeader(QPainter& p) const {
@@ -342,10 +407,10 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
     p.drawLine(QPointF(first, static_cast<double>(cy)),
                QPointF(last, static_cast<double>(cy)));
 
-    const bool layerSelected = selected_.has_value() && *selected_ == layer.id;
-    for (const core::Keyframe& k : prop.keys) {
-        paintDiamond(p, xForTime(to_seconds(k.time, ctx)), static_cast<double>(cy),
-                     layerSelected);
+    for (std::size_t i = 0; i < prop.keys.size(); ++i) {
+        const KeyRef ref{layer.id, row.propertyIndex, static_cast<int>(i)};
+        paintDiamond(p, xForTime(to_seconds(prop.keys[i].time, ctx)),
+                     static_cast<double>(cy), isKeySelected(ref));
     }
 }
 
@@ -411,17 +476,28 @@ void TimelineView::paintEvent(QPaintEvent*) {
 
 void TimelineView::mousePressEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();
-
-    // Anywhere in the ruler, or anywhere on the track side, scrubs.
-    if (pos.y() < metrics::kColumnHeaderH || pos.x() >= trackLeft()) {
-        if (pos.x() >= trackLeft()) {
-            scrubbing_ = true;
-            setCurrentTime(timeForX(pos.x()));
-            return;
-        }
-    }
+    const bool additive = e->modifiers().testFlag(Qt::ShiftModifier);
 
     if (comp_ == nullptr) {
+        return;
+    }
+
+    // Track side. A keyframe under the cursor wins over scrubbing, otherwise the click
+    // clears the key selection and starts a scrub.
+    if (pos.x() >= trackLeft()) {
+        if (pos.y() >= metrics::kColumnHeaderH) {
+            if (const auto hit = keyAt(pos); hit.has_value()) {
+                toggleKeySelection(*hit, additive);
+                update();
+                return;
+            }
+            if (!additive) {
+                selectedKeys_.clear();
+            }
+        }
+        scrubbing_ = true;
+        setCurrentTime(timeForX(pos.x()));
+        update();
         return;
     }
 
@@ -487,14 +563,8 @@ protected:
         p.setFont(monoFont(type::kTimeReadout));
         p.setPen(kAccent);
 
-        const int totalFrames = static_cast<int>(std::round(seconds_ * fps_));
-        const int f = totalFrames % static_cast<int>(std::round(fps_));
-        const int totalSeconds = totalFrames / static_cast<int>(std::round(fps_));
-        const QString code = QStringLiteral("%1:%2:%3")
-                                 .arg(totalSeconds / 60, 2, 10, QLatin1Char('0'))
-                                 .arg(totalSeconds % 60, 2, 10, QLatin1Char('0'))
-                                 .arg(f, 2, 10, QLatin1Char('0'));
-        p.drawText(QRect(9, 0, 90, height()), Qt::AlignVCenter | Qt::AlignLeft, code);
+        p.drawText(QRect(9, 0, 90, height()), Qt::AlignVCenter | Qt::AlignLeft,
+                   formatTimecode(seconds_, fps_));
 
         p.setFont(monoFont(type::kMeta));
         p.setPen(kTextDim);
@@ -550,6 +620,7 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
             bar_->setState(seconds, comp->fps, static_cast<int>(comp->layers.size()),
                            comp->totalKeyframes());
         }
+        emit currentTimeChanged(seconds);
     });
 }
 

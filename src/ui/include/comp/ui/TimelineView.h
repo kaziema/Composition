@@ -8,6 +8,22 @@ class QScrollBar;
 
 namespace comp::ui {
 
+// MM:SS:FF at the composition's frame rate. Shared so the timeline sub-toolbar and the
+// viewer's readout cannot drift apart.
+[[nodiscard]] QString formatTimecode(double seconds, double fps);
+
+// Identifies one keyframe. Positional for now, which is fine while keys cannot be
+// reordered; it becomes a real id the moment retiming lands.
+struct KeyRef {
+    core::LayerId layer = 0;
+    int property = -1;
+    int index = -1;
+
+    [[nodiscard]] bool operator==(const KeyRef& other) const noexcept {
+        return layer == other.layer && property == other.property && index == other.index;
+    }
+};
+
 // The timeline, custom-painted rather than assembled from a table view. The design
 // pins exact row heights, a 372px layer-column block, a shared time axis between the
 // layer bars and the ruler, and keyframe diamonds drawn on the same rows as the
@@ -70,12 +86,20 @@ private:
     void paintPlayhead(QPainter& p) const;
     static void paintDiamond(QPainter& p, double cx, double cy, bool selected);
 
+    // Selection is view state, not document state. The design treats layer selection and
+    // keyframe selection as separate lists, and colouring every key on the selected layer
+    // blue was conflating the two.
+    [[nodiscard]] std::optional<KeyRef> keyAt(const QPoint& pos) const;
+    [[nodiscard]] bool isKeySelected(const KeyRef& ref) const;
+    void toggleKeySelection(const KeyRef& ref, bool additive);
+
     core::Composition* comp_ = nullptr;
     std::vector<Row> rows_;
     double currentTime_ = 3.14;
     int scrollY_ = 0;
     int contentHeight_ = 0;
     std::optional<core::LayerId> selected_;
+    std::vector<KeyRef> selectedKeys_;
     bool scrubbing_ = false;
 };
 
@@ -87,6 +111,9 @@ public:
     explicit TimelinePanel(QWidget* parent = nullptr);
 
     void setComposition(core::Composition* comp);
+
+signals:
+    void currentTimeChanged(double seconds);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

@@ -4,6 +4,7 @@
 
 #include "comp/core/Document.h"
 
+class QLabel;
 class QSplitter;
 
 namespace comp::ui {
@@ -31,6 +32,7 @@ private:
 
     core::Project project_;  // TEMPORARY demo content
     EditorToolBar* toolBar_ = nullptr;
+    QLabel* viewerTimecode_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;
 };
