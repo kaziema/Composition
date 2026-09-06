@@ -41,7 +41,7 @@ struct TimeContext {
 
 // Resolve to seconds. Beats resolve against the project tempo.
 //
-// OPEN QUESTION (notebook 10.4): when has_beat_map is false we currently fall back
+// OPEN QUESTION (notebook 11.5): when has_beat_map is false we currently fall back
 // to TimeContext::bpm. The alternative is degrading to the seconds value the preset
 // author previewed at, which requires presets to carry both. Not decided.
 double to_seconds(TimeValue t, const TimeContext& ctx) noexcept;

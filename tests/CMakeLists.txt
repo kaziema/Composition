@@ -6,6 +6,8 @@ endfunction()
 
 comp_add_test(test_units)
 comp_add_test(test_identity)
+comp_add_test(test_animation)
+comp_add_test(test_document)
 
 # UI tests need Qt and run offscreen.
 find_package(Qt6 REQUIRED COMPONENTS Widgets)

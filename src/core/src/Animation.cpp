@@ -1,0 +1,142 @@
+#include "comp/core/Animation.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace comp::core {
+namespace {
+
+// Solves the cubic bezier timing curve with control points (p1x, 0) and (p2x, 1),
+// the same construction CSS timing functions use. Bisection rather than Newton:
+// the curve is monotonic in x, we need about 30 iterations, and it cannot diverge.
+double bezierSolve(double x, double p1x, double p2x) noexcept {
+    const auto sampleX = [p1x, p2x](double t) {
+        const double u = 1.0 - t;
+        return 3.0 * u * u * t * p1x + 3.0 * u * t * t * p2x + t * t * t;
+    };
+
+    double lo = 0.0;
+    double hi = 1.0;
+    double t = x;
+    for (int i = 0; i < 32; ++i) {
+        const double err = sampleX(t) - x;
+        if (std::fabs(err) < 1e-7) {
+            break;
+        }
+        if (err > 0.0) {
+            hi = t;
+        } else {
+            lo = t;
+        }
+        t = 0.5 * (lo + hi);
+    }
+    return t;
+}
+
+double bezierY(double t, double p1y, double p2y) noexcept {
+    const double u = 1.0 - t;
+    return 3.0 * u * u * t * p1y + 3.0 * u * t * t * p2y + t * t * t;
+}
+
+}  // namespace
+
+Value lerp(const Value& a, const Value& b, double t) noexcept {
+    Value out;
+    out.count = std::max(a.count, b.count);
+    for (std::size_t i = 0; i < 4; ++i) {
+        out.c[i] = a.c[i] + (b.c[i] - a.c[i]) * t;
+    }
+    return out;
+}
+
+bool approxEqual(const Value& a, const Value& b, double eps) noexcept {
+    if (a.count != b.count) {
+        return false;
+    }
+    for (std::size_t i = 0; i < static_cast<std::size_t>(a.count); ++i) {
+        if (std::fabs(a.c[i] - b.c[i]) > eps) {
+            return false;
+        }
+    }
+    return true;
+}
+
+double easeCurve(double t, double easeOut, double easeIn, double overshoot) noexcept {
+    t = std::clamp(t, 0.0, 1.0);
+    easeOut = std::clamp(easeOut, 0.0, 1.0);
+    easeIn = std::clamp(easeIn, 0.0, 1.0);
+
+    // Influence maps to control point placement: more ease-out drags the first
+    // handle right, holding the value near its start for longer.
+    const double solved = bezierSolve(t, easeOut, 1.0 - easeIn);
+    double eased = bezierY(solved, 0.0, 1.0);
+
+    if (overshoot > 0.0) {
+        // Classic back-out: the value sails past its target and settles. This is
+        // the assistant's OVER tile, and the shape both graph curves show in the
+        // design's graph-editor screen.
+        const double s = overshoot * 2.70158;
+        const double u = eased - 1.0;
+        eased = 1.0 + (s + 1.0) * u * u * u + s * u * u;
+    }
+    return eased;
+}
+
+std::size_t Property::addKey(const Keyframe& k, const TimeContext& ctx) {
+    const double at = to_seconds(k.time, ctx);
+
+    const auto pos = std::lower_bound(
+        keys.begin(), keys.end(), at, [&ctx](const Keyframe& existing, double target) {
+            return to_seconds(existing.time, ctx) < target;
+        });
+
+    if (pos != keys.end() && std::fabs(to_seconds(pos->time, ctx) - at) < 1e-9) {
+        *pos = k;
+        return static_cast<std::size_t>(std::distance(keys.begin(), pos));
+    }
+
+    const auto inserted = keys.insert(pos, k);
+    return static_cast<std::size_t>(std::distance(keys.begin(), inserted));
+}
+
+Value Property::evaluate(double seconds, const TimeContext& ctx) const {
+    if (keys.empty()) {
+        return staticValue;
+    }
+    if (keys.size() == 1) {
+        return keys.front().value;
+    }
+    if (seconds <= to_seconds(keys.front().time, ctx)) {
+        return keys.front().value;
+    }
+    if (seconds >= to_seconds(keys.back().time, ctx)) {
+        return keys.back().value;
+    }
+
+    std::size_t i = 0;
+    while (i + 1 < keys.size() && to_seconds(keys[i + 1].time, ctx) <= seconds) {
+        ++i;
+    }
+
+    const Keyframe& a = keys[i];
+    const Keyframe& b = keys[i + 1];
+
+    if (a.interp == Interpolation::Hold) {
+        return a.value;
+    }
+
+    const double t0 = to_seconds(a.time, ctx);
+    const double t1 = to_seconds(b.time, ctx);
+    const double span = t1 - t0;
+    if (span <= 0.0) {
+        return b.value;
+    }
+
+    const double raw = (seconds - t0) / span;
+    const double t = (a.interp == Interpolation::Linear)
+                         ? raw
+                         : easeCurve(raw, a.easeOut, b.easeIn, b.overshoot);
+    return lerp(a.value, b.value, t);
+}
+
+}  // namespace comp::core

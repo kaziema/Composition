@@ -4,7 +4,7 @@
 #include <QPalette>
 #include <QString>
 
-// Design tokens from the "Anchor" handoff (notebook section 12).
+// Design tokens from the "Anchor" handoff (notebook section 13).
 // Values are literal and intentional: colors, row heights, and panel widths are
 // final in the handoff. Everything is square except traffic lights, tab dots,
 // stopwatches, and A/V dots. Depth comes from 1px borders and value steps, not

@@ -1,6 +1,8 @@
 add_library(comp_core STATIC
     src/Units.cpp
     src/Identity.cpp
+    src/Animation.cpp
+    src/Document.cpp
 )
 add_library(comp::core ALIAS comp_core)
 
