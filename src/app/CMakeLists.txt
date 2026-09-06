@@ -4,15 +4,12 @@ qt_standard_project_setup()
 
 qt_add_executable(composition
     main.cpp
-    MainWindow.cpp
-    MainWindow.h
 )
 
 target_link_libraries(composition
     PRIVATE
-        Qt6::Widgets
+        comp::ui
         comp::core
-        comp::gpu
         comp_warnings
 )
 

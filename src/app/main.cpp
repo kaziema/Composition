@@ -1,13 +1,16 @@
 #include <QApplication>
 
-#include "MainWindow.h"
+#include "comp/ui/MainWindow.h"
+#include "comp/ui/Theme.h"
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Composition"));
     QApplication::setOrganizationName(QStringLiteral("Composition"));
+    QApplication::setStyle(QStringLiteral("Fusion"));
+    app.setStyleSheet(comp::ui::theme::styleSheet());
 
-    comp::app::MainWindow window;
+    comp::ui::MainWindow window;
     window.show();
 
     return QApplication::exec();

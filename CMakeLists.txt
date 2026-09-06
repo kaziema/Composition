@@ -28,6 +28,7 @@ include(cmake/CompilerWarnings.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/gpu)
+add_subdirectory(src/ui)
 add_subdirectory(src/app)
 
 if(COMP_BUILD_TESTS)
