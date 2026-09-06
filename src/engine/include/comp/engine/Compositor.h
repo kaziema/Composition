@@ -47,9 +47,17 @@ private:
     // Uniform buffers are recycled across frames rather than reallocated per layer.
     [[nodiscard]] gpu::BufferHandle uniformBuffer(std::size_t index);
 
-    // Decodes and uploads the frame for `path` at `seconds`, returning the texture to
-    // sample. Null when the file will not open, which leaves the layer flat.
-    [[nodiscard]] gpu::TextureHandle textureFor(const std::string& path, double seconds);
+    // A layer's source material: the texture to sample plus the size it wants to be.
+    // Size matters as much as the pixels; a 1920x1080 clip is not a 1080x1920 layer.
+    struct Content {
+        gpu::TextureHandle texture;
+        int width = 0;
+        int height = 0;
+    };
+
+    // Decodes and uploads the frame for `path` at `seconds`. An empty result means the
+    // file would not open, which leaves the layer flat rather than making it disappear.
+    [[nodiscard]] Content contentFor(const std::string& path, double seconds);
 
     gpu::GpuDevice& device_;
     gpu::RenderPipelineHandle quads_;

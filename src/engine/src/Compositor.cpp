@@ -103,7 +103,7 @@ Compositor::Compositor(gpu::GpuDevice& device, gpu::TextureFormat targetFormat)
     device_.write_texture(white_, pixel, sizeof(pixel), 4);
 }
 
-gpu::TextureHandle Compositor::textureFor(const std::string& path, double seconds) {
+Compositor::Content Compositor::contentFor(const std::string& path, double seconds) {
     auto it = sources_.find(path);
     if (it == sources_.end()) {
         Source source;
@@ -112,12 +112,15 @@ gpu::TextureHandle Compositor::textureFor(const std::string& path, double second
     }
     Source& source = it->second;
     if (source.decoder == nullptr) {
-        return nullptr;  // unopenable file; the layer stays flat rather than vanishing
+        return {};  // unopenable file; the layer stays flat rather than vanishing
     }
+
+    const Content sized{source.texture, source.decoder->width(),
+                        source.decoder->height()};
 
     const media::VideoFrame* frame = source.decoder->frameAt(seconds);
     if (frame == nullptr || !frame->valid()) {
-        return source.texture;
+        return sized;
     }
 
     if (source.texture == nullptr) {
@@ -139,7 +142,7 @@ gpu::TextureHandle Compositor::textureFor(const std::string& path, double second
                               static_cast<std::uint32_t>(frame->width) * 4);
         source.uploadedTime = frame->pts;
     }
-    return source.texture;
+    return {source.texture, frame->width, frame->height};
 }
 
 gpu::BufferHandle Compositor::uniformBuffer(std::size_t index) {
@@ -244,30 +247,42 @@ void Compositor::render(const core::Composition& comp, double seconds,
         const auto syPct = static_cast<float>(componentOr(scale, 1, 100.0, seconds, ctx));
         const auto alpha = static_cast<float>(componentOr(opacity, 0, 100.0, seconds, ctx));
 
-        // Footage and precomps fill the frame, the way real source material does.
-        // Graphics layers have no content yet, so they stand in at 60% of the frame,
-        // which also keeps them from completely hiding the footage underneath.
-        const bool fillsFrame = layer.kind == core::LayerKind::Footage ||
-                                layer.kind == core::LayerKind::Precomp;
-        const float base = fillsFrame ? 1.0f : 0.6f;
-
-        const float w = frameW * base * (sxPct / 100.0f);
-        const float h = frameH * base * (syPct / 100.0f);
-        const float cx = frameX + frameW * (px / 100.0f);
-        const float cy = frameY + frameH * (py / 100.0f);
-
         // Media fills the quad; without it the label colour stands in.
-        gpu::TextureHandle content;
+        Content content;
         Rgb tint = colorFor(layer.label);
         if (layer.mediaPath.has_value()) {
-            content = textureFor(*layer.mediaPath, seconds - in);
-            if (content != nullptr) {
+            content = contentFor(*layer.mediaPath, seconds - in);
+            if (content.texture != nullptr) {
                 tint = {1.0f, 1.0f, 1.0f};  // do not tint real footage
             }
         }
 
+        // A layer is the size of its source, not the size of the frame. A 1920x1080
+        // clip in a 1080x1920 composition comes in wider than the frame and gets
+        // cropped at the sides; squashing it to fit would distort the picture and make
+        // every framing decision on top of it wrong.
+        float baseW = frameW * 0.6f;
+        float baseH = frameH * 0.6f;
+        if (content.width > 0 && content.height > 0) {
+            // One composition pixel in screen pixels. Uniform, because the frame fit is.
+            const float pxPerUnit = frameW / compW;
+            baseW = static_cast<float>(content.width) * pxPerUnit;
+            baseH = static_cast<float>(content.height) * pxPerUnit;
+        } else if (layer.kind == core::LayerKind::Footage ||
+                   layer.kind == core::LayerKind::Precomp) {
+            // No source resolved. A precomp is comp-sized by definition, and unresolved
+            // footage has no better guess available.
+            baseW = frameW;
+            baseH = frameH;
+        }
+
+        const float w = baseW * (sxPct / 100.0f);
+        const float h = baseH * (syPct / 100.0f);
+        const float cx = frameX + frameW * (px / 100.0f);
+        const float cy = frameY + frameH * (py / 100.0f);
+
         pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, tint,
-                 std::clamp(alpha / 100.0f, 0.0f, 1.0f), content);
+                 std::clamp(alpha / 100.0f, 0.0f, 1.0f), content.texture);
     }
 
     commands->end_pass();
