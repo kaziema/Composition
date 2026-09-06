@@ -2,6 +2,8 @@
 
 #include <QMainWindow>
 
+#include "comp/core/Document.h"
+
 class QSplitter;
 
 namespace comp::ui {
@@ -27,6 +29,7 @@ private:
     static PanelFrame* makePanel(const QStringList& tabs, const QString& note);
     static QWidget* makePlaceholder(const QString& note);
 
+    core::Project project_;  // TEMPORARY demo content
     EditorToolBar* toolBar_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;

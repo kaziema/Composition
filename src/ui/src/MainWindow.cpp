@@ -9,9 +9,11 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 
+#include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"
+#include "comp/ui/TimelineView.h"
 
 namespace comp::ui {
 
@@ -272,9 +274,15 @@ QWidget* MainWindow::buildBody() {
     outerSplit_->setHandleWidth(metrics::kGutter);
     outerSplit_->setChildrenCollapsible(false);
 
-    auto* timeline = makePanel({QStringLiteral("Timeline")},
-                               QStringLiteral("layers, keyframes, beat grid\n"
-                                              "custom-painted, not a table view"));
+    // TEMPORARY: a demo composition so the timeline has something to draw.
+    // Goes away once the app can open a project file.
+    project_ = demo::sampleProject();
+
+    auto* timeline = new PanelFrame({QString::fromStdString(
+        project_.compositions().front().name)});
+    auto* timelinePanel = new TimelinePanel;
+    timelinePanel->setComposition(&project_.compositions().front());
+    timeline->addPage(timelinePanel);
 
     outerSplit_->addWidget(bodySplit_);
     outerSplit_->addWidget(timeline);
