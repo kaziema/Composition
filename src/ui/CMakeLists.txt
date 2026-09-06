@@ -7,10 +7,12 @@ qt_add_library(comp_ui STATIC
     src/Theme.cpp
     src/PanelFrame.cpp
     src/EditorToolBar.cpp
+    src/ToolIcons.cpp
     src/MainWindow.cpp
     include/comp/ui/Theme.h
     include/comp/ui/PanelFrame.h
     include/comp/ui/EditorToolBar.h
+    include/comp/ui/ToolIcons.h
     include/comp/ui/MainWindow.h
 )
 add_library(comp::ui ALIAS comp_ui)

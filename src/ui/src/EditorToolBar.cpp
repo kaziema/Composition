@@ -1,10 +1,12 @@
 #include "comp/ui/EditorToolBar.h"
 
 #include <QFontMetrics>
+#include <iterator>
 #include <QMouseEvent>
 #include <QPainter>
 
 #include "comp/ui/Theme.h"
+#include "comp/ui/ToolIcons.h"
 
 namespace comp::ui {
 
@@ -12,19 +14,15 @@ using namespace theme;
 
 namespace {
 
-// Handoff uses text glyphs as deliberate stand-ins for a real icon set:
-// selection / pan / text / shape / pen / mask / hand / anchor / fx.
-const QStringList kToolGlyphs = {
-    QStringLiteral("▶"),  // selection
-    QStringLiteral("✥"),  // pan behind
-    QStringLiteral("T"),       // text
-    QStringLiteral("◻"),  // shape
-    QStringLiteral("✎"),  // pen
-    QStringLiteral("⬔"),  // mask
-    QStringLiteral("✋"),  // hand
-    QStringLiteral("⌾"),  // anchor
-    QStringLiteral("fx"),      // effects
+// The handoff's nine tools, drawn as vector paths rather than the mock's text
+// glyphs. Several of those glyphs carry Unicode emoji presentation, so the hand
+// rendered in full colour and broke the toolbar's monochrome run.
+constexpr ToolIcon kTools[] = {
+    ToolIcon::Selection, ToolIcon::Pan,    ToolIcon::Text,
+    ToolIcon::Shape,     ToolIcon::Pen,    ToolIcon::Mask,
+    ToolIcon::Hand,      ToolIcon::Anchor, ToolIcon::Effects,
 };
+constexpr int kToolCount = static_cast<int>(std::size(kTools));
 
 constexpr int kEdgePad = 8;
 constexpr int kToolGap = 1;
@@ -61,7 +59,7 @@ void EditorToolBar::relayout() {
 
     toolRects_.clear();
     int x = kEdgePad;
-    for (int i = 0; i < kToolGlyphs.size(); ++i) {
+    for (int i = 0; i < kToolCount; ++i) {
         toolRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
         x += metrics::kToolButtonW + kToolGap;
     }
@@ -117,8 +115,7 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
             p.fillRect(r, kMenuActive);
         }
 
-        p.setPen(active ? QColor("#12212e") : kTextTertiary);
-        p.drawText(r, Qt::AlignCenter, kToolGlyphs.at(i));
+        paintToolIcon(p, r, kTools[i], active ? QColor("#12212e") : kTextTertiary);
     }
 
     p.fillRect(dividerRect_, kDivider);
