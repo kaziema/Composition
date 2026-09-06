@@ -12,6 +12,7 @@ namespace comp::ui {
 
 class EditorToolBar;
 class GpuViewport;
+class Playback;
 class InspectorView;
 class PanelFrame;
 
@@ -31,6 +32,7 @@ public:
 
 private:
     void buildMenus();
+    void updateStatus();
     QWidget* buildBody();
 
     static PanelFrame* makePanel(const QStringList& tabs, const QString& note);
@@ -41,6 +43,7 @@ private:
     QLabel* viewerTimecode_ = nullptr;
     InspectorView* inspector_ = nullptr;
     GpuViewport* viewport_ = nullptr;
+    Playback* playback_ = nullptr;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;

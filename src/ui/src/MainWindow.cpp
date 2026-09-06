@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QTimer>
 #include <QPainter>
 #include <QSplitter>
 #include <QStatusBar>
@@ -14,6 +15,7 @@
 #include "comp/ui/Format.h"
 #include "comp/ui/GpuViewport.h"
 #include "comp/ui/InspectorView.h"
+#include "comp/ui/Playback.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"
 #include "comp/ui/TimelineView.h"
@@ -139,10 +141,18 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
     setCentralWidget(root);
 
-    statusBar()->showMessage(gpu_ != nullptr
-                                 ? QStringLiteral("GPU: %1")
-                                       .arg(QString::fromStdString(gpu_->description()))
-                                 : QStringLiteral("No GPU adapter. Viewport disabled."));
+    updateStatus();
+
+    // While playing, report the frame rate we actually achieve rather than the one we
+    // are aiming for. A number that always reads 30 would be useless.
+    auto* statusTick = new QTimer(this);
+    statusTick->setInterval(250);
+    connect(statusTick, &QTimer::timeout, this, [this] {
+        if (playback_ != nullptr && playback_->playing()) {
+            updateStatus();
+        }
+    });
+    statusTick->start();
 }
 
 namespace {
@@ -162,6 +172,21 @@ void addPending(QMenu* menu, const QStringList& items) {
 }
 
 }  // namespace
+
+void MainWindow::updateStatus() {
+    QString text = (gpu_ != nullptr)
+                       ? QStringLiteral("GPU: %1").arg(
+                             QString::fromStdString(gpu_->description()))
+                       : QStringLiteral("No GPU adapter. Viewport disabled.");
+
+    if (playback_ != nullptr && playback_->playing()) {
+        text += QStringLiteral("   ·   playing %1 fps")
+                    .arg(playback_->measuredFps(), 0, 'f', 1);
+    } else {
+        text += QStringLiteral("   ·   space to play");
+    }
+    statusBar()->showMessage(text);
+}
 
 void MainWindow::buildMenus() {
     // Handoff menu set, in order:
@@ -325,6 +350,31 @@ QWidget* MainWindow::buildBody() {
                                      ? std::optional<core::LayerId>{}
                                      : std::optional<core::LayerId>{comp.layers.front().id});
     inspector_->setCurrentTime(3.14);
+    // Playback drives the timeline, which already propagates time to the viewer, the
+    // inspector and the readouts. One path in, everything follows.
+    playback_ = new Playback(this);
+    playback_->configure(comp.duration, comp.fps);
+    playback_->seek(3.14);
+    connect(playback_, &Playback::timeChanged, timelinePanel,
+            &TimelinePanel::setCurrentTime);
+    // Scrubbing by hand while playing would fight the clock, so a scrub stops playback
+    // and hands the position back to the transport.
+    connect(timelinePanel, &TimelinePanel::currentTimeChanged, this,
+            [this](double seconds) {
+                if (playback_->playing()) {
+                    return;
+                }
+                playback_->seek(seconds);
+            });
+    connect(playback_, &Playback::playingChanged, this,
+            [this](bool) { updateStatus(); });
+
+    auto* playPause = new QAction(QStringLiteral("Play/Pause"), this);
+    playPause->setShortcut(Qt::Key_Space);
+    playPause->setShortcutContext(Qt::ApplicationShortcut);
+    connect(playPause, &QAction::triggered, playback_, &Playback::togglePlay);
+    addAction(playPause);
+
     connect(inspector_, &InspectorView::propertyEdited, timelinePanel,
             &TimelinePanel::refresh);
 

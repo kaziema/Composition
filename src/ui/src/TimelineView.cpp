@@ -602,6 +602,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
             &TimelinePanel::selectionChanged);
 }
 
+void TimelinePanel::setCurrentTime(double seconds) { view_->setCurrentTime(seconds); }
+
 void TimelinePanel::syncScrollRange() {
     const int overflow = std::max(0, view_->contentHeight() - view_->height());
     scroll_->setRange(0, overflow);

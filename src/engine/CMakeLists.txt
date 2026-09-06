@@ -1,5 +1,6 @@
 add_library(comp_engine STATIC
     src/Compositor.cpp
+    src/Transport.cpp
 )
 add_library(comp::engine ALIAS comp_engine)
 

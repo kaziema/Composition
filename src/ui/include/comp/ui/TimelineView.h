@@ -112,6 +112,10 @@ public:
     // keyframe, so the counts in the sub-toolbar move too.
     void refresh();
 
+    // Driven by playback. Emits currentTimeChanged like a scrub would, so the viewer
+    // and inspector follow without needing to know where the time came from.
+    void setCurrentTime(double seconds);
+
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);

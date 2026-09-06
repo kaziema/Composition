@@ -9,6 +9,10 @@ comp_add_test(test_identity)
 comp_add_test(test_animation)
 comp_add_test(test_document)
 
+add_executable(test_transport test_transport.cpp)
+target_link_libraries(test_transport PRIVATE comp::engine comp_warnings)
+add_test(NAME test_transport COMMAND test_transport)
+
 # The GPU test brings up a real adapter, so it needs the Dawn runtime beside it.
 add_executable(test_gpu test_gpu.cpp)
 target_link_libraries(test_gpu PRIVATE comp::gpu comp_warnings)
