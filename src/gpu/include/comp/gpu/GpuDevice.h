@@ -24,6 +24,12 @@ enum class TextureFormat {
     RGBA32Float,
     R8Unorm,       // masks
     R16Float,
+    // Display formats. The sRGB variants make the hardware apply the linear-to-display
+    // transform on write, which is why we composite in linear and present to one of
+    // these rather than encoding by hand in every shader.
+    BGRA8Unorm,
+    BGRA8UnormSrgb,
+    RGBA8UnormSrgb,
 };
 
 enum class TextureUsage : std::uint32_t {
@@ -74,9 +80,17 @@ public:
     virtual ~ComputePipeline() = default;
 };
 
+// A draw pipeline. The engine's own passes (composite, blit) are a handful of these;
+// the effect library is compute.
+class RenderPipeline {
+public:
+    virtual ~RenderPipeline() = default;
+};
+
 using TextureHandle = std::shared_ptr<Texture>;
 using BufferHandle = std::shared_ptr<Buffer>;
 using ComputePipelineHandle = std::shared_ptr<ComputePipeline>;
+using RenderPipelineHandle = std::shared_ptr<RenderPipeline>;
 
 // A window we can present to. The native handle is the only platform-specific thing
 // in the whole interface: an NSView* on macOS, an HWND on Windows.
@@ -85,6 +99,9 @@ public:
     virtual ~Surface() = default;
 
     virtual void configure(std::uint32_t width, std::uint32_t height) = 0;
+
+    // What the swapchain actually gave us. Pipelines have to be built against it.
+    [[nodiscard]] virtual TextureFormat format() const noexcept = 0;
 
     // The next backbuffer, or null if it could not be acquired (resizing, occluded,
     // device lost). Callers must handle null rather than assume a frame is always ready.
@@ -110,9 +127,17 @@ public:
     virtual void write_texture(const TextureHandle& dst, const void* data,
                                std::size_t bytes, std::uint32_t row_stride) = 0;
 
-    // Shaders. Source is Slang, compiled to the backend's target offline or on load.
+    // Effects are authored in Slang and compiled to the backend's target.
     [[nodiscard]] virtual ComputePipelineHandle create_compute_pipeline(
         std::string_view slang_module, std::string_view entry_point) = 0;
+
+    // Engine-internal draw passes, written in WGSL directly. These are a fixed handful
+    // that we write once; Slang's module system earns its keep on the effect library,
+    // not here.
+    [[nodiscard]] virtual RenderPipelineHandle create_render_pipeline(
+        std::string_view wgsl, std::string_view vertex_entry,
+        std::string_view fragment_entry, TextureFormat target_format,
+        std::string_view label) = 0;
 
     // Presentation. `native_window` is an NSView* on macOS, an HWND on Windows.
     [[nodiscard]] virtual SurfaceHandle create_surface(void* native_window) = 0;
@@ -147,9 +172,16 @@ public:
 
     virtual void copy_texture(const TextureHandle& src, const TextureHandle& dst) = 0;
 
-    // Fills a render target with a colour. Components are 0..1 in linear light, which is
-    // the working space everything composites in.
-    virtual void clear(const TextureHandle& target, float r, float g, float b, float a) = 0;
+    // Opens a render pass, clearing the target. Colour components are 0..1 in linear
+    // light, which is the working space everything composites in.
+    virtual void begin_pass(const TextureHandle& target, float r, float g, float b,
+                            float a) = 0;
+    virtual void end_pass() = 0;
+
+    // Draws `vertex_count` vertices with the given pipeline and uniform block. Vertices
+    // are generated in the shader, so there is no vertex buffer to bind.
+    virtual void draw(const RenderPipelineHandle& pipeline, const BufferHandle& uniforms,
+                      std::uint32_t vertex_count) = 0;
 };
 
 // Backend factory. Returns nullptr if no suitable adapter exists.

@@ -330,6 +330,13 @@ QWidget* MainWindow::buildBody() {
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);
+        viewport_->setComposition(&comp);
+        viewport_->setCurrentTime(3.14);
+        connect(timelinePanel, &TimelinePanel::currentTimeChanged, viewport_,
+                &GpuViewport::setCurrentTime);
+        // An edit changes what the frame looks like, so the viewer redraws too.
+        connect(inspector_, &InspectorView::propertyEdited, viewport_,
+                [this] { viewport_->update(); });
     }
 
     outerSplit_->addWidget(bodySplit_);

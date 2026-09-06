@@ -17,13 +17,29 @@ namespace {
 
 wgpu::TextureFormat toWgpu(TextureFormat format) noexcept {
     switch (format) {
-        case TextureFormat::RGBA8Unorm:  return wgpu::TextureFormat::RGBA8Unorm;
-        case TextureFormat::RGBA16Float: return wgpu::TextureFormat::RGBA16Float;
-        case TextureFormat::RGBA32Float: return wgpu::TextureFormat::RGBA32Float;
-        case TextureFormat::R8Unorm:     return wgpu::TextureFormat::R8Unorm;
-        case TextureFormat::R16Float:    return wgpu::TextureFormat::R16Float;
+        case TextureFormat::RGBA8Unorm:     return wgpu::TextureFormat::RGBA8Unorm;
+        case TextureFormat::RGBA16Float:    return wgpu::TextureFormat::RGBA16Float;
+        case TextureFormat::RGBA32Float:    return wgpu::TextureFormat::RGBA32Float;
+        case TextureFormat::R8Unorm:        return wgpu::TextureFormat::R8Unorm;
+        case TextureFormat::R16Float:       return wgpu::TextureFormat::R16Float;
+        case TextureFormat::BGRA8Unorm:     return wgpu::TextureFormat::BGRA8Unorm;
+        case TextureFormat::BGRA8UnormSrgb: return wgpu::TextureFormat::BGRA8UnormSrgb;
+        case TextureFormat::RGBA8UnormSrgb: return wgpu::TextureFormat::RGBA8UnormSrgb;
     }
     return wgpu::TextureFormat::RGBA16Float;
+}
+
+TextureFormat fromWgpu(wgpu::TextureFormat format) noexcept {
+    switch (format) {
+        case wgpu::TextureFormat::RGBA8Unorm:     return TextureFormat::RGBA8Unorm;
+        case wgpu::TextureFormat::RGBA16Float:    return TextureFormat::RGBA16Float;
+        case wgpu::TextureFormat::RGBA32Float:    return TextureFormat::RGBA32Float;
+        case wgpu::TextureFormat::R8Unorm:        return TextureFormat::R8Unorm;
+        case wgpu::TextureFormat::R16Float:       return TextureFormat::R16Float;
+        case wgpu::TextureFormat::BGRA8UnormSrgb: return TextureFormat::BGRA8UnormSrgb;
+        case wgpu::TextureFormat::RGBA8UnormSrgb: return TextureFormat::RGBA8UnormSrgb;
+        default:                                  return TextureFormat::BGRA8Unorm;
+    }
 }
 
 wgpu::TextureUsage toWgpu(TextureUsage usage) noexcept {
@@ -77,20 +93,20 @@ private:
 // the allocation. It only lives as long as the frame it was acquired for.
 class SwapchainTexture final : public Texture {
 public:
-    SwapchainTexture(wgpu::Texture texture, std::uint32_t w, std::uint32_t h)
-        : texture_(std::move(texture)), width_(w), height_(h) {}
+    SwapchainTexture(wgpu::Texture texture, std::uint32_t w, std::uint32_t h,
+                     TextureFormat format)
+        : texture_(std::move(texture)), width_(w), height_(h), format_(format) {}
 
     [[nodiscard]] std::uint32_t width() const noexcept override { return width_; }
     [[nodiscard]] std::uint32_t height() const noexcept override { return height_; }
-    [[nodiscard]] TextureFormat format() const noexcept override {
-        return TextureFormat::RGBA8Unorm;  // surfaces are BGRA8; callers only need 8-bit
-    }
+    [[nodiscard]] TextureFormat format() const noexcept override { return format_; }
     [[nodiscard]] const wgpu::Texture& handle() const noexcept { return texture_; }
 
 private:
     wgpu::Texture texture_;
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
+    TextureFormat format_ = TextureFormat::BGRA8Unorm;
 };
 
 class DawnBuffer final : public Buffer {
@@ -108,6 +124,16 @@ private:
 
 // --- Command recorder --------------------------------------------------------
 
+class DawnRenderPipeline final : public RenderPipeline {
+public:
+    explicit DawnRenderPipeline(wgpu::RenderPipeline pipeline)
+        : pipeline_(std::move(pipeline)) {}
+    [[nodiscard]] const wgpu::RenderPipeline& handle() const noexcept { return pipeline_; }
+
+private:
+    wgpu::RenderPipeline pipeline_;
+};
+
 class DawnRecorder final : public CommandRecorder {
 public:
     DawnRecorder(wgpu::Device device, std::string_view label) : device_(std::move(device)) {
@@ -124,7 +150,8 @@ public:
     void bind_storage_texture(std::uint32_t, const TextureHandle&) override {}
     void bind_uniforms(std::uint32_t, const BufferHandle&) override {}
 
-    void clear(const TextureHandle& target, float r, float g, float b, float a) override {
+    void begin_pass(const TextureHandle& target, float r, float g, float b,
+                    float a) override {
         const wgpu::Texture* texture = wgpuTextureOf(target);
         if (texture == nullptr) {
             return;
@@ -136,13 +163,40 @@ public:
         attachment.clearValue = {static_cast<double>(r), static_cast<double>(g),
                                  static_cast<double>(b), static_cast<double>(a)};
 
-        wgpu::RenderPassDescriptor pass{};
-        pass.colorAttachmentCount = 1;
-        pass.colorAttachments = &attachment;
+        wgpu::RenderPassDescriptor desc{};
+        desc.colorAttachmentCount = 1;
+        desc.colorAttachments = &attachment;
+        pass_ = encoder_.BeginRenderPass(&desc);
+    }
 
-        // A render pass that only clears is exactly a clear. No draws needed.
-        wgpu::RenderPassEncoder encoder = encoder_.BeginRenderPass(&pass);
-        encoder.End();
+    void end_pass() override {
+        if (pass_ != nullptr) {
+            pass_.End();
+            pass_ = nullptr;
+        }
+    }
+
+    void draw(const RenderPipelineHandle& pipeline, const BufferHandle& uniforms,
+              std::uint32_t vertex_count) override {
+        const auto* dawnPipeline = dynamic_cast<const DawnRenderPipeline*>(pipeline.get());
+        const auto* dawnBuffer = dynamic_cast<const DawnBuffer*>(uniforms.get());
+        if (pass_ == nullptr || dawnPipeline == nullptr || dawnBuffer == nullptr) {
+            return;
+        }
+
+        wgpu::BindGroupEntry entry{};
+        entry.binding = 0;
+        entry.buffer = dawnBuffer->handle();
+        entry.size = dawnBuffer->size();
+
+        wgpu::BindGroupDescriptor bgDesc{};
+        bgDesc.layout = dawnPipeline->handle().GetBindGroupLayout(0);
+        bgDesc.entryCount = 1;
+        bgDesc.entries = &entry;
+
+        pass_.SetPipeline(dawnPipeline->handle());
+        pass_.SetBindGroup(0, device_.CreateBindGroup(&bgDesc));
+        pass_.Draw(vertex_count);
     }
 
     void copy_texture(const TextureHandle& src, const TextureHandle& dst) override {
@@ -175,6 +229,7 @@ public:
 private:
     wgpu::Device device_;
     wgpu::CommandEncoder encoder_;
+    wgpu::RenderPassEncoder pass_;
 };
 
 // --- Surface -----------------------------------------------------------------
@@ -215,13 +270,18 @@ public:
         if (current.texture == nullptr) {
             return nullptr;
         }
-        return std::make_shared<SwapchainTexture>(current.texture, width_, height_);
+        return std::make_shared<SwapchainTexture>(current.texture, width_, height_,
+                                                  fromWgpu(format_));
     }
 
     void present() override {
         if (configured_) {
             surface_.Present();
         }
+    }
+
+    [[nodiscard]] TextureFormat format() const noexcept override {
+        return fromWgpu(format_);
     }
 
 private:
@@ -262,10 +322,23 @@ public:
         }
 
         // Take whatever format the platform prefers rather than assuming BGRA8.
+        // Prefer an sRGB surface. Then we composite in linear light and the hardware
+        // applies the display transform on write, instead of every shader encoding by
+        // hand and getting it subtly wrong.
         wgpu::SurfaceCapabilities caps{};
         surface.GetCapabilities(adapter_, &caps);
-        const wgpu::TextureFormat format =
-            (caps.formatCount > 0) ? caps.formats[0] : wgpu::TextureFormat::BGRA8Unorm;
+
+        wgpu::TextureFormat format = wgpu::TextureFormat::BGRA8Unorm;
+        if (caps.formatCount > 0) {
+            format = caps.formats[0];
+            for (std::size_t i = 0; i < caps.formatCount; ++i) {
+                if (caps.formats[i] == wgpu::TextureFormat::BGRA8UnormSrgb ||
+                    caps.formats[i] == wgpu::TextureFormat::RGBA8UnormSrgb) {
+                    format = caps.formats[i];
+                    break;
+                }
+            }
+        }
 
         return std::make_shared<DawnSurface>(std::move(surface), device_, format);
     }
@@ -313,6 +386,49 @@ public:
 
         wgpu::Extent3D extent{texture->width(), texture->height(), 1};
         queue_.WriteTexture(&destination, data, bytes, &layout, &extent);
+    }
+
+    RenderPipelineHandle create_render_pipeline(std::string_view wgsl,
+                                                std::string_view vertex_entry,
+                                                std::string_view fragment_entry,
+                                                TextureFormat target_format,
+                                                std::string_view label) override {
+        wgpu::ShaderSourceWGSL source{};
+        source.code = wgpu::StringView(wgsl.data(), wgsl.size());
+
+        wgpu::ShaderModuleDescriptor moduleDesc{};
+        moduleDesc.nextInChain = &source;
+        moduleDesc.label = wgpu::StringView(label.data(), label.size());
+        wgpu::ShaderModule module = device_.CreateShaderModule(&moduleDesc);
+
+        // Straight alpha over. Layers arrive with their own opacity already folded in.
+        wgpu::BlendState blend{};
+        blend.color.operation = wgpu::BlendOperation::Add;
+        blend.color.srcFactor = wgpu::BlendFactor::SrcAlpha;
+        blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+        blend.alpha.operation = wgpu::BlendOperation::Add;
+        blend.alpha.srcFactor = wgpu::BlendFactor::One;
+        blend.alpha.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+
+        wgpu::ColorTargetState target{};
+        target.format = toWgpu(target_format);
+        target.blend = &blend;
+        target.writeMask = wgpu::ColorWriteMask::All;
+
+        wgpu::FragmentState fragment{};
+        fragment.module = module;
+        fragment.entryPoint = wgpu::StringView(fragment_entry.data(), fragment_entry.size());
+        fragment.targetCount = 1;
+        fragment.targets = &target;
+
+        wgpu::RenderPipelineDescriptor desc{};
+        desc.label = wgpu::StringView(label.data(), label.size());
+        desc.vertex.module = module;
+        desc.vertex.entryPoint = wgpu::StringView(vertex_entry.data(), vertex_entry.size());
+        desc.primitive.topology = wgpu::PrimitiveTopology::TriangleList;
+        desc.fragment = &fragment;
+
+        return std::make_shared<DawnRenderPipeline>(device_.CreateRenderPipeline(&desc));
     }
 
     ComputePipelineHandle create_compute_pipeline(std::string_view, std::string_view) override {

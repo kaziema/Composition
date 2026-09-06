@@ -2,6 +2,10 @@
 
 #include <QWidget>
 
+#include <memory>
+
+#include "comp/core/Document.h"
+#include "comp/engine/Compositor.h"
 #include "comp/gpu/GpuDevice.h"
 
 namespace comp::ui {
@@ -21,7 +25,10 @@ public:
     // The device is owned elsewhere and outlives this widget.
     void setDevice(gpu::GpuDevice* device);
 
-    void setClearColor(float r, float g, float b);
+    // The composition to draw, and where the playhead is. Both may be null or stale;
+    // the viewport just shows an empty frame in that case.
+    void setComposition(const core::Composition* comp);
+    void setCurrentTime(double seconds);
 
 protected:
     // Returning null is what disables Qt's own painting for this widget.
@@ -37,7 +44,9 @@ private:
 
     gpu::GpuDevice* device_ = nullptr;
     gpu::SurfaceHandle surface_;
-    float clear_[3] = {0.043f, 0.043f, 0.043f};  // panel body, in linear-ish terms
+    std::unique_ptr<engine::Compositor> compositor_;
+    const core::Composition* comp_ = nullptr;
+    double currentTime_ = 0.0;
 };
 
 }  // namespace comp::ui

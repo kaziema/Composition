@@ -22,10 +22,13 @@ void GpuViewport::setDevice(gpu::GpuDevice* device) {
     update();
 }
 
-void GpuViewport::setClearColor(float r, float g, float b) {
-    clear_[0] = r;
-    clear_[1] = g;
-    clear_[2] = b;
+void GpuViewport::setComposition(const core::Composition* comp) {
+    comp_ = comp;
+    update();
+}
+
+void GpuViewport::setCurrentTime(double seconds) {
+    currentTime_ = seconds;
     update();
 }
 
@@ -43,6 +46,11 @@ void GpuViewport::ensureSurface() {
     }
     surface_ = device_->create_surface(reinterpret_cast<void*>(handle));
     configureSurface();
+
+    // The pipeline has to be built against whatever format the swapchain gave us.
+    if (surface_ != nullptr) {
+        compositor_ = std::make_unique<engine::Compositor>(*device_, surface_->format());
+    }
 }
 
 void GpuViewport::configureSurface() {
@@ -77,9 +85,14 @@ void GpuViewport::paintEvent(QPaintEvent*) {
         return;  // mid-resize or occluded; skipping a frame is correct here
     }
 
-    auto commands = device_->begin_commands("viewport");
-    commands->clear(backbuffer, clear_[0], clear_[1], clear_[2], 1.0f);
-    device_->submit(std::move(commands));
+    if (compositor_ != nullptr && comp_ != nullptr) {
+        compositor_->render(*comp_, currentTime_, backbuffer);
+    } else {
+        auto commands = device_->begin_commands("viewport");
+        commands->begin_pass(backbuffer, 0.008f, 0.008f, 0.008f, 1.0f);
+        commands->end_pass();
+        device_->submit(std::move(commands));
+    }
 
     surface_->present();
 }

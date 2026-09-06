@@ -1,0 +1,187 @@
+#include "comp/engine/Compositor.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace comp::engine {
+namespace {
+
+// Engine-internal pass, so WGSL rather than Slang (see GpuDevice.h). Vertices are
+// generated from the vertex index; there is nothing to bind but the uniforms.
+constexpr const char* kQuadShader = R"(
+struct Uniforms {
+    transform : mat4x4<f32>,
+    color     : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> u : Uniforms;
+
+@vertex
+fn vs(@builtin(vertex_index) index : u32) -> @builtin(position) vec4<f32> {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+        vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0));
+    return u.transform * vec4<f32>(corners[index], 0.0, 1.0);
+}
+
+@fragment
+fn fs() -> @location(0) vec4<f32> {
+    return u.color;
+}
+)";
+
+// The uniform block is 80 bytes but WebGPU wants uniform bindings aligned; 256 is the
+// conservative floor across backends.
+constexpr std::size_t kUniformStride = 256;
+
+struct Rgb {
+    float r;
+    float g;
+    float b;
+};
+
+// Layer label colours, converted from the UI's sRGB hexes to linear light. Compositing
+// happens in linear, and the surface is sRGB, so the hardware re-encodes on write.
+float toLinear(float srgb) noexcept {
+    return srgb <= 0.04045f ? srgb / 12.92f
+                            : std::pow((srgb + 0.055f) / 1.055f, 2.4f);
+}
+
+Rgb linearFrom8Bit(int r, int g, int b) noexcept {
+    return {toLinear(static_cast<float>(r) / 255.0f),
+            toLinear(static_cast<float>(g) / 255.0f),
+            toLinear(static_cast<float>(b) / 255.0f)};
+}
+
+Rgb colorFor(core::LabelColor label) noexcept {
+    switch (label) {
+        case core::LabelColor::Lavender: return linearFrom8Bit(0x6e, 0x5b, 0x8a);
+        case core::LabelColor::Aqua:     return linearFrom8Bit(0x3f, 0x5f, 0x7d);
+        case core::LabelColor::Green:    return linearFrom8Bit(0x4c, 0x6b, 0x40);
+        case core::LabelColor::Gray:     break;
+    }
+    return linearFrom8Bit(0x4a, 0x4a, 0x4a);
+}
+
+double componentOr(const core::Property* prop, int index, double fallback,
+                   double seconds, const core::TimeContext& ctx) {
+    if (prop == nullptr) {
+        return fallback;
+    }
+    const core::Value v = prop->evaluate(seconds, ctx);
+    return (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
+}
+
+}  // namespace
+
+Compositor::Compositor(gpu::GpuDevice& device, gpu::TextureFormat targetFormat)
+    : device_(device) {
+    quads_ = device_.create_render_pipeline(kQuadShader, "vs", "fs", targetFormat,
+                                            "composite quads");
+}
+
+gpu::BufferHandle Compositor::uniformBuffer(std::size_t index) {
+    while (uniforms_.size() <= index) {
+        uniforms_.push_back(device_.create_uniform_buffer(kUniformStride, "layer quad"));
+    }
+    return uniforms_[index];
+}
+
+void Compositor::render(const core::Composition& comp, double seconds,
+                        const gpu::TextureHandle& target) {
+    if (target == nullptr || quads_ == nullptr) {
+        return;
+    }
+
+    const auto viewW = static_cast<float>(target->width());
+    const auto viewH = static_cast<float>(target->height());
+    if (viewW <= 0.0f || viewH <= 0.0f) {
+        return;
+    }
+
+    // Fit the composition inside the target, preserving its aspect.
+    const auto compW = static_cast<float>(comp.width);
+    const auto compH = static_cast<float>(comp.height);
+    const float fit = std::min(viewW / compW, viewH / compH);
+    const float frameW = compW * fit;
+    const float frameH = compH * fit;
+    const float frameX = (viewW - frameW) * 0.5f;
+    const float frameY = (viewH - frameH) * 0.5f;
+
+    const core::TimeContext ctx = comp.timeContext();
+
+    auto commands = device_.begin_commands("composite");
+    // Outside the frame is near-black so the letterbox reads as "not your picture".
+    commands->begin_pass(target, 0.008f, 0.008f, 0.008f, 1.0f);
+
+    // Draw the frame itself, so an empty composition still shows where it is.
+    std::size_t slot = 0;
+    const auto pushQuad = [&](float x, float y, float w, float h, Rgb color, float alpha) {
+        // Pixel rect -> normalised device coordinates. Y flips because NDC is up-positive
+        // and our layout is top-down.
+        const float sx = 2.0f * w / viewW;
+        const float sy = -2.0f * h / viewH;
+        const float tx = 2.0f * x / viewW - 1.0f;
+        const float ty = 1.0f - 2.0f * y / viewH;
+
+        QuadUniforms u{};
+        // Column-major, matching WGSL's mat4x4 layout.
+        u.transform[0] = sx;
+        u.transform[5] = sy;
+        u.transform[10] = 1.0f;
+        u.transform[12] = tx;
+        u.transform[13] = ty;
+        u.transform[15] = 1.0f;
+        u.color[0] = color.r;
+        u.color[1] = color.g;
+        u.color[2] = color.b;
+        u.color[3] = alpha;
+
+        const gpu::BufferHandle buffer = uniformBuffer(slot++);
+        device_.write_buffer(buffer, &u, sizeof(u));
+        commands->draw(quads_, buffer, 6);
+    };
+
+    pushQuad(frameX, frameY, frameW, frameH, linearFrom8Bit(0x14, 0x14, 0x14), 1.0f);
+
+    // Bottom layer first, so index 0 (the topmost) lands last.
+    for (auto it = comp.layers.rbegin(); it != comp.layers.rend(); ++it) {
+        const core::Layer& layer = *it;
+        if (!layer.enabled || layer.kind == core::LayerKind::Audio) {
+            continue;
+        }
+
+        // A layer only exists between its in and out points.
+        const double in = to_seconds(layer.inPoint, ctx);
+        const double out = to_seconds(layer.outPoint, ctx);
+        if (seconds < in || seconds >= out) {
+            continue;
+        }
+
+        const core::Property* position = layer.find("position");
+        const core::Property* scale = layer.find("scale");
+        const core::Property* opacity = layer.find("opacity");
+
+        // Position is a percentage of the frame, so it survives a reshape (D1).
+        const auto px = static_cast<float>(componentOr(position, 0, 50.0, seconds, ctx));
+        const auto py = static_cast<float>(componentOr(position, 1, 50.0, seconds, ctx));
+        const auto sxPct = static_cast<float>(componentOr(scale, 0, 100.0, seconds, ctx));
+        const auto syPct = static_cast<float>(componentOr(scale, 1, 100.0, seconds, ctx));
+        const auto alpha = static_cast<float>(componentOr(opacity, 0, 100.0, seconds, ctx));
+
+        // Placeholder geometry: 60% of the frame, so layers are legible and overlap
+        // visibly. Real layer content replaces this, not the transform maths.
+        const float w = frameW * 0.6f * (sxPct / 100.0f);
+        const float h = frameH * 0.6f * (syPct / 100.0f);
+        const float cx = frameX + frameW * (px / 100.0f);
+        const float cy = frameY + frameH * (py / 100.0f);
+
+        pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, colorFor(layer.label),
+                 std::clamp(alpha / 100.0f, 0.0f, 1.0f));
+    }
+
+    commands->end_pass();
+    device_.submit(std::move(commands));
+}
+
+}  // namespace comp::engine
