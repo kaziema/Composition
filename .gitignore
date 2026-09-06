@@ -1,0 +1,63 @@
+# Internal notebook — not for the repo
+NOTEBOOK.md
+
+# Build
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+*.d
+
+# Dependencies / vendored artifacts
+_deps/
+vcpkg_installed/
+node_modules/
+
+# ML model weights (downloaded, not committed)
+models/
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Media, caches, render output
+cache/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+*.flac
+
+# IDE / editor
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+.cache/
+.ccls-cache/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
