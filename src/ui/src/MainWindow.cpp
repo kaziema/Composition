@@ -1,6 +1,8 @@
 #include "comp/ui/MainWindow.h"
 
+#include <QAction>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QPainter>
 #include <QSplitter>
@@ -121,32 +123,90 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     statusBar()->showMessage(QStringLiteral("Chrome only. No engine behind it yet."));
 }
 
+namespace {
+
+// macOS hides a QMenu that contains no actions, so the handoff's nine-menu bar
+// collapsed to three. Menus are populated with their real commands and disabled
+// until the feature behind them exists, which keeps the bar honest and complete.
+void addPending(QMenu* menu, const QStringList& items) {
+    for (const QString& item : items) {
+        if (item.isEmpty()) {
+            menu->addSeparator();
+            continue;
+        }
+        QAction* action = menu->addAction(item);
+        action->setEnabled(false);
+    }
+}
+
+}  // namespace
+
 void MainWindow::buildMenus() {
-    // Handoff menu set, in order.
+    // Handoff menu set, in order:
+    // File, Edit, Composition, Layer, Effect, Animation, View, Window, Help.
     auto* file = menuBar()->addMenu(QStringLiteral("File"));
-    file->addAction(QStringLiteral("New Project"));
-    file->addAction(QStringLiteral("Open Project..."));
-    file->addSeparator();
-    file->addAction(QStringLiteral("Import Media..."));
+    addPending(file, {QStringLiteral("New Project"), QStringLiteral("Open Project..."),
+                      QStringLiteral("Save Project"), QString(),
+                      QStringLiteral("Import Media..."), QStringLiteral("Import Preset Pack..."),
+                      QString(), QStringLiteral("Export...")});
     file->addSeparator();
     file->addAction(QStringLiteral("Quit"), QKeySequence::Quit, this, &QWidget::close);
 
     auto* edit = menuBar()->addMenu(QStringLiteral("Edit"));
-    edit->addAction(QStringLiteral("Undo"), QKeySequence::Undo, [] {});
-    edit->addAction(QStringLiteral("Redo"), QKeySequence::Redo, [] {});
+    addPending(edit, {QStringLiteral("Undo"), QStringLiteral("Redo"), QString(),
+                      QStringLiteral("Cut"), QStringLiteral("Copy"), QStringLiteral("Paste"),
+                      QStringLiteral("Duplicate"), QStringLiteral("Delete"), QString(),
+                      QStringLiteral("Select All"), QStringLiteral("Deselect All")});
 
     auto* comp = menuBar()->addMenu(QStringLiteral("Composition"));
-    comp->addAction(QStringLiteral("New Composition..."));
-    comp->addSeparator();
-    comp->addAction(QStringLiteral("Analyze Audio for Beats"));
-    comp->addAction(QStringLiteral("Cut to Beats"));
+    addPending(comp, {QStringLiteral("New Composition..."),
+                      QStringLiteral("Composition Settings..."), QString(),
+                      QStringLiteral("Analyze Audio for Beats"),
+                      QStringLiteral("Edit Beat Map..."),
+                      QStringLiteral("Cut to Beats"), QString(),
+                      QStringLiteral("Add to Render Queue")});
 
-    menuBar()->addMenu(QStringLiteral("Layer"));
-    menuBar()->addMenu(QStringLiteral("Effect"));
-    menuBar()->addMenu(QStringLiteral("Animation"));
-    menuBar()->addMenu(QStringLiteral("View"));
-    menuBar()->addMenu(QStringLiteral("Window"));
-    menuBar()->addMenu(QStringLiteral("Help"));
+    auto* layer = menuBar()->addMenu(QStringLiteral("Layer"));
+    addPending(layer, {QStringLiteral("New Text Layer"), QStringLiteral("New Shape Layer"),
+                       QStringLiteral("New Solid"), QStringLiteral("New Adjustment Layer"),
+                       QStringLiteral("New Null"), QString(),
+                       QStringLiteral("Pre-compose..."), QString(),
+                       QStringLiteral("Add Mask"), QStringLiteral("Auto-Roto Subject..."),
+                       QString(), QStringLiteral("Time Remap"),
+                       QStringLiteral("Retime with Optical Flow...")});
+
+    auto* effect = menuBar()->addMenu(QStringLiteral("Effect"));
+    addPending(effect, {QStringLiteral("Blur"), QStringLiteral("Color"),
+                        QStringLiteral("Distort"), QStringLiteral("Generate"),
+                        QStringLiteral("Glow"), QStringLiteral("Sharpen"),
+                        QStringLiteral("Stylize"), QStringLiteral("Time"), QString(),
+                        QStringLiteral("Remove All Effects")});
+
+    auto* anim = menuBar()->addMenu(QStringLiteral("Animation"));
+    addPending(anim, {QStringLiteral("Add Keyframe"), QStringLiteral("Toggle Hold Keyframe"),
+                      QString(), QStringLiteral("Keyframe Assistant..."),
+                      QStringLiteral("Snap Keyframes to Beat"),
+                      QStringLiteral("Stagger Selection..."), QString(),
+                      QStringLiteral("Save Animation Preset..."),
+                      QStringLiteral("Apply Animation Preset...")});
+
+    auto* view = menuBar()->addMenu(QStringLiteral("View"));
+    addPending(view, {QStringLiteral("Zoom In"), QStringLiteral("Zoom Out"),
+                      QStringLiteral("Fit to Window"), QString(),
+                      QStringLiteral("Show Guides"), QStringLiteral("Show Title/Action Safe"),
+                      QStringLiteral("Show Beat Grid"), QString(),
+                      QStringLiteral("Resolution")});
+
+    auto* window = menuBar()->addMenu(QStringLiteral("Window"));
+    addPending(window, {QStringLiteral("Project"), QStringLiteral("Composition"),
+                        QStringLiteral("Inspector"), QStringLiteral("Timeline"),
+                        QStringLiteral("Effects && Presets"), QStringLiteral("Keyframes"),
+                        QString(), QStringLiteral("Reset Workspace")});
+
+    auto* help = menuBar()->addMenu(QStringLiteral("Help"));
+    addPending(help, {QStringLiteral("Composition Help"),
+                      QStringLiteral("Keyboard Shortcuts"), QString(),
+                      QStringLiteral("Release Notes")});
 }
 
 QWidget* MainWindow::makePlaceholder(const QString& note) {
