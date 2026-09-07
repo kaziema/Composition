@@ -377,7 +377,12 @@ void InspectorView::commitEditor() {
     editor_ = nullptr;  // cleared first: deleteLater can re-enter through focus events
     dying->deleteLater();
     if (ok) {
+        if (const Property* prop = resolve(editField_.property); prop != nullptr) {
+            emit editBegan(QStringLiteral("Change %1")
+                               .arg(QString::fromStdString(prop->label)));
+        }
         applyValue(editField_, typed);
+        emit editEnded();
     }
     update();
 }
@@ -444,6 +449,10 @@ void InspectorView::mousePressEvent(QMouseEvent* e) {
         dragField_ = *field;
         dragStartValue_ = componentValue(*field);
         dragStartX_ = pos.x();
+        if (const Property* prop = resolve(field->property); prop != nullptr) {
+            emit editBegan(QStringLiteral("Change %1")
+                               .arg(QString::fromStdString(prop->label)));
+        }
         return;
     }
 
@@ -487,6 +496,9 @@ void InspectorView::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void InspectorView::mouseReleaseEvent(QMouseEvent*) {
+    if (dragging_) {
+        emit editEnded();
+    }
     dragging_ = false;
     dragMoved_ = false;
 }

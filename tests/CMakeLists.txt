@@ -14,6 +14,10 @@ add_executable(test_projectio test_projectio.cpp)
 target_link_libraries(test_projectio PRIVATE ruby::io ruby_warnings)
 add_test(NAME test_projectio COMMAND test_projectio)
 
+add_executable(test_history test_history.cpp)
+target_link_libraries(test_history PRIVATE ruby::io ruby_warnings)
+add_test(NAME test_history COMMAND test_history)
+
 add_executable(test_transport test_transport.cpp)
 target_link_libraries(test_transport PRIVATE ruby::engine ruby_warnings)
 add_test(NAME test_transport COMMAND test_transport)

@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QString>
 
+class QAction;
 class QCloseEvent;
 
 #include "ruby/core/Document.h"
@@ -10,6 +11,7 @@ class QCloseEvent;
 
 #include "ruby/gpu/GpuDevice.h"
 #include "ruby/audio/AudioOutput.h"
+#include "ruby/io/History.h"
 #include "ruby/media/AudioDecoder.h"
 
 class QLabel;
@@ -47,6 +49,10 @@ signals:
     void mediaImported();
 
 public slots:
+    void undo();
+    void redo();
+    void beginEdit(const QString& label);
+    void endEdit();
     void newProject();
     void openProject();
     bool saveProject(bool forcePrompt);
@@ -68,6 +74,9 @@ private:
     void markDirty();
     void markClean();
     void updateTitle();
+    void recordEdit(const QString& label);
+    void refreshUndoActions();
+    void afterDocumentReplaced();
     void refreshCompositionTabs();
     [[nodiscard]] core::Composition* activeComposition();
     QWidget* buildBody();
@@ -90,6 +99,9 @@ private:
     core::CompId activeComp_ = 0;
     QString projectPath_;
     bool dirty_ = false;
+    io::History history_;
+    QAction* undoAction_ = nullptr;
+    QAction* redoAction_ = nullptr;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;

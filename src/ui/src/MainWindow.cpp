@@ -154,6 +154,7 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     setCentralWidget(root);
 
     refreshCompositionTabs();
+    refreshUndoActions();
     updateStatus();
     // Title comes from document state, so it has to be set once at launch rather than
     // only when something changes.
@@ -201,6 +202,8 @@ void MainWindow::importMedia() {
         return;
     }
 
+    recordEdit(QStringLiteral("Import Media"));
+
     int added = 0;
     QStringList rejected;
     for (const QString& path : paths) {
@@ -247,11 +250,85 @@ core::Composition* MainWindow::activeComposition() {
     return &project_.compositions().front();
 }
 
+void MainWindow::beginEdit(const QString& label) {
+    history_.beginGesture(project_, label.toStdString());
+}
+
+void MainWindow::endEdit() {
+    history_.endGesture();
+    markDirty();
+    refreshUndoActions();
+}
+
+void MainWindow::recordEdit(const QString& label) {
+    history_.record(project_, label.toStdString());
+    markDirty();
+    refreshUndoActions();
+}
+
+void MainWindow::refreshUndoActions() {
+    if (undoAction_ != nullptr) {
+        const std::string label = history_.undoLabel();
+        undoAction_->setEnabled(history_.canUndo());
+        undoAction_->setText(label.empty()
+                                 ? QStringLiteral("Undo")
+                                 : QStringLiteral("Undo %1")
+                                       .arg(QString::fromStdString(label)));
+    }
+    if (redoAction_ != nullptr) {
+        const std::string label = history_.redoLabel();
+        redoAction_->setEnabled(history_.canRedo());
+        redoAction_->setText(label.empty()
+                                 ? QStringLiteral("Redo")
+                                 : QStringLiteral("Redo %1")
+                                       .arg(QString::fromStdString(label)));
+    }
+}
+
+void MainWindow::afterDocumentReplaced() {
+    // Undo swaps the whole document, so every pointer any panel is holding is now
+    // dangling. Re-point all of them before anything repaints.
+    core::Composition* active = activeComposition();
+    projectPanel_->setProject(&project_);
+    if (viewport_ != nullptr) {
+        viewport_->setProject(&project_);
+        viewport_->setComposition(active);
+    }
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(active);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(active);
+    }
+    refreshCompositionTabs();
+    projectPanel_->refresh();
+    updateStatus();
+}
+
+void MainWindow::undo() {
+    if (!history_.undo(project_)) {
+        return;
+    }
+    afterDocumentReplaced();
+    markDirty();
+    refreshUndoActions();
+}
+
+void MainWindow::redo() {
+    if (!history_.redo(project_)) {
+        return;
+    }
+    afterDocumentReplaced();
+    markDirty();
+    refreshUndoActions();
+}
+
 void MainWindow::newProject() {
     if (!confirmDiscard()) {
         return;
     }
     project_ = core::Project{};
+    history_.clear();
     projectPath_.clear();
     activeComp_ = 0;
     audio_.reset();
@@ -286,6 +363,7 @@ void MainWindow::openProject() {
     }
 
     project_ = std::move(loaded);
+    history_.clear();
     projectPath_ = path;
     activeComp_ = 0;
     audio_.reset();
@@ -398,6 +476,7 @@ void MainWindow::newComposition() {
     }
     const NewCompositionDialog::Settings s = dialog.settings();
 
+    recordEdit(QStringLiteral("New Composition"));
     core::Composition& comp = project_.addComposition(
         s.name.toStdString(), s.width, s.height, s.fps, s.duration);
     setActiveComposition(comp.id);
@@ -473,6 +552,7 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
         return;
     }
     core::Composition& comp = *active;
+    recordEdit(QStringLiteral("Add %1").arg(QString::fromStdString(item->name)));
 
     const core::LayerKind kind =
         item->isVideo() ? core::LayerKind::Footage : core::LayerKind::Audio;
@@ -593,7 +673,12 @@ void MainWindow::buildMenus() {
     file->addAction(QStringLiteral("Quit"), QKeySequence::Quit, this, &QWidget::close);
 
     auto* edit = menuBar()->addMenu(QStringLiteral("Edit"));
-    addPending(edit, {QStringLiteral("Undo"), QStringLiteral("Redo"), QString(),
+    undoAction_ = edit->addAction(QStringLiteral("Undo"), QKeySequence::Undo, this,
+                                  &MainWindow::undo);
+    redoAction_ = edit->addAction(QStringLiteral("Redo"), QKeySequence::Redo, this,
+                                  &MainWindow::redo);
+    edit->addSeparator();
+    addPending(edit, {
                       QStringLiteral("Cut"), QStringLiteral("Copy"), QStringLiteral("Paste"),
                       QStringLiteral("Duplicate"), QStringLiteral("Delete"), QString(),
                       QStringLiteral("Select All"), QStringLiteral("Deselect All")});
@@ -787,6 +872,8 @@ QWidget* MainWindow::buildBody() {
 
     connect(inspector_, &InspectorView::propertyEdited, timelinePanel,
             &TimelinePanel::refresh);
+    connect(inspector_, &InspectorView::editBegan, this, &MainWindow::beginEdit);
+    connect(inspector_, &InspectorView::editEnded, this, &MainWindow::endEdit);
 
     connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
     connect(projectPanel_, &ProjectPanel::compositionActivated, this,

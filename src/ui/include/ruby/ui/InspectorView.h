@@ -35,6 +35,11 @@ signals:
     // gained a keyframe, so it needs to repaint.
     void propertyEdited();
 
+    // Undo boundaries. A drag is one step, not one per mouse-move, so the window opens
+    // a gesture on press and closes it on release.
+    void editBegan(const QString& label);
+    void editEnded();
+
 protected:
     bool event(QEvent* e) override;
     void paintEvent(QPaintEvent*) override;

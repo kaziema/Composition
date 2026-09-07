@@ -1,5 +1,6 @@
 add_library(ruby_io STATIC
     src/ProjectIO.cpp
+    src/History.cpp
 )
 add_library(ruby::io ALIAS ruby_io)
 
