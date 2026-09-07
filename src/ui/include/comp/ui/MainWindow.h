@@ -3,7 +3,11 @@
 #include <QMainWindow>
 
 #include "comp/core/Document.h"
+#include <optional>
+
 #include "comp/gpu/GpuDevice.h"
+#include "comp/audio/AudioOutput.h"
+#include "comp/media/AudioDecoder.h"
 
 class QLabel;
 class QSplitter;
@@ -33,12 +37,15 @@ public:
 private:
     void buildMenus();
     void updateStatus();
+    void loadAudio();
     QWidget* buildBody();
 
     static PanelFrame* makePanel(const QStringList& tabs, const QString& note);
     static QWidget* makePlaceholder(const QString& note);
 
     core::Project project_;  // TEMPORARY demo content
+    std::optional<media::AudioBuffer> audio_;
+    std::unique_ptr<audio::AudioOutput> audioOut_;
     EditorToolBar* toolBar_ = nullptr;
     QLabel* viewerTimecode_ = nullptr;
     InspectorView* inspector_ = nullptr;

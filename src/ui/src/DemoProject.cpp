@@ -80,6 +80,8 @@ Project sampleProject() {
     Layer& audio = project.addLayer(comp, "track_hardwave.wav", LayerKind::Audio);
     audio.inPoint = TimeValue::seconds(0.0);
     audio.outPoint = TimeValue::seconds(12.0);
+    // Any supplied file will do as a track; we only want its audio stream.
+    audio.mediaPath = mediaPath(2).has_value() ? mediaPath(2) : mediaPath(0);
 
     Layer& broll = project.addLayer(comp, "b-roll_street.mp4", LayerKind::Footage);
     broll.inPoint = TimeValue::seconds(6.8);

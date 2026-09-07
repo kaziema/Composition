@@ -26,10 +26,12 @@ endif()
 
 include(cmake/CompilerWarnings.cmake)
 include(cmake/FetchWebGPU.cmake)
+include(cmake/FetchMiniaudio.cmake)
 
 add_subdirectory(src/core)
 add_subdirectory(src/gpu)
 add_subdirectory(src/media)
+add_subdirectory(src/audio)
 add_subdirectory(src/engine)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)

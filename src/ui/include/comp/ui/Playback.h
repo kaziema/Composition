@@ -3,6 +3,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 
+#include "comp/audio/AudioOutput.h"
 #include "comp/engine/Transport.h"
 
 class QTimer;
@@ -23,6 +24,10 @@ public:
 
     void configure(double duration, double frameRate);
 
+    // Once a track is attached, the audio device becomes the clock. Passing null goes
+    // back to the wall clock, which is the correct behaviour for a silent project.
+    void setAudio(audio::AudioOutput* output);
+
     [[nodiscard]] bool playing() const noexcept { return transport_.playing(); }
     [[nodiscard]] double time() const noexcept { return transport_.time(); }
 
@@ -42,6 +47,7 @@ private:
     void tick();
 
     engine::Transport transport_;
+    audio::AudioOutput* audio_ = nullptr;
     QTimer* timer_ = nullptr;
     QElapsedTimer clock_;
     double measuredFps_ = 0.0;

@@ -12,6 +12,8 @@
 
 #include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
+#include "comp/audio/AudioOutput.h"
+#include "comp/media/AudioDecoder.h"
 #include "comp/ui/Format.h"
 #include "comp/ui/GpuViewport.h"
 #include "comp/ui/InspectorView.h"
@@ -134,6 +136,7 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     // TEMPORARY: a demo composition so the timeline has something to draw.
     // Goes away once the app can open a project file.
     project_ = demo::sampleProject();
+    loadAudio();
 
     toolBar_ = new EditorToolBar;
     layout->addWidget(toolBar_);
@@ -172,6 +175,32 @@ void addPending(QMenu* menu, const QStringList& items) {
 }
 
 }  // namespace
+
+void MainWindow::loadAudio() {
+    if (project_.compositions().empty()) {
+        return;
+    }
+    core::Composition& comp = project_.compositions().front();
+
+    // The audio layer's media is the track. Decoded once, kept for playback, and
+    // reduced to peaks for drawing.
+    for (core::Layer& layer : comp.layers) {
+        if (layer.kind != core::LayerKind::Audio || !layer.mediaPath.has_value()) {
+            continue;
+        }
+        auto decoded = media::AudioDecoder::decode(*layer.mediaPath);
+        if (!decoded.has_value()) {
+            continue;
+        }
+        const media::WaveformPeaks peaks =
+            media::AudioDecoder::peaks(*decoded, 200.0);
+        layer.waveform.bucketsPerSecond = peaks.bucketsPerSecond;
+        layer.waveform.low = peaks.low;
+        layer.waveform.high = peaks.high;
+        audio_ = std::move(*decoded);
+        return;
+    }
+}
 
 void MainWindow::updateStatus() {
     QString text = (gpu_ != nullptr)
@@ -354,6 +383,13 @@ QWidget* MainWindow::buildBody() {
     // inspector and the readouts. One path in, everything follows.
     playback_ = new Playback(this);
     playback_->configure(comp.duration, comp.fps);
+    if (audio_.has_value()) {
+        audioOut_ = audio::AudioOutput::create();
+        if (audioOut_ != nullptr) {
+            audioOut_->setBuffer(&*audio_);
+            playback_->setAudio(audioOut_.get());
+        }
+    }
     playback_->seek(3.14);
     connect(playback_, &Playback::timeChanged, timelinePanel,
             &TimelinePanel::setCurrentTime);

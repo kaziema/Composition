@@ -4,8 +4,11 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
+#include <cmath>
 #include <string>
 
+#include "comp/media/AudioDecoder.h"
 #include "comp/media/VideoDecoder.h"
 
 using namespace comp::media;
@@ -83,6 +86,51 @@ int main() {
     // Asking for the same instant twice should not re-seek or change the answer.
     const VideoFrame* again = decoder->frameAt(0.5);
     check(again != nullptr && again->valid(), "re-requesting the same time works");
+
+    // --- audio ---------------------------------------------------------------
+    auto audio = AudioDecoder::decode(path);
+    if (!audio.has_value()) {
+        std::puts("no audio stream in this file; skipping the audio checks");
+    } else {
+        std::printf("audio %d ch @ %d Hz, %.2fs\n", audio->channels, audio->sampleRate,
+                    audio->duration());
+
+        check(audio->valid(), "the audio buffer is usable");
+        check(audio->sampleRate == 48000, "audio is resampled to the target rate");
+        check(audio->channels >= 1 && audio->channels <= 2, "channels are capped at stereo");
+
+        // Decoded duration should track the video's, since they come from one file.
+        check(std::fabs(audio->duration() - decoder->duration()) < 0.5,
+              "audio and video durations agree");
+
+        // Silence would mean the resampler ran but produced nothing, which looks like
+        // success everywhere except your ears.
+        float loudest = 0.0f;
+        for (float v : audio->samples) {
+            loudest = std::max(loudest, std::fabs(v));
+        }
+        check(loudest > 0.01f, "the audio is not silence");
+        check(loudest <= 1.5f, "samples are in a sane float range, not raw integers");
+
+        const WaveformPeaks wave = AudioDecoder::peaks(*audio, 100.0);
+        check(!wave.empty(), "peaks are computed");
+        check(wave.low.size() == wave.high.size(), "every bucket has both bounds");
+        check(std::fabs(static_cast<double>(wave.low.size()) / 100.0 - audio->duration())
+                  < 0.2,
+              "the number of buckets matches the duration");
+
+        bool ordered = true;
+        float peak = 0.0f;
+        for (std::size_t i = 0; i < wave.low.size(); ++i) {
+            if (wave.low[i] > wave.high[i]) ordered = false;
+            peak = std::max(peak, wave.high[i]);
+        }
+        check(ordered, "every bucket's low is below its high");
+        check(peak > 0.01f, "the waveform has something in it");
+    }
+
+    check(!AudioDecoder::decode("/definitely/not/a/file.wav").has_value(),
+          "a missing file returns nothing rather than an empty buffer");
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

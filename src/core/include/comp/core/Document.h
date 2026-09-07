@@ -110,6 +110,17 @@ struct EffectInstance {
     [[nodiscard]] const Property* find(std::string_view key) const noexcept;
 };
 
+// Min/max per time bucket, precomputed for drawing. Plain data on purpose: the document
+// should not know what a decoder is, and drawing a waveform from raw samples would mean
+// touching millions of values on every repaint.
+struct Waveform {
+    double bucketsPerSecond = 0.0;
+    std::vector<float> low;
+    std::vector<float> high;
+
+    [[nodiscard]] bool empty() const noexcept { return low.empty(); }
+};
+
 struct Layer {
     LayerId id = 0;
     std::string name;
@@ -133,6 +144,7 @@ struct Layer {
 
     std::vector<Property> properties;
     std::vector<EffectInstance> effects;  // applied in order, top to bottom
+    Waveform waveform;                    // audio layers only
 
     [[nodiscard]] Property* find(std::string_view key) noexcept;
     [[nodiscard]] const Property* find(std::string_view key) const noexcept;

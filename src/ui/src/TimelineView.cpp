@@ -409,6 +409,37 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
                      static_cast<double>(metrics::kLayerBarH));
     p.fillRect(bar, colors.bar);
     p.fillRect(QRectF(bar.left(), bar.top(), bar.width(), 1.0), colors.topEdge);
+
+    // Waveform inside the bar. Cutting to music without seeing the audio is guesswork,
+    // and this is the surface the rhythm markers will eventually be drawn on.
+    if (!layer.waveform.empty() && layer.waveform.bucketsPerSecond > 0.0) {
+        const core::Waveform& wave = layer.waveform;
+        const double mid = bar.center().y();
+        const double half = bar.height() * 0.5 - 1.0;
+
+        p.setPen(QPen(colors.topEdge.lighter(135), 1.0));
+        const int fromX = static_cast<int>(std::floor(bar.left()));
+        const int toX = static_cast<int>(std::ceil(bar.right()));
+        for (int x = std::max(fromX, trackLeft()); x <= toX && x < width(); ++x) {
+            // One column of pixels covers a span of buckets; take the extremes across it
+            // so a transient never disappears just because the view is zoomed out.
+            const double t0 = timeForX(x);
+            const double t1 = timeForX(x + 1);
+            const auto b0 = static_cast<std::size_t>(t0 * wave.bucketsPerSecond);
+            const auto b1 = static_cast<std::size_t>(t1 * wave.bucketsPerSecond);
+            if (b0 >= wave.low.size()) {
+                break;
+            }
+            float lo = 0.0f;
+            float hi = 0.0f;
+            for (std::size_t b = b0; b <= std::min(b1, wave.low.size() - 1); ++b) {
+                lo = std::min(lo, wave.low[b]);
+                hi = std::max(hi, wave.high[b]);
+            }
+            p.drawLine(QPointF(x, mid - static_cast<double>(hi) * half),
+                       QPointF(x, mid - static_cast<double>(lo) * half));
+        }
+    }
     p.setPen(QPen(QColor("#0d0d0d"), 1.0));
     p.drawLine(QPointF(bar.left(), bar.bottom()), QPointF(bar.right(), bar.bottom()));
 
