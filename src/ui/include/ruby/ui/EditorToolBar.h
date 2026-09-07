@@ -6,8 +6,9 @@
 
 namespace ruby::ui {
 
-// The 30px tool bar: nine 24x22 tool buttons, a divider, two labeled switches
-// (Snapping, Motion Blur), and a right-aligned RAM cache indicator.
+// The 30px tool bar: nine 24x22 tool buttons, a divider, and two labelled switches
+// (Snapping, Motion Blur). Machine readouts live in the status bar instead: this bar is
+// for things you act on.
 //
 // Custom-painted rather than assembled from QToolButtons, because the handoff
 // pins exact sizes and the switch is a bespoke 26x13 pill with a 9px knob.
@@ -16,8 +17,6 @@ class EditorToolBar : public QWidget {
 
 public:
     explicit EditorToolBar(QWidget* parent = nullptr);
-
-    void setCacheText(const QString& text);
 
 signals:
     void toolSelected(int index);
@@ -46,7 +45,6 @@ private:
     QList<QRect> toolRects_;
     QList<Switch> switches_;
     QRect dividerRect_;
-    QString cacheText_;
     int activeTool_ = 0;
     int hoverTool_ = -1;
 };

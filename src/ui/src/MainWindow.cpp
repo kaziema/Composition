@@ -28,6 +28,7 @@
 #include "ruby/ui/NewCompositionDialog.h"
 #include "ruby/ui/Playback.h"
 #include "ruby/ui/ProjectPanel.h"
+#include "ruby/ui/StatusReadout.h"
 #include "ruby/ui/PanelFrame.h"
 #include "ruby/ui/Theme.h"
 #include "ruby/ui/TimelineView.h"
@@ -155,6 +156,11 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
     setFocusPolicy(Qt::StrongFocus);
     setFocus();
+
+    // Permanent widget so it sits at the right end and is never overwritten by the
+    // transient messages that come and go on the left.
+    readout_ = new StatusReadout;
+    statusBar()->addPermanentWidget(readout_);
 
     refreshCompositionTabs();
     refreshUndoActions();
@@ -652,6 +658,21 @@ void MainWindow::updateStatus() {
         text += QStringLiteral("   ·   %1").arg(rhythmNote_);
     }
     statusBar()->showMessage(text);
+
+    updateReadouts();
+}
+
+void MainWindow::updateReadouts() {
+    if (readout_ == nullptr) {
+        return;
+    }
+    std::vector<StatusReadout::Item> items;
+
+    // Placeholder until a render cache exists to measure. The slot and its wiring are
+    // the deliverable; the number becomes true when there is something behind it.
+    items.push_back({QStringLiteral("RAM cached 0-12s"), theme::kCacheReady, false});
+
+    readout_->setItems(std::move(items));
 }
 
 void MainWindow::buildMenus() {

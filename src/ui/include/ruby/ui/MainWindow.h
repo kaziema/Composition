@@ -24,6 +24,7 @@ class GpuViewport;
 class Playback;
 class PanelFrame;
 class ProjectPanel;
+class StatusReadout;
 class TimelinePanel;
 class InspectorView;
 class PanelFrame;
@@ -69,6 +70,7 @@ protected:
 private:
     void buildMenus();
     void updateStatus();
+    void updateReadouts();
     void loadAudio();
     bool confirmDiscard();
     void markDirty();
@@ -94,6 +96,7 @@ private:
     GpuViewport* viewport_ = nullptr;
     Playback* playback_ = nullptr;
     ProjectPanel* projectPanel_ = nullptr;
+    StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
     core::CompId activeComp_ = 0;

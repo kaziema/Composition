@@ -62,13 +62,7 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QWidget(parent) {
         {QStringLiteral("Motion Blur"), false, {}, {}},
     };
 
-    cacheText_ = QStringLiteral("RAM cached 0–12s");
     relayout();
-}
-
-void EditorToolBar::setCacheText(const QString& text) {
-    cacheText_ = text;
-    update();
 }
 
 void EditorToolBar::relayout() {
@@ -141,25 +135,8 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
         paintSwitch(p, sw);
     }
 
-    // Right-aligned cache indicator: green dot + mono label.
-    QFont mono = font();
-    mono.setFamily(monoFontFamily());
-    mono.setPixelSize(type::kMeta);
-    p.setFont(mono);
-
-    const QFontMetrics fm(mono);
-    const int textW = fm.horizontalAdvance(cacheText_);
-    const int textX = width() - kEdgePad - textW;
-
-    p.setPen(kTextDim);
-    p.drawText(QRect(textX, 0, textW, height()), Qt::AlignVCenter | Qt::AlignLeft, cacheText_);
-
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(Qt::NoPen);
-    p.setBrush(kCacheReady);
-    p.drawEllipse(QPointF(textX - 9.0, height() / 2.0), 3.0, 3.0);
-    p.setRenderHint(QPainter::Antialiasing, false);
-
+    // Machine and engine readouts live in the status bar now, not up here. This bar is
+    // for things you act on; that is for things you watch.
     p.setPen(kDivider);
     p.drawLine(0, height() - 1, width(), height() - 1);
 }
