@@ -1,4 +1,4 @@
-# Rhythm analysis. PROPRIETARY module (D6).
+# Rhythm analysis. PROPRIETARY module.
 #
 # The interface and the stub are tracked; `private/` is gitignored. When the private
 # sources are present we build the real detector, otherwise the stub. The public tree

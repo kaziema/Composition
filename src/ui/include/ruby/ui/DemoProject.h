@@ -9,9 +9,8 @@ namespace ruby::ui::demo {
 
 // TEMPORARY SCAFFOLDING. Delete once the app can open a real project file.
 //
-// Builds the composition from the design handoff's main-editor screen, down to the
-// exact keyframe times, so the timeline can be compared against the spec directly
-// instead of against my memory of it.
+// A reference composition with realistic layers and keyframe times, so the timeline
+// has something to draw before the app can open a project file.
 // Footage layers use these paths in order, as many as are supplied.
 void setMediaPaths(std::vector<std::string> paths);
 

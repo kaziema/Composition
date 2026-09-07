@@ -9,7 +9,7 @@
 
 namespace ruby::core {
 
-// --- Effect and parameter identity (decision D1) -----------------------------
+// --- Effect and parameter identity -------------------------------------------
 //
 // Adapted from After Effects' two-list split: display order is separate from
 // persistent identity. AE uses a "parameter array index" (freely rearrangeable)
@@ -72,7 +72,7 @@ struct EffectSchema {
 
 // --- Schema validation -------------------------------------------------------
 //
-// Makes D1's rules executable rather than aspirational. Every registered effect
+// Makes the rules above executable rather than aspirational. Every registered effect
 // runs through this in tests, so a rule violation fails the build instead of
 // silently breaking every preset ever made.
 

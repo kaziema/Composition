@@ -16,9 +16,9 @@ using namespace theme;
 
 namespace {
 
-// The handoff's nine tools, drawn as vector paths rather than the mock's text
-// glyphs. Several of those glyphs carry Unicode emoji presentation, so the hand
-// rendered in full colour and broke the toolbar's monochrome run.
+// The nine tools, drawn as vector paths rather than text glyphs. Several of those
+// glyphs carry Unicode emoji presentation, so the hand rendered in full colour and
+// broke the tool bar's monochrome run.
 constexpr ToolIcon kTools[] = {
     ToolIcon::Selection, ToolIcon::Pan,    ToolIcon::Text,
     ToolIcon::Shape,     ToolIcon::Pen,    ToolIcon::Mask,

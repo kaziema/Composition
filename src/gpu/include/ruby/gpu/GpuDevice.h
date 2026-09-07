@@ -5,7 +5,7 @@
 #include <string>
 #include <string_view>
 
-// --- GPU abstraction (decision D5) -------------------------------------------
+// --- GPU abstraction ---------------------------------------------------------
 //
 // Backend is Dawn (native WebGPU), but nothing above this header knows that.
 // A 2D compositor's GPU surface area is small: textures, render passes, compute

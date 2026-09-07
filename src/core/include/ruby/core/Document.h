@@ -48,13 +48,13 @@ struct MediaItem {
 //
 // Pillar 2: the rhythm of the track is a document object, not markers the user places.
 //
-// Two lanes, because they are not two versions of one thing (F3, and section 7 parts 2
-// and 3). Beats are a periodic grid you can quantise against; vocal onsets are an
+// Two lanes, because they are not two versions of one thing. Beats are a periodic grid
+// you can quantise against; vocal onsets are an
 // aperiodic list where "snap to the half beat" is meaningless. A measured edit cut to
 // syllables at 29ms median while a fitted beat grid landed on the audio worse than a
 // random offset, so the vocal lane is not an edge case.
 //
-// Detection lives in the private `beat` module (D6). This type is public, and an EMPTY
+// Detection lives in the private `beat` module. This type is public, and an EMPTY
 // MAP IS AN ORDINARY LEGAL STATE: in the public build it always will be. Every query
 // degrades to a no-op rather than failing.
 
@@ -77,7 +77,7 @@ public:
     RhythmMap() = default;
 
     // Replaces one lane, leaving the others alone. User markers are never touched by
-    // this (F3): re-analysis must not discard a correction someone made by hand.
+    // this: re-analysis must not discard a correction someone made by hand.
     void setLane(MarkerLane lane, std::vector<Marker> markers);
     void clearLane(MarkerLane lane);
 
@@ -154,8 +154,8 @@ enum class LabelColor {
 // One effect applied to a layer.
 //
 // Parameters are Properties, so every effect control animates for free and shows up in
-// the timeline like any other. `effectId` and `schema` are the D1 identity pair: the id
-// is immortal and the schema version decides which migrations a loaded preset runs.
+// the timeline like any other. `effectId` and `schema` are the identity pair: the id is
+// immortal and the schema version decides which migrations a loaded preset runs.
 struct EffectInstance {
     std::string effectId;
     int schema = 1;

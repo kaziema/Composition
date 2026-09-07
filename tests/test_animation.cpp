@@ -117,7 +117,7 @@ void keys_stay_sorted_and_replace_in_place() {
     checkNear(p.keys[1].value.x(), 99.0, "re-keying replaces the value");
 }
 
-// The D3 payoff. The same keyframes, authored in beats, produce a faster animation
+// The payoff of storing time in beats. The same keyframes produce a faster animation
 // on a faster song without anyone editing anything.
 void beat_authored_keys_retime_with_tempo() {
     Property p;

@@ -7,8 +7,8 @@ class QStackedWidget;
 
 namespace ruby::ui {
 
-// A panel group: a 26px tab strip over a content area, matching the handoff's
-// classic chrome. Each tab carries a 4px dot (accent when active, #555 when not).
+// A panel group: a 26px tab strip over a content area. Each tab carries a 4px dot
+// (accent when active, #555 when not).
 // Tabs are how panels group in this design, so this is the base unit of the whole
 // layout rather than a one-off.
 class PanelFrame : public QWidget {

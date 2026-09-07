@@ -209,7 +209,7 @@ json write(const Property& p) {
 json write(const EffectInstance& e) {
     json params = json::array();
     for (const Property& p : e.params) params.push_back(write(p));
-    // `schema` is what lets an older file migrate forward (D1). Never drop it.
+    // `schema` is what lets an older file migrate forward. Never drop it.
     return json{{"effect", e.effectId}, {"schema", e.schema},
                 {"name", e.displayName}, {"enabled", e.enabled},
                 {"params", std::move(params)}};

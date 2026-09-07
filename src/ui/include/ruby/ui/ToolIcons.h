@@ -7,10 +7,9 @@ class QPainter;
 
 namespace ruby::ui {
 
-// The handoff uses text glyphs (▶ ✥ T ◻ ✎ ⬔ ✋ ⌾ fx) as deliberate stand-ins and
-// asks for a real icon set at the same sizes. Text glyphs are also actively wrong:
-// several have Unicode emoji presentation, so the hand rendered as a full-color
-// emoji and broke the toolbar's monochrome run.
+// Drawn rather than set in a font. Text glyphs were tried first and are actively
+// wrong: several have Unicode emoji presentation, so the hand rendered as a
+// full-colour emoji and broke the tool bar's monochrome run.
 //
 // These are drawn as vector paths instead. No font dependency, monochrome by
 // construction, correct at any DPI.

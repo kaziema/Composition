@@ -369,7 +369,7 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         const core::Property* scale = layer.find("scale");
         const core::Property* opacity = layer.find("opacity");
 
-        // Position is a percentage of the frame, so it survives a reshape (D1).
+        // Position is a percentage of the frame, so it survives a reshape.
         const auto px = static_cast<float>(componentOr(position, 0, 50.0, seconds, ctx));
         const auto py = static_cast<float>(componentOr(position, 1, 50.0, seconds, ctx));
         const auto sxPct = static_cast<float>(componentOr(scale, 0, 100.0, seconds, ctx));

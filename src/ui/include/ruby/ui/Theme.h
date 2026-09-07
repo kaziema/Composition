@@ -1,12 +1,12 @@
 #pragma once
 
 #include <QColor>
+#include <QFont>
 #include <QPalette>
 #include <QString>
 
-// Design tokens from the "Anchor" handoff (notebook section 13).
-// Values are literal and intentional: colors, row heights, and panel widths are
-// final in the handoff. Everything is square except traffic lights, tab dots,
+// Design tokens. Values are literal and intentional: colours, row heights and panel
+// widths are fixed, not suggestions. Everything is square except traffic lights, tab dots,
 // stopwatches, and A/V dots. Depth comes from 1px borders and value steps, not
 // shadows.
 
@@ -47,7 +47,7 @@ inline const QColor kPrimaryText{"#ffffff"};
 inline const QColor kToggleActiveBg{"#4a4a4a"};
 inline const QColor kToggleActiveText{"#f0f0f0"};
 
-// Scrollbars are not in the handoff. Track is darker than the panel so it reads as a
+// Track is darker than the panel so it reads as a
 // groove rather than a border, and the handle is light enough to look like a control.
 inline const QColor kScrollTrack{"#161616"};
 inline const QColor kScrollHandle{"#4a4a4a"};
@@ -138,11 +138,22 @@ inline constexpr int kMaxTransitionMs = 80;
 }  // namespace metrics
 
 // --- Type -------------------------------------------------------------------
-// Handoff calls for Archivo (UI) and Space Mono (numeric). Neither is installed,
-// so these fall back to the platform's nearest compact grotesque / mono. Swap in
-// the real faces once we bundle them.
+// Archivo (UI) and Space Mono (code). Neither is bundled yet, so these fall back to
+// the platform's nearest compact grotesque and monospace faces.
 QString uiFontFamily();
 QString monoFontFamily();
+
+// Numbers, timecodes, counts and tick labels.
+//
+// Numerals use the interface face rather than a monospace one, so they match the rest
+// of the UI instead of looking like a terminal. Kept as its own function rather than
+// calling uiFontFamily() at each site, so this is one decision in one place, and so
+// genuine code (expressions) can keep a real monospace font.
+//
+// Tabular figures are requested, which matters more than it sounds: with proportional
+// digits a value jitters left and right while you scrub it, because a 1 is narrower than
+// a 0. Tabular locks every digit to the same advance.
+[[nodiscard]] QFont numericFont(int pixelSize);
 
 namespace type {
 inline constexpr int kScreenHeading = 15;

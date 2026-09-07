@@ -66,7 +66,7 @@ EffectDef makeGrade() {
     };
 
     // Every operation is in linear light, which is the whole reason this can look like a
-    // plugin rather than like AE's stock Brightness & Contrast (F2). Contrast pivots
+    // plugin rather than like AE's stock Brightness & Contrast. Contrast pivots
     // around 18% grey, the scene-referred mid point, instead of around 0.5.
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment

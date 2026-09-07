@@ -4,7 +4,7 @@
 //
 // Not an error path: an empty rhythm map is an ordinary state everywhere above this
 // (see RhythmMap and its tests). The stub exists so the public tree compiles, links and
-// runs with the private module absent, which is the whole D6 seam.
+// runs with the private module absent, which is the whole point of the seam.
 
 namespace ruby::beat {
 namespace {

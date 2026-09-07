@@ -1,5 +1,5 @@
 # Dawn lives behind this library and nowhere else. `webgpu` is linked PRIVATE on
-# purpose: no target above ruby_gpu may include a WebGPU header (decision D5).
+# purpose: no target above ruby_gpu may include a WebGPU header.
 if(APPLE)
     enable_language(OBJCXX)
     set(RUBY_GPU_PLATFORM_SOURCES src/NativeSurface_mac.mm)

@@ -10,9 +10,9 @@ namespace ruby::io {
 // Reading and writing `.rbypr` project files.
 //
 // Plain JSON, not a binary blob and not a zip. A project is references and numbers; it
-// carries no assets, so a container buys nothing. And the loudest lesson in the notebook
-// is AE's `.aep`: an opaque big-endian RIFF that nobody can inspect, diff, merge or
-// recover, which is why there is a cottage industry of reverse-engineered parsers for it.
+// carries no assets, so a container buys nothing. The cautionary tale is AE's `.aep`:
+// an opaque big-endian RIFF that nobody can inspect, diff, merge or recover, which is
+// why there is a cottage industry of reverse-engineered parsers for it.
 // JSON is greppable, diffable, and survives a bad byte with the damage visible.
 
 // What went wrong, or what was quietly fixed up. A project that half-loads and says

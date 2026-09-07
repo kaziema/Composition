@@ -1,8 +1,8 @@
 // Regression test for the macOS menu-bar collapse.
 //
-// macOS hides any QMenu that contains no actions, so declaring the handoff's nine
-// menus without populating them silently produced a three-item menu bar. This
-// asserts every menu exists and is non-empty, offscreen, on every platform.
+// macOS hides any QMenu that contains no actions, so declaring nine menus without
+// populating them silently produced a three-item menu bar. This asserts every menu
+// exists and is non-empty, offscreen, on every platform.
 
 #include <QApplication>
 #include <QMenu>
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     }
 
     check(found == expected,
-          "menu bar carries the handoff's nine menus, in order");
+          "menu bar carries all nine menus, in order");
     if (found != expected) {
         std::fprintf(stderr, "  got: %s\n", found.join(", ").toUtf8().constData());
     }

@@ -1,6 +1,6 @@
-// The effect registry and its D1 schema compliance.
+// The effect registry and its schema compliance.
 //
-// Every built-in effect runs through validate(). An effect that breaks D1's rules would
+// Every built-in effect runs through validate(). An effect that breaks the identity rules would
 // silently break every preset ever authored against it, so it fails the build instead.
 
 #include <cstdio>

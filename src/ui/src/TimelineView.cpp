@@ -57,12 +57,7 @@ QString blendName(core::BlendMode m) {
     return QStringLiteral("Normal");
 }
 
-QFont monoFont(int px) {
-    QFont f;
-    f.setFamily(monoFontFamily());
-    f.setPixelSize(px);
-    return f;
-}
+QFont monoFont(int px) { return numericFont(px); }
 
 }  // namespace
 

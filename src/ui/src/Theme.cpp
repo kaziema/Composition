@@ -21,7 +21,7 @@ QString hex(const QColor& c) { return c.name(QColor::HexRgb); }
 }  // namespace
 
 QString uiFontFamily() {
-    // Handoff asks for Archivo. Fall back to the nearest compact grotesque.
+    // Archivo, falling back to the nearest compact grotesque.
     static const QString family = firstAvailable(
         {QStringLiteral("Archivo"), QStringLiteral("Inter"), QStringLiteral("Roboto"),
          QStringLiteral("Helvetica Neue"), QStringLiteral("Segoe UI")},
@@ -30,7 +30,7 @@ QString uiFontFamily() {
 }
 
 QString monoFontFamily() {
-    // Handoff asks for Space Mono. Used for all times, counts, tick labels, meta.
+    // Space Mono, for expressions and anything else that is genuinely code.
     static const QString family = firstAvailable(
         {QStringLiteral("Space Mono"), QStringLiteral("JetBrains Mono"),
          QStringLiteral("SF Mono"), QStringLiteral("Menlo"), QStringLiteral("Consolas")},
@@ -68,6 +68,16 @@ QPalette palette() {
     pal.setColor(QPalette::Disabled, QPalette::ButtonText, kTextFaint);
 
     return pal;
+}
+
+QFont numericFont(int pixelSize) {
+    QFont f;
+    f.setFamily(uiFontFamily());
+    f.setPixelSize(pixelSize);
+    // Ask for tabular figures so digits do not shift width as a value changes. Fonts
+    // without the feature simply ignore it.
+    f.setFeature(QFont::Tag("tnum"), 1);
+    return f;
 }
 
 QString styleSheet() {

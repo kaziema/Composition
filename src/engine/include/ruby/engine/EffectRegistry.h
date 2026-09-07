@@ -9,7 +9,7 @@
 
 namespace ruby::engine {
 
-// One built-in effect: its D1 schema plus the shader that implements it.
+// One built-in effect: its schema plus the shader that implements it.
 //
 // Parameters are packed into the uniform block in schema order, one vec4 each, so the
 // shader indexes `u.params[n]` and no per-effect C++ is needed to marshal anything. Add

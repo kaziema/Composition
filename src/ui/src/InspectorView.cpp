@@ -40,12 +40,7 @@ constexpr int kLabelX = 26;
 constexpr int kLabelW = 76;
 constexpr int kEdgePad = 9;
 
-QFont monoFont(int px) {
-    QFont f;
-    f.setFamily(monoFontFamily());
-    f.setPixelSize(px);
-    return f;
-}
+QFont monoFont(int px) { return numericFont(px); }
 
 }  // namespace
 

@@ -457,7 +457,7 @@ public:
     }
 
     ComputePipelineHandle create_compute_pipeline(std::string_view, std::string_view) override {
-        // Deliberately unimplemented. Effects are authored in Slang (D5) and the shader
+        // Deliberately unimplemented. Effects are authored in Slang and the shader
         // toolchain is not wired yet. Returning null rather than a stub pipeline so a
         // caller cannot mistake a no-op for a working effect.
         return nullptr;

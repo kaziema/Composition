@@ -39,8 +39,7 @@ using namespace theme;
 
 namespace {
 
-// Stand-in for a rendered frame. The handoff uses the same diagonal stripes for
-// every canvas and preset thumbnail; real footage replaces this.
+// Stand-in for a rendered frame, until real footage replaces it.
 class StripedCanvas : public QWidget {
 public:
     explicit StripedCanvas(QString caption, QWidget* parent = nullptr)
@@ -60,10 +59,7 @@ protected:
         p.setPen(QPen(QColor("#2a2a2a"), 1, Qt::DashLine));
         p.drawRect(rect().adjusted(24, 24, -24, -24));
 
-        QFont mono = font();
-        mono.setFamily(monoFontFamily());
-        mono.setPixelSize(type::kMeta);
-        p.setFont(mono);
+        p.setFont(numericFont(type::kMeta));
         p.setPen(kTextDimmer);
         p.drawText(rect(), Qt::AlignCenter, caption_);
     }
@@ -98,9 +94,7 @@ QWidget* makeViewerPage(QLabel** timecodeOut, GpuViewport** viewportOut) {
     bottomLayout->setContentsMargins(9, 0, 9, 0);
     bottomLayout->setSpacing(14);
 
-    QFont mono;
-    mono.setFamily(monoFontFamily());
-    mono.setPixelSize(type::kMeta);
+    const QFont mono = numericFont(type::kMeta);
 
     for (const QString& text : {QStringLiteral("42%"), QStringLiteral("00:00:00"),
                                 QStringLiteral("Full"), QStringLiteral("Active Camera")}) {
@@ -183,9 +177,9 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
 namespace {
 
-// macOS hides a QMenu that contains no actions, so the handoff's nine-menu bar
-// collapsed to three. Menus are populated with their real commands and disabled
-// until the feature behind them exists, which keeps the bar honest and complete.
+// macOS hides a QMenu that contains no actions, which collapsed the nine-menu bar to
+// three. Menus are populated with their real commands and disabled until the feature
+// behind them exists, which keeps the bar honest and complete.
 void addPending(QMenu* menu, const QStringList& items) {
     for (const QString& item : items) {
         if (item.isEmpty()) {
@@ -625,7 +619,7 @@ void MainWindow::loadAudio() {
         audio_ = std::move(*decoded);
 
         // Rhythm analysis. Absent in the public build, where this returns nothing and
-        // everything downstream carries on with an empty map (D6).
+        // everything downstream carries on with an empty map.
         auto detector = beat::createDetector();
         if (detector != nullptr && detector->available()) {
             const beat::Result vocal =
@@ -676,7 +670,7 @@ void MainWindow::updateReadouts() {
 }
 
 void MainWindow::buildMenus() {
-    // Handoff menu set, in order:
+    // Menus, in order:
     // File, Edit, Composition, Layer, Effect, Animation, View, Window, Help.
     auto* file = menuBar()->addMenu(QStringLiteral("File"));
     file->addAction(QStringLiteral("New Project"),
@@ -815,8 +809,8 @@ QWidget* MainWindow::buildBody() {
     viewer->addPage(makePlaceholder(QStringLiteral("footage viewer")));
     viewer->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
-    // Handoff merges Transform and Effect Controls into one inspector rather than
-    // letting two panels fight for the same dock.
+    // Transform and the effect stack share one inspector rather than letting two
+    // panels fight for the same dock.
     auto* inspector = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
     inspector_ = new InspectorView;
     inspector_->setComposition(&comp);

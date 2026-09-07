@@ -39,7 +39,7 @@ struct Value {
 // --- Keyframes ---------------------------------------------------------------
 //
 // Times are TimeValue, so a keyframe authored in beats stays in beats. That is what
-// makes a preset survive being dropped on a song at a different tempo (D3).
+// makes a preset survive being dropped on a song at a different tempo.
 //
 // Easing is modelled the way the design's Keyframe Assistant exposes it: an
 // ease-out influence leaving a key, an ease-in influence arriving at the next, and
@@ -73,7 +73,7 @@ using PropertyId = std::uint64_t;
 
 struct Property {
     PropertyId id = 0;
-    std::string key;    // stable, matches the effect schema's parameter key (D1)
+    std::string key;    // stable, matches the effect schema's parameter key
     std::string label;  // display only
     // Which collapsible group this row sits under in the inspector: "Transform", or the
     // display name of the effect instance that owns it.

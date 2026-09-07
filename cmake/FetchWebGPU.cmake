@@ -1,4 +1,4 @@
-# Dawn, fetched through the WebGPU-distribution CMake wrapper (decision D5).
+# Dawn, fetched through the WebGPU-distribution CMake wrapper.
 #
 # Pinned to an explicit release tag, never a branch tip, so a build cannot break
 # because upstream moved. The zip is a few CMake files; it fetches the actual

@@ -1,5 +1,5 @@
-// Tests for decision D1 (effect and parameter identity).
-// These make D1's rules executable: a violation fails the build instead of
+// Effect and parameter identity.
+// These make the identity rules executable: a violation fails the build instead of
 // silently breaking every preset ever made.
 
 #include <cstdio>

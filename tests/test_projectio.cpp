@@ -94,7 +94,7 @@ int main() {
     check(layer.blend == core::BlendMode::Add, "blend mode survives");
     check(layer.expanded, "twirl state survives");
 
-    // The whole point of D3: a time authored in beats must not come back as seconds.
+    // A time authored in beats must not come back as seconds.
     check(layer.inPoint.mode == core::TimeMode::Beats, "beats stay beats");
     check(std::fabs(layer.inPoint.value - 2.0) < 1e-9, "and keep their value");
     check(layer.outPoint.mode == core::TimeMode::Seconds, "seconds stay seconds");
@@ -121,7 +121,7 @@ int main() {
     check(layer.effects[0].schema == 1, "its schema version is recorded for migration");
     check(layer.effects[0].params.size() == 1, "its parameters survive");
 
-    // F3: hand-placed markers are the one thing re-analysis must never destroy, so they
+    // Hand-placed markers are the one thing re-analysis must never destroy, so they
     // had better survive a save too.
     check(comp.rhythm.markers().size() == 3, "every marker survives");
     check(comp.rhythm.nearestIn(5.5, {core::MarkerLane::User}).has_value(),

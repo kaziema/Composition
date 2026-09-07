@@ -18,10 +18,7 @@ constexpr int kEdgePad = 9;
 
 StatusReadout::StatusReadout(QWidget* parent) : QWidget(parent) {
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
-    QFont f;
-    f.setFamily(monoFontFamily());
-    f.setPixelSize(type::kMeta);
-    setFont(f);
+    setFont(numericFont(type::kMeta));
 }
 
 void StatusReadout::setItems(std::vector<Item> items) {

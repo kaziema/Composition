@@ -10,8 +10,8 @@ namespace ruby::ui {
 // (Snapping, Motion Blur). Machine readouts live in the status bar instead: this bar is
 // for things you act on.
 //
-// Custom-painted rather than assembled from QToolButtons, because the handoff
-// pins exact sizes and the switch is a bespoke 26x13 pill with a 9px knob.
+// Custom-painted rather than assembled from QToolButtons: the sizes are exact and the
+// switch is a bespoke 26x13 pill with a 9px knob.
 class EditorToolBar : public QWidget {
     Q_OBJECT
 

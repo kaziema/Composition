@@ -6,7 +6,7 @@ namespace ruby::core {
 
 // --- Time -------------------------------------------------------------------
 //
-// Decision D3: time is stored in beats or seconds, never frames unless the author
+// Time is stored in beats or seconds, never frames unless the author
 // explicitly opts in. A frame is not a unit of time, it is time divided by this
 // project's framerate, so a preset authored as "3 frames" at 30fps plays twice as
 // fast at 60fps with no error and no warning.
@@ -41,9 +41,9 @@ struct TimeContext {
 
 // Resolve to seconds. Beats resolve against the project tempo.
 //
-// OPEN QUESTION (notebook 11.5): when has_beat_map is false we currently fall back
-// to TimeContext::bpm. The alternative is degrading to the seconds value the preset
-// author previewed at, which requires presets to carry both. Not decided.
+// OPEN QUESTION: when has_beat_map is false we currently fall back to
+// TimeContext::bpm. The alternative is degrading to the seconds value the preset
+// author previewed at, which would require presets to carry both. Not decided.
 double to_seconds(TimeValue t, const TimeContext& ctx) noexcept;
 
 // Resolve to a frame index at the context's framerate. Frames mode passes through
@@ -52,7 +52,7 @@ double to_frames(TimeValue t, const TimeContext& ctx) noexcept;
 
 // --- Space ------------------------------------------------------------------
 //
-// Decision D1: every numeric parameter declares its unit. An AE preset authored on
+// Every numeric parameter declares its unit. An AE preset authored on
 // 1920x1080 applies wrong to 1080x1920 because blur radii are stored in pixels.
 // Declaring percent_of_diagonal instead makes presets portable across resolutions.
 

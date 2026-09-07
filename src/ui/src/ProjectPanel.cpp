@@ -222,10 +222,7 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
                    QFontMetrics(font()).elidedText(row.name, Qt::ElideMiddle,
                                                    nameW - kEdgePad - 30));
 
-        QFont mono = font();
-        mono.setFamily(monoFontFamily());
-        mono.setPixelSize(type::kMeta);
-        p.setFont(mono);
+        p.setFont(numericFont(type::kMeta));
         p.setPen(kTextDim);
         p.drawText(QRect(nameW, y, kTypeW, metrics::kProjectRowH),
                    Qt::AlignVCenter | Qt::AlignLeft, row.type);
@@ -236,10 +233,7 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
 
     // Footer: how much is in here, and how heavy it is.
     p.fillRect(QRect(0, footerY, width(), metrics::kProjectFooterH), kColumnHeader);
-    QFont mono = font();
-    mono.setFamily(monoFontFamily());
-    mono.setPixelSize(type::kMeta);
-    p.setFont(mono);
+    p.setFont(numericFont(type::kMeta));
     p.setPen(kTextDim);
     p.drawText(QRect(kEdgePad, footerY, width() / 2, metrics::kProjectFooterH),
                Qt::AlignVCenter | Qt::AlignLeft,

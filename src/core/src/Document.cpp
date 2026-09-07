@@ -13,8 +13,8 @@ void RhythmMap::resort() {
 }
 
 void RhythmMap::setLane(MarkerLane lane, std::vector<Marker> markers) {
-    // User markers survive re-analysis. That is the whole point of F3: correcting the
-    // detector has to be worth doing, and it is not if re-running throws it away.
+    // User markers survive re-analysis. Correcting the detector has to be worth doing,
+    // and it is not if re-running throws the correction away.
     std::erase_if(markers_, [lane](const Marker& m) { return m.lane == lane; });
     for (Marker& m : markers) {
         m.lane = lane;
@@ -169,7 +169,7 @@ int Layer::keyframeCount() const noexcept {
 }
 
 std::vector<Property> defaultTransform() {
-    // Units matter here (D1). Position and anchor are stored as a fraction of the
+    // Units matter here. Position and anchor are stored as a fraction of the
     // frame, so a preset built on 1080x1920 lands correctly on 1920x1080.
     std::vector<Property> t;
 

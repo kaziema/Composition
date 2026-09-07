@@ -156,7 +156,7 @@ Project sampleProject() {
     title.outPoint = TimeValue::seconds(5.0);
     title.expanded = true;
     {
-        // Position is a percentage of the frame (D1), so it rises from below the lower
+        // Position is a percentage of the frame, so it rises from below the lower
         // third to just under centre rather than being stored in pixels.
         if (Property* pos = title.find("position"); pos != nullptr) {
             animate(*pos, ctx, {0.6, 1.3, 2.66, 4.4}, Value::vec2(50.0, 88.0),

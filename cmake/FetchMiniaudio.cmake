@@ -1,7 +1,7 @@
 # miniaudio: single-header audio I/O, MIT / public domain.
 #
 # Chosen over Qt Multimedia because this needs one real-time callback, not a media
-# framework, and because beat_this_cpp already depends on it (D5) so it arrives either
+# framework, and because beat_this_cpp already depends on it so it arrives either
 # way. Pinned to a release tag, never master.
 include(FetchContent)
 

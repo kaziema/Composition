@@ -8,16 +8,16 @@
 
 namespace ruby::beat {
 
-// Rhythm analysis. PROPRIETARY (D6): the interface and a stub are public, the
+// Rhythm analysis. PROPRIETARY: the interface and a stub are public, the
 // implementation is not. The public build links the stub, returns nothing, and every
 // caller must already handle an empty rhythm map as an ordinary state.
 //
-// Two detectors, because beats and syllables are different shapes of data (F3):
+// Two detectors, because beats and syllables are different shapes of data:
 //   Beat  -> a periodic grid, with a tempo and downbeats. Quantisable.
 //   Vocal -> an aperiodic list of syllable onsets. Snap to nearest, nothing more.
 //
-// Evidence for both is in notebook section 7. A real edit cut to syllables at 29ms
-// median while a fitted beat grid landed on the audio worse than a random offset.
+// Measured on a real edit: cuts landed on syllables at 29ms median, while a fitted
+// beat grid matched the audio worse than a randomly offset one.
 
 enum class Lane {
     Beat,

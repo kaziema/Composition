@@ -52,7 +52,7 @@ RhythmMap fourBars(double bpm) {
     return map;
 }
 
-// The most important test in this file. Detection lives in the private module (D6), so
+// The most important test in this file. Detection lives in the private module, so
 // in the public build the map is ALWAYS empty. Every query has to degrade to a sane
 // no-op rather than throwing, returning garbage, or crashing.
 void an_empty_rhythm_map_is_an_ordinary_state() {
@@ -110,7 +110,7 @@ void cut_points_are_a_half_open_range() {
           "an empty range yields no cuts");
 }
 
-// F3: re-running detection must never discard a correction someone made by hand.
+// Re-running detection must never discard a correction someone made by hand.
 void re_analysis_preserves_user_markers() {
     RhythmMap map = fourBars(120.0);
     map.addUserMarker(1.23);
