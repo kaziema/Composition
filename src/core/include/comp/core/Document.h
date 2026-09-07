@@ -14,6 +14,35 @@ namespace comp::core {
 
 using LayerId = std::uint64_t;
 using CompId = std::uint64_t;
+using MediaId = std::uint64_t;
+
+// --- Media pool --------------------------------------------------------------
+//
+// Imported files live here once, and layers reference them by id. Two layers using
+// the same clip share one entry, which is what lets them share a decoder later, and it
+// means moving a file is a single fix rather than a hunt through every layer.
+
+enum class MediaKind {
+    Video,   // has picture, may also have sound
+    Audio,   // sound only
+    Image,
+    Unknown,
+};
+
+struct MediaItem {
+    MediaId id = 0;
+    std::string path;  // absolute
+    std::string name;  // file name, what the project panel shows
+    MediaKind kind = MediaKind::Unknown;
+
+    double duration = 0.0;  // seconds
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    bool hasAudio = false;
+
+    [[nodiscard]] bool isVideo() const noexcept { return kind == MediaKind::Video; }
+};
 
 // --- Rhythm map --------------------------------------------------------------
 //
@@ -161,10 +190,7 @@ struct Layer {
     BlendMode blend = BlendMode::Normal;
     std::optional<LayerId> parent;
     std::optional<CompId> source;  // set on Precomp layers
-    // TEMPORARY: a direct file path. Becomes a reference into a project-level media pool
-    // once the Project panel exists, so media is shared between layers rather than
-    // reopened per layer.
-    std::optional<std::string> mediaPath;
+    std::optional<MediaId> media;  // resolved through the project's pool
 
     bool enabled = true;
     bool solo = false;
@@ -215,6 +241,20 @@ public:
 
     Layer& addLayer(Composition& comp, std::string name, LayerKind kind);
 
+    // Adds an already-probed file. Importing the same path twice returns the existing
+    // entry rather than duplicating it, because a project panel full of the same clip
+    // five times is nobody's idea of help.
+    MediaItem& addMedia(std::string path, std::string name, MediaKind kind,
+                        double duration, int width, int height, double fps,
+                        bool hasAudio);
+
+    [[nodiscard]] const std::vector<MediaItem>& media() const noexcept { return media_; }
+    [[nodiscard]] const MediaItem* findMedia(MediaId id) const noexcept;
+    [[nodiscard]] const MediaItem* findMediaByPath(std::string_view path) const noexcept;
+
+    // Convenience for the compositor and decoders: the file behind a layer, or empty.
+    [[nodiscard]] std::string pathFor(const Layer& layer) const;
+
     [[nodiscard]] std::vector<Composition>& compositions() noexcept { return comps_; }
     [[nodiscard]] const std::vector<Composition>& compositions() const noexcept {
         return comps_;
@@ -224,6 +264,7 @@ public:
 
 private:
     std::vector<Composition> comps_;
+    std::vector<MediaItem> media_;
     std::uint64_t nextId_ = 1;
 };
 

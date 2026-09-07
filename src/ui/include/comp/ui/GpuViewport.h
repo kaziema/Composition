@@ -27,6 +27,7 @@ public:
 
     // The composition to draw, and where the playhead is. Both may be null or stale;
     // the viewport just shows an empty frame in that case.
+    void setProject(const core::Project* project);
     void setComposition(const core::Composition* comp);
     void setCurrentTime(double seconds);
 
@@ -45,6 +46,7 @@ private:
     gpu::GpuDevice* device_ = nullptr;
     gpu::SurfaceHandle surface_;
     std::unique_ptr<engine::Compositor> compositor_;
+    const core::Project* project_ = nullptr;
     const core::Composition* comp_ = nullptr;
     double currentTime_ = 0.0;
 };

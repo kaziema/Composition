@@ -3,6 +3,8 @@
 #include <QAction>
 #include <QLabel>
 #include <QMenu>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QMenuBar>
 #include <QTimer>
 #include <QPainter>
@@ -15,6 +17,7 @@
 #include "comp/audio/AudioOutput.h"
 #include "comp/beat/Detector.h"
 #include "comp/media/AudioDecoder.h"
+#include "comp/media/Probe.h"
 #include "comp/ui/Format.h"
 #include "comp/ui/GpuViewport.h"
 #include "comp/ui/InspectorView.h"
@@ -177,6 +180,48 @@ void addPending(QMenu* menu, const QStringList& items) {
 
 }  // namespace
 
+void MainWindow::importMedia() {
+    // Deliberately broad rather than an exhaustive extension list: FFmpeg opens far more
+    // than any list we would maintain, and probe() is the real gate. A filter that
+    // rejects a file FFmpeg can read is just a bug with a nice dialog.
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Import Media"), QString(),
+        QStringLiteral("Media (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.wav *.mp3 *.aac "
+                       "*.flac *.m4a *.ogg);;All files (*)"));
+    if (paths.isEmpty()) {
+        return;
+    }
+
+    int added = 0;
+    QStringList rejected;
+    for (const QString& path : paths) {
+        const std::string local = path.toStdString();
+        const auto info = media::probe(local);
+        if (!info.has_value()) {
+            rejected << QFileInfo(path).fileName();
+            continue;
+        }
+
+        const core::MediaKind kind =
+            info->hasVideo ? core::MediaKind::Video : core::MediaKind::Audio;
+        project_.addMedia(local, QFileInfo(path).fileName().toStdString(), kind,
+                          info->duration, info->width, info->height, info->fps,
+                          info->hasAudio);
+        ++added;
+    }
+
+    // Say what happened. A file that silently fails to import looks like a broken app.
+    QString message = QStringLiteral("Imported %1 file%2")
+                          .arg(added)
+                          .arg(added == 1 ? QString() : QStringLiteral("s"));
+    if (!rejected.isEmpty()) {
+        message += QStringLiteral("   ·   could not read: %1").arg(rejected.join(", "));
+    }
+    statusBar()->showMessage(message, 6000);
+
+    emit mediaImported();
+}
+
 void MainWindow::loadAudio() {
     if (project_.compositions().empty()) {
         return;
@@ -186,10 +231,14 @@ void MainWindow::loadAudio() {
     // The audio layer's media is the track. Decoded once, kept for playback, and
     // reduced to peaks for drawing.
     for (core::Layer& layer : comp.layers) {
-        if (layer.kind != core::LayerKind::Audio || !layer.mediaPath.has_value()) {
+        if (layer.kind != core::LayerKind::Audio) {
             continue;
         }
-        auto decoded = media::AudioDecoder::decode(*layer.mediaPath);
+        const std::string path = project_.pathFor(layer);
+        if (path.empty()) {
+            continue;
+        }
+        auto decoded = media::AudioDecoder::decode(path);
         if (!decoded.has_value()) {
             continue;
         }
@@ -241,9 +290,12 @@ void MainWindow::buildMenus() {
     // File, Edit, Composition, Layer, Effect, Animation, View, Window, Help.
     auto* file = menuBar()->addMenu(QStringLiteral("File"));
     addPending(file, {QStringLiteral("New Project"), QStringLiteral("Open Project..."),
-                      QStringLiteral("Save Project"), QString(),
-                      QStringLiteral("Import Media..."), QStringLiteral("Import Preset Pack..."),
-                      QString(), QStringLiteral("Export...")});
+                      QStringLiteral("Save Project")});
+    file->addSeparator();
+    file->addAction(QStringLiteral("Import Media..."), QKeySequence(QStringLiteral("Ctrl+I")),
+                    this, &MainWindow::importMedia);
+    addPending(file, {QStringLiteral("Import Preset Pack..."), QString(),
+                      QStringLiteral("Export...")});
     file->addSeparator();
     file->addAction(QStringLiteral("Quit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -435,6 +487,7 @@ QWidget* MainWindow::buildBody() {
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);
+        viewport_->setProject(&project_);
         viewport_->setComposition(&comp);
         viewport_->setCurrentTime(3.14);
         connect(timelinePanel, &TimelinePanel::currentTimeChanged, viewport_,

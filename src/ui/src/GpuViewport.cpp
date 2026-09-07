@@ -22,6 +22,11 @@ void GpuViewport::setDevice(gpu::GpuDevice* device) {
     update();
 }
 
+void GpuViewport::setProject(const core::Project* project) {
+    project_ = project;
+    update();
+}
+
 void GpuViewport::setComposition(const core::Composition* comp) {
     comp_ = comp;
     update();
@@ -85,8 +90,8 @@ void GpuViewport::paintEvent(QPaintEvent*) {
         return;  // mid-resize or occluded; skipping a frame is correct here
     }
 
-    if (compositor_ != nullptr && comp_ != nullptr) {
-        compositor_->render(*comp_, currentTime_, backbuffer);
+    if (compositor_ != nullptr && comp_ != nullptr && project_ != nullptr) {
+        compositor_->render(*project_, *comp_, currentTime_, backbuffer);
     } else {
         auto commands = device_->begin_commands("viewport");
         commands->begin_pass(backbuffer, 0.008f, 0.008f, 0.008f, 1.0f);

@@ -275,6 +275,50 @@ Layer& Project::addLayer(Composition& comp, std::string name, LayerKind kind) {
     return comp.layers.front();
 }
 
+MediaItem& Project::addMedia(std::string path, std::string name, MediaKind kind,
+                             double duration, int width, int height, double fps,
+                             bool hasAudio) {
+    const auto existing = std::find_if(
+        media_.begin(), media_.end(),
+        [&path](const MediaItem& m) { return m.path == path; });
+    if (existing != media_.end()) {
+        return *existing;
+    }
+
+    MediaItem item;
+    item.id = nextId_++;
+    item.path = std::move(path);
+    item.name = std::move(name);
+    item.kind = kind;
+    item.duration = duration;
+    item.width = width;
+    item.height = height;
+    item.fps = fps;
+    item.hasAudio = hasAudio;
+    media_.push_back(std::move(item));
+    return media_.back();
+}
+
+const MediaItem* Project::findMedia(MediaId id) const noexcept {
+    const auto it = std::find_if(media_.begin(), media_.end(),
+                                 [id](const MediaItem& m) { return m.id == id; });
+    return it == media_.end() ? nullptr : &*it;
+}
+
+const MediaItem* Project::findMediaByPath(std::string_view path) const noexcept {
+    const auto it = std::find_if(media_.begin(), media_.end(),
+                                 [path](const MediaItem& m) { return m.path == path; });
+    return it == media_.end() ? nullptr : &*it;
+}
+
+std::string Project::pathFor(const Layer& layer) const {
+    if (!layer.media.has_value()) {
+        return {};
+    }
+    const MediaItem* item = findMedia(*layer.media);
+    return item != nullptr ? item->path : std::string{};
+}
+
 Composition* Project::find(CompId comp) noexcept {
     const auto it = std::find_if(comps_.begin(), comps_.end(),
                                  [comp](const Composition& c) { return c.id == comp; });

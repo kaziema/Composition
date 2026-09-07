@@ -28,8 +28,10 @@ class Compositor {
 public:
     Compositor(gpu::GpuDevice& device, gpu::TextureFormat targetFormat);
 
-    void render(const core::Composition& comp, double seconds,
-                const gpu::TextureHandle& target);
+    // Takes the project because resolving a layer's source means going through the
+    // media pool. The composition alone cannot answer "what file is this layer".
+    void render(const core::Project& project, const core::Composition& comp,
+                double seconds, const gpu::TextureHandle& target);
 
 private:
     struct QuadUniforms {

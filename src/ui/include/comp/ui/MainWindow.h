@@ -35,6 +35,15 @@ public:
     // tests from having to bring up a graphics stack to open a menu.
     explicit MainWindow(gpu::GpuDevice* device = nullptr, QWidget* parent = nullptr);
 
+    [[nodiscard]] const core::Project& project() const noexcept { return project_; }
+
+signals:
+    // The pool changed. The project panel listens; nothing else needs to yet.
+    void mediaImported();
+
+public slots:
+    void importMedia();
+
 private:
     void buildMenus();
     void updateStatus();

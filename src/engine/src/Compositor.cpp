@@ -258,8 +258,8 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
     return ran ? input : source;
 }
 
-void Compositor::render(const core::Composition& comp, double seconds,
-                        const gpu::TextureHandle& target) {
+void Compositor::render(const core::Project& project, const core::Composition& comp,
+                        double seconds, const gpu::TextureHandle& target) {
     if (target == nullptr || quads_ == nullptr) {
         return;
     }
@@ -308,8 +308,8 @@ void Compositor::render(const core::Composition& comp, double seconds,
         }
 
         Content content;
-        if (layer.mediaPath.has_value()) {
-            content = contentFor(*layer.mediaPath, seconds - in);
+        if (const std::string path = project.pathFor(layer); !path.empty()) {
+            content = contentFor(path, seconds - in);
         }
         gpu::TextureHandle texture =
             applyEffects(*commands, layer, content.texture, seconds, ctx, slot);

@@ -8,6 +8,7 @@ comp_add_test(test_units)
 comp_add_test(test_identity)
 comp_add_test(test_animation)
 comp_add_test(test_document)
+comp_add_test(test_project)
 
 add_executable(test_transport test_transport.cpp)
 target_link_libraries(test_transport PRIVATE comp::engine comp_warnings)

@@ -1,6 +1,7 @@
 #include "comp/ui/DemoProject.h"
 
 #include "comp/engine/EffectRegistry.h"
+#include "comp/media/Probe.h"
 
 #include <cstdlib>
 #include <initializer_list>
@@ -59,11 +60,26 @@ namespace {
 // repo. No paths means the footage layers stay flat, which is a fine fallback.
 std::vector<std::string> g_mediaPaths;
 
-std::optional<std::string> mediaPath(std::size_t index) {
+// Imports a path into the pool and returns its id, so demo layers reference the pool
+// like any imported layer would.
+std::optional<MediaId> importAt(Project& project, std::size_t index) {
     if (index >= g_mediaPaths.size() || g_mediaPaths[index].empty()) {
         return std::nullopt;
     }
-    return g_mediaPaths[index];
+    const std::string& path = g_mediaPaths[index];
+    const auto info = media::probe(path);
+    if (!info.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto slash = path.find_last_of('/');
+    const std::string name =
+        (slash == std::string::npos) ? path : path.substr(slash + 1);
+
+    const MediaKind kind = info->hasVideo ? MediaKind::Video : MediaKind::Audio;
+    return project.addMedia(path, name, kind, info->duration, info->width, info->height,
+                            info->fps, info->hasAudio)
+        .id;
 }
 
 }  // namespace
@@ -81,17 +97,18 @@ Project sampleProject() {
     audio.inPoint = TimeValue::seconds(0.0);
     audio.outPoint = TimeValue::seconds(12.0);
     // Any supplied file will do as a track; we only want its audio stream.
-    audio.mediaPath = mediaPath(2).has_value() ? mediaPath(2) : mediaPath(0);
+    audio.media = importAt(project, 2).has_value() ? importAt(project, 2)
+                                                   : importAt(project, 0);
 
     Layer& broll = project.addLayer(comp, "b-roll_street.mp4", LayerKind::Footage);
     broll.inPoint = TimeValue::seconds(6.8);
     broll.outPoint = TimeValue::seconds(12.0);
-    broll.mediaPath = mediaPath(1);
+    broll.media = importAt(project, 1);
 
     Layer& sneaker = project.addLayer(comp, "sneaker_a4.mp4", LayerKind::Footage);
     sneaker.inPoint = TimeValue::seconds(0.0);
     sneaker.outPoint = TimeValue::seconds(7.2);
-    sneaker.mediaPath = mediaPath(0);
+    sneaker.media = importAt(project, 0);
     sneaker.expanded = true;
     {
         // A graded footage layer, with the grade animated so the effect is obviously
