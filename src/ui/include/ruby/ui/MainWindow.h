@@ -18,6 +18,7 @@ namespace ruby::ui {
 class EditorToolBar;
 class GpuViewport;
 class Playback;
+class PanelFrame;
 class ProjectPanel;
 class TimelinePanel;
 class InspectorView;
@@ -45,12 +46,16 @@ signals:
 
 public slots:
     void importMedia();
+    void newComposition();
     void addMediaToComposition(core::MediaId id);
+    void setActiveComposition(core::CompId id);
 
 private:
     void buildMenus();
     void updateStatus();
     void loadAudio();
+    void refreshCompositionTabs();
+    [[nodiscard]] core::Composition* activeComposition();
     QWidget* buildBody();
 
     static PanelFrame* makePanel(const QStringList& tabs, const QString& note);
@@ -67,6 +72,8 @@ private:
     Playback* playback_ = nullptr;
     ProjectPanel* projectPanel_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
+    PanelFrame* timelineTabs_ = nullptr;
+    core::CompId activeComp_ = 0;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;

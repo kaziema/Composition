@@ -22,6 +22,7 @@
 #include "ruby/ui/Format.h"
 #include "ruby/ui/GpuViewport.h"
 #include "ruby/ui/InspectorView.h"
+#include "ruby/ui/NewCompositionDialog.h"
 #include "ruby/ui/Playback.h"
 #include "ruby/ui/ProjectPanel.h"
 #include "ruby/ui/PanelFrame.h"
@@ -150,6 +151,7 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
     setCentralWidget(root);
 
+    refreshCompositionTabs();
     updateStatus();
 
     // While playing, report the frame rate we actually achieve rather than the one we
@@ -224,15 +226,102 @@ void MainWindow::importMedia() {
     emit mediaImported();
 }
 
-void MainWindow::addMediaToComposition(core::MediaId id) {
+core::Composition* MainWindow::activeComposition() {
+    if (activeComp_ != 0) {
+        if (core::Composition* found = project_.find(activeComp_); found != nullptr) {
+            return found;
+        }
+    }
+    // The active comp was deleted, or nothing has been chosen yet. Fall back rather
+    // than leaving every panel pointed at nothing.
     if (project_.compositions().empty()) {
+        return nullptr;
+    }
+    activeComp_ = project_.compositions().front().id;
+    return &project_.compositions().front();
+}
+
+void MainWindow::newComposition() {
+    NewCompositionDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const NewCompositionDialog::Settings s = dialog.settings();
+
+    core::Composition& comp = project_.addComposition(
+        s.name.toStdString(), s.width, s.height, s.fps, s.duration);
+    setActiveComposition(comp.id);
+    projectPanel_->refresh();
+
+    statusBar()->showMessage(QStringLiteral("Created %1  ·  %2x%3  ·  %4 fps  ·  %5s")
+                                 .arg(s.name)
+                                 .arg(s.width)
+                                 .arg(s.height)
+                                 .arg(s.fps, 0, 'g', 5)
+                                 .arg(s.duration, 0, 'f', 1),
+                             6000);
+}
+
+void MainWindow::setActiveComposition(core::CompId id) {
+    core::Composition* comp = project_.find(id);
+    if (comp == nullptr) {
+        return;
+    }
+    activeComp_ = id;
+
+    // Everything that shows a composition has to be told, or a panel keeps rendering
+    // the old one and looks broken in a way that is very hard to diagnose.
+    audio_.reset();
+    rhythmNote_.clear();
+    loadAudio();
+    if (audioOut_ != nullptr) {
+        audioOut_->setBuffer(audio_.has_value() ? &*audio_ : nullptr);
+    }
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->setComposition(comp);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (playback_ != nullptr) {
+        playback_->configure(comp->duration, comp->fps);
+        playback_->seek(0.0);
+    }
+    refreshCompositionTabs();
+    updateStatus();
+}
+
+void MainWindow::refreshCompositionTabs() {
+    if (timelineTabs_ == nullptr) {
+        return;
+    }
+    QStringList names;
+    for (const core::Composition& comp : project_.compositions()) {
+        names << QString::fromStdString(comp.name);
+    }
+    if (names.isEmpty()) {
+        names << QStringLiteral("No composition");
+    }
+    timelineTabs_->setTabs(names);
+}
+
+void MainWindow::addMediaToComposition(core::MediaId id) {
+    core::Composition* active = activeComposition();
+    if (active == nullptr) {
+        statusBar()->showMessage(
+            QStringLiteral("No composition open. Composition > New Composition first."),
+            5000);
         return;
     }
     const core::MediaItem* item = project_.findMedia(id);
     if (item == nullptr) {
         return;
     }
-    core::Composition& comp = project_.compositions().front();
+    core::Composition& comp = *active;
 
     const core::LayerKind kind =
         item->isVideo() ? core::LayerKind::Footage : core::LayerKind::Audio;
@@ -267,10 +356,11 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
 }
 
 void MainWindow::loadAudio() {
-    if (project_.compositions().empty()) {
+    core::Composition* active = activeComposition();
+    if (active == nullptr) {
         return;
     }
-    core::Composition& comp = project_.compositions().front();
+    core::Composition& comp = *active;
 
     // The audio layer's media is the track. Decoded once, kept for playback, and
     // reduced to peaks for drawing.
@@ -350,8 +440,10 @@ void MainWindow::buildMenus() {
                       QStringLiteral("Select All"), QStringLiteral("Deselect All")});
 
     auto* comp = menuBar()->addMenu(QStringLiteral("Composition"));
-    addPending(comp, {QStringLiteral("New Composition..."),
-                      QStringLiteral("Composition Settings..."), QString(),
+    comp->addAction(QStringLiteral("New Composition..."),
+                    QKeySequence(QStringLiteral("Ctrl+N")), this,
+                    &MainWindow::newComposition);
+    addPending(comp, {QStringLiteral("Composition Settings..."), QString(),
                       QStringLiteral("Analyze Audio for Beats"),
                       QStringLiteral("Edit Beat Map..."),
                       QStringLiteral("Cut to Beats"), QString(),
@@ -446,6 +538,7 @@ QWidget* MainWindow::buildBody() {
     project->addPage(makePlaceholder(QStringLiteral("media browser")));
 
     core::Composition& comp = project_.compositions().front();
+    activeComp_ = comp.id;
     const QString compName = QString::fromStdString(comp.name);
 
     auto* viewer = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
@@ -474,6 +567,7 @@ QWidget* MainWindow::buildBody() {
     outerSplit_->setChildrenCollapsible(false);
 
     auto* timeline = new PanelFrame({compName});
+    timelineTabs_ = timeline;
     auto* timelinePanel = new TimelinePanel;
     timelinePanel_ = timelinePanel;
     timelinePanel->setComposition(&comp);
@@ -536,6 +630,14 @@ QWidget* MainWindow::buildBody() {
             &TimelinePanel::refresh);
 
     connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
+    connect(projectPanel_, &ProjectPanel::compositionActivated, this,
+            &MainWindow::setActiveComposition);
+    connect(timeline, &PanelFrame::currentChanged, this, [this](int index) {
+        const auto& comps = project_.compositions();
+        if (index >= 0 && index < static_cast<int>(comps.size())) {
+            setActiveComposition(comps[static_cast<std::size_t>(index)].id);
+        }
+    });
     connect(projectPanel_, &ProjectPanel::mediaActivated, this,
             &MainWindow::addMediaToComposition);
 

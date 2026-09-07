@@ -4,6 +4,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QVBoxLayout>
 
 #include "ruby/ui/Theme.h"
@@ -27,6 +28,15 @@ public:
     }
 
     [[nodiscard]] int current() const { return current_; }
+
+    void setLabels(const QStringList& labels) {
+        labels_ = labels;
+        if (current_ >= labels_.size()) {
+            current_ = labels_.isEmpty() ? 0 : labels_.size() - 1;
+        }
+        layoutTabs();
+        update();
+    }
 
     void setCurrent(int index) {
         if (index < 0 || index >= labels_.size() || index == current_) {
@@ -143,7 +153,11 @@ PanelFrame::PanelFrame(const QStringList& tabs, QWidget* parent) : QWidget(paren
     layout->addWidget(stack_, 1);
 
     strip_->onActivate = [this](int index) {
-        stack_->setCurrentIndex(index);
+        // Only follow the tab when there is a page for it. Panels whose tabs describe
+        // one shared page (the timeline) just get the signal.
+        if (index < stack_->count()) {
+            stack_->setCurrentIndex(index);
+        }
         emit currentChanged(index);
     };
 }
@@ -156,6 +170,8 @@ void PanelFrame::paintEvent(QPaintEvent*) {
 }
 
 void PanelFrame::addPage(QWidget* page) { stack_->addWidget(page); }
+
+void PanelFrame::setTabs(const QStringList& tabs) { strip_->setLabels(tabs); }
 
 int PanelFrame::currentIndex() const { return strip_->current(); }
 

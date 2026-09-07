@@ -20,6 +20,11 @@ public:
     // Content is parallel to the tab list: index N belongs to tab N.
     void addPage(QWidget* page);
 
+    // Replaces the tab labels without touching the pages. Used where the tabs describe
+    // what one page is showing (the timeline's open compositions) rather than selecting
+    // between different pages.
+    void setTabs(const QStringList& tabs);
+
     [[nodiscard]] int currentIndex() const;
     void setCurrentIndex(int index);
 
