@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QFileDialog>
+#include <algorithm>
 #include <QFileInfo>
 #include <QMenuBar>
 #include <QTimer>
@@ -22,6 +23,7 @@
 #include "comp/ui/GpuViewport.h"
 #include "comp/ui/InspectorView.h"
 #include "comp/ui/Playback.h"
+#include "comp/ui/ProjectPanel.h"
 #include "comp/ui/PanelFrame.h"
 #include "comp/ui/Theme.h"
 #include "comp/ui/TimelineView.h"
@@ -222,6 +224,48 @@ void MainWindow::importMedia() {
     emit mediaImported();
 }
 
+void MainWindow::addMediaToComposition(core::MediaId id) {
+    if (project_.compositions().empty()) {
+        return;
+    }
+    const core::MediaItem* item = project_.findMedia(id);
+    if (item == nullptr) {
+        return;
+    }
+    core::Composition& comp = project_.compositions().front();
+
+    const core::LayerKind kind =
+        item->isVideo() ? core::LayerKind::Footage : core::LayerKind::Audio;
+    core::Layer& layer = project_.addLayer(comp, item->name, kind);
+    layer.media = id;
+
+    // A clip enters at the start and runs for as long as it has, but never past the end
+    // of the composition. Trimming it is the user's job, not ours.
+    layer.inPoint = core::TimeValue::seconds(0.0);
+    layer.outPoint = core::TimeValue::seconds(
+        item->duration > 0.0 ? std::min(item->duration, comp.duration) : comp.duration);
+
+    // A newly added track becomes the one we analyse and play.
+    if (kind == core::LayerKind::Audio) {
+        loadAudio();
+        if (audio_.has_value() && audioOut_ != nullptr) {
+            audioOut_->setBuffer(&*audio_);
+        }
+    }
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(&comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    projectPanel_->refresh();
+    updateStatus();
+
+    statusBar()->showMessage(
+        QStringLiteral("Added %1").arg(QString::fromStdString(item->name)), 4000);
+}
+
 void MainWindow::loadAudio() {
     if (project_.compositions().empty()) {
         return;
@@ -392,9 +436,14 @@ QWidget* MainWindow::buildBody() {
     bodySplit_->setHandleWidth(metrics::kGutter);
     bodySplit_->setChildrenCollapsible(false);
 
-    auto* project = makePanel(
-        {QStringLiteral("Project"), QStringLiteral("Comp Map"), QStringLiteral("Media")},
-        QStringLiteral("media pool, comps, imported assets"));
+    auto* project = new PanelFrame({QStringLiteral("Project"),
+                                    QStringLiteral("Comp Map"),
+                                    QStringLiteral("Media")});
+    projectPanel_ = new ProjectPanel;
+    projectPanel_->setProject(&project_);
+    project->addPage(projectPanel_);
+    project->addPage(makePlaceholder(QStringLiteral("composition map")));
+    project->addPage(makePlaceholder(QStringLiteral("media browser")));
 
     core::Composition& comp = project_.compositions().front();
     const QString compName = QString::fromStdString(comp.name);
@@ -426,6 +475,7 @@ QWidget* MainWindow::buildBody() {
 
     auto* timeline = new PanelFrame({compName});
     auto* timelinePanel = new TimelinePanel;
+    timelinePanel_ = timelinePanel;
     timelinePanel->setComposition(&comp);
     timeline->addPage(timelinePanel);
 
@@ -484,6 +534,10 @@ QWidget* MainWindow::buildBody() {
 
     connect(inspector_, &InspectorView::propertyEdited, timelinePanel,
             &TimelinePanel::refresh);
+
+    connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
+    connect(projectPanel_, &ProjectPanel::mediaActivated, this,
+            &MainWindow::addMediaToComposition);
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);

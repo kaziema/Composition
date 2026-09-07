@@ -18,6 +18,8 @@ namespace comp::ui {
 class EditorToolBar;
 class GpuViewport;
 class Playback;
+class ProjectPanel;
+class TimelinePanel;
 class InspectorView;
 class PanelFrame;
 
@@ -43,6 +45,7 @@ signals:
 
 public slots:
     void importMedia();
+    void addMediaToComposition(core::MediaId id);
 
 private:
     void buildMenus();
@@ -62,6 +65,8 @@ private:
     InspectorView* inspector_ = nullptr;
     GpuViewport* viewport_ = nullptr;
     Playback* playback_ = nullptr;
+    ProjectPanel* projectPanel_ = nullptr;
+    TimelinePanel* timelinePanel_ = nullptr;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;

@@ -12,6 +12,7 @@ qt_add_library(comp_ui STATIC
     src/MainWindow.cpp
     src/TimelineView.cpp
     src/InspectorView.cpp
+    src/ProjectPanel.cpp
     src/GpuViewport.cpp
     src/Playback.cpp
     src/DemoProject.cpp
@@ -23,6 +24,7 @@ qt_add_library(comp_ui STATIC
     include/comp/ui/MainWindow.h
     include/comp/ui/TimelineView.h
     include/comp/ui/InspectorView.h
+    include/comp/ui/ProjectPanel.h
     include/comp/ui/GpuViewport.h
     include/comp/ui/Playback.h
     include/comp/ui/DemoProject.h
