@@ -1,4 +1,4 @@
-#include "comp/ui/EditorToolBar.h"
+#include "ruby/ui/EditorToolBar.h"
 
 #include <QFontMetrics>
 #include <iterator>
@@ -7,10 +7,10 @@
 #include <QToolTip>
 #include <QPainter>
 
-#include "comp/ui/Theme.h"
-#include "comp/ui/ToolIcons.h"
+#include "ruby/ui/Theme.h"
+#include "ruby/ui/ToolIcons.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 
@@ -249,4 +249,4 @@ void EditorToolBar::leaveEvent(QEvent*) {
     }
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

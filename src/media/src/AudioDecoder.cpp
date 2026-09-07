@@ -1,4 +1,4 @@
-#include "comp/media/AudioDecoder.h"
+#include "ruby/media/AudioDecoder.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -11,7 +11,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 
-namespace comp::media {
+namespace ruby::media {
 
 float AudioBuffer::monoAt(std::size_t frame) const noexcept {
     if (channels <= 0 || frame >= frameCount()) {
@@ -174,4 +174,4 @@ WaveformPeaks AudioDecoder::peaks(const AudioBuffer& buffer, double bucketsPerSe
     return result;
 }
 
-}  // namespace comp::media
+}  // namespace ruby::media

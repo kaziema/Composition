@@ -1,6 +1,6 @@
 # License, in plain English
 
-Composition is under the **Business Source License 1.1**. The legal text is in
+Ruby is under the **Business Source License 1.1**. The legal text is in
 [`LICENSE`](LICENSE). This page explains what it actually means. If the two ever
 disagree, `LICENSE` wins.
 
@@ -12,7 +12,7 @@ Just don't take this code and ship your own video editor with it.
 Four years after any version is released, that version becomes GPL v3, which is a
 normal open source license.
 
-## Can I use Composition to make videos and sell them?
+## Can I use Ruby to make videos and sell them?
 
 Yes. Client work, ads, sponsored content, whatever you want. Everything you create
 with it is yours and there is no revenue limit, no royalty, and nothing to report.

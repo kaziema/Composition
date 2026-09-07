@@ -1,10 +1,10 @@
-#include "comp/engine/Compositor.h"
+#include "ruby/engine/Compositor.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-namespace comp::engine {
+namespace ruby::engine {
 namespace {
 
 // Engine-internal pass, so WGSL rather than Slang (see GpuDevice.h). Vertices are
@@ -414,4 +414,4 @@ void Compositor::render(const core::Project& project, const core::Composition& c
     device_.submit(std::move(commands));
 }
 
-}  // namespace comp::engine
+}  // namespace ruby::engine

@@ -6,10 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "comp/core/Identity.h"
-#include "comp/engine/EffectRegistry.h"
+#include "ruby/core/Identity.h"
+#include "ruby/engine/EffectRegistry.h"
 
-using namespace comp;
+using namespace ruby;
 
 namespace {
 

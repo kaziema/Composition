@@ -1,4 +1,4 @@
-#include "comp/ui/ProjectPanel.h"
+#include "ruby/ui/ProjectPanel.h"
 
 #include <QFileInfo>
 #include <QLineEdit>
@@ -6,9 +6,9 @@
 #include <QPainter>
 #include <QVBoxLayout>
 
-#include "comp/ui/Theme.h"
+#include "ruby/ui/Theme.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 
@@ -257,4 +257,4 @@ void ProjectPanel::mouseDoubleClickEvent(QMouseEvent* e) {
     }
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

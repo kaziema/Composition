@@ -1,9 +1,9 @@
-#include "comp/ui/Format.h"
+#include "ruby/ui/Format.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace comp::ui {
+namespace ruby::ui {
 
 QString formatTimecode(double seconds, double fps) {
     const int rate = std::max(1, static_cast<int>(std::round(fps)));
@@ -32,4 +32,4 @@ QString formatPropertyValue(const core::Property& prop, double seconds,
     return out;
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

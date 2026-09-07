@@ -1,8 +1,8 @@
-#include "comp/engine/EffectRegistry.h"
+#include "ruby/engine/EffectRegistry.h"
 
 #include <algorithm>
 
-namespace comp::engine {
+namespace ruby::engine {
 namespace {
 
 using core::ParamType;
@@ -125,4 +125,4 @@ core::EffectInstance EffectRegistry::instantiate(std::string_view id) const {
     return instance;
 }
 
-}  // namespace comp::engine
+}  // namespace ruby::engine

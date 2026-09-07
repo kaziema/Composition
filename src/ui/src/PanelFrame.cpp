@@ -1,4 +1,4 @@
-#include "comp/ui/PanelFrame.h"
+#include "ruby/ui/PanelFrame.h"
 
 #include <QFontMetrics>
 #include <QMouseEvent>
@@ -6,9 +6,9 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
-#include "comp/ui/Theme.h"
+#include "ruby/ui/Theme.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 
@@ -164,4 +164,4 @@ void PanelFrame::setCurrentIndex(int index) {
     stack_->setCurrentIndex(index);
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

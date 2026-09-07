@@ -4,9 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "comp/core/Animation.h"
+#include "ruby/core/Animation.h"
 
-using namespace comp::core;
+using namespace ruby::core;
 
 namespace {
 

@@ -1,4 +1,4 @@
-#include "comp/ui/InspectorView.h"
+#include "ruby/ui/InspectorView.h"
 
 #include <QLineEdit>
 #include <QHelpEvent>
@@ -8,10 +8,10 @@
 #include <QPainterPath>
 #include <algorithm>
 
-#include "comp/ui/Format.h"
-#include "comp/ui/Theme.h"
+#include "ruby/ui/Format.h"
+#include "ruby/ui/Theme.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 using core::Layer;
@@ -512,4 +512,4 @@ void InspectorView::mouseDoubleClickEvent(QMouseEvent* e) {
     connect(editor_, &QLineEdit::editingFinished, this, &InspectorView::commitEditor);
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

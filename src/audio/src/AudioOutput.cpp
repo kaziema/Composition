@@ -4,9 +4,9 @@
 #include <algorithm>
 #include <cstring>
 
-#include "comp/audio/AudioOutput.h"
+#include "ruby/audio/AudioOutput.h"
 
-namespace comp::audio {
+namespace ruby::audio {
 
 class AudioOutput::Impl {
 public:
@@ -117,4 +117,4 @@ void AudioOutput::mix(float* out, std::uint32_t frames) {
     cursor_.store(at);
 }
 
-}  // namespace comp::audio
+}  // namespace ruby::audio

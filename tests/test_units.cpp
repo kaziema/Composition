@@ -7,9 +7,9 @@
 #include <initializer_list>
 #include <string>
 
-#include "comp/core/Units.h"
+#include "ruby/core/Units.h"
 
-using namespace comp::core;
+using namespace ruby::core;
 
 namespace {
 

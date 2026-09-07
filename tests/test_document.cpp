@@ -4,9 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "comp/core/Document.h"
+#include "ruby/core/Document.h"
 
-using namespace comp::core;
+using namespace ruby::core;
 
 namespace {
 

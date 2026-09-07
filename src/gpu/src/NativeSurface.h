@@ -1,6 +1,6 @@
 #pragma once
 
-namespace comp::gpu {
+namespace ruby::gpu {
 
 // Turns a native window handle into whatever the platform's swapchain wants.
 //
@@ -11,4 +11,4 @@ namespace comp::gpu {
 // rest of the backend is one implementation for every platform.
 void* prepareNativeSurface(void* native_window);
 
-}  // namespace comp::gpu
+}  // namespace ruby::gpu

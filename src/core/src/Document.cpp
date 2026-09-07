@@ -1,9 +1,9 @@
-#include "comp/core/Document.h"
+#include "ruby/core/Document.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace comp::core {
+namespace ruby::core {
 
 // --- RhythmMap ---------------------------------------------------------------
 
@@ -325,4 +325,4 @@ Composition* Project::find(CompId comp) noexcept {
     return it == comps_.end() ? nullptr : &*it;
 }
 
-}  // namespace comp::core
+}  // namespace ruby::core

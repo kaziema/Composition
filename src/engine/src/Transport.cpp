@@ -1,9 +1,9 @@
-#include "comp/engine/Transport.h"
+#include "ruby/engine/Transport.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace comp::engine {
+namespace ruby::engine {
 
 void Transport::setDuration(double seconds) noexcept {
     duration_ = std::max(0.0, seconds);
@@ -65,4 +65,4 @@ bool Transport::advance(double elapsedSeconds) noexcept {
     return frame() != before;
 }
 
-}  // namespace comp::engine
+}  // namespace ruby::engine

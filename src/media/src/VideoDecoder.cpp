@@ -1,4 +1,4 @@
-#include "comp/media/VideoDecoder.h"
+#include "ruby/media/VideoDecoder.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -10,7 +10,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 
-namespace comp::media {
+namespace ruby::media {
 
 class VideoDecoder::Impl {
 public:
@@ -203,4 +203,4 @@ const VideoFrame* VideoDecoder::frameAt(double seconds) {
     return &impl_->current;
 }
 
-}  // namespace comp::media
+}  // namespace ruby::media

@@ -1,4 +1,4 @@
-#include "comp/ui/TimelineView.h"
+#include "ruby/ui/TimelineView.h"
 
 #include <QFontMetrics>
 #include <QHelpEvent>
@@ -12,10 +12,10 @@
 #include <algorithm>
 #include <cmath>
 
-#include "comp/ui/Format.h"
-#include "comp/ui/Theme.h"
+#include "ruby/ui/Format.h"
+#include "ruby/ui/Theme.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 using core::Layer;
@@ -884,4 +884,4 @@ void TimelinePanel::setComposition(core::Composition* comp) {
     }
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

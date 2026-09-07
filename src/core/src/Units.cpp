@@ -1,8 +1,8 @@
-#include "comp/core/Units.h"
+#include "ruby/core/Units.h"
 
 #include <cmath>
 
-namespace comp::core {
+namespace ruby::core {
 
 double to_seconds(TimeValue t, const TimeContext& ctx) noexcept {
     switch (t.mode) {
@@ -84,4 +84,4 @@ const char* unitSuffix(SpatialUnit unit) noexcept {
     return "";
 }
 
-}  // namespace comp::core
+}  // namespace ruby::core

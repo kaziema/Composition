@@ -1,4 +1,4 @@
-#include "comp/media/Probe.h"
+#include "ruby/media/Probe.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -7,7 +7,7 @@ extern "C" {
 
 #include <algorithm>
 
-namespace comp::media {
+namespace ruby::media {
 
 std::optional<MediaInfo> probe(const std::string& path) {
     static const bool quieted = [] {
@@ -64,4 +64,4 @@ std::optional<MediaInfo> probe(const std::string& path) {
     return info.valid() ? std::optional<MediaInfo>(info) : std::nullopt;
 }
 
-}  // namespace comp::media
+}  // namespace ruby::media

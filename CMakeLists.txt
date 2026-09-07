@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(Composition
+project(Ruby
     VERSION 0.0.1
     DESCRIPTION "Layer-based compositor for editors"
     LANGUAGES CXX
@@ -15,7 +15,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
-option(COMP_BUILD_TESTS "Build unit tests" ON)
+option(RUBY_BUILD_TESTS "Build unit tests" ON)
 
 # Homebrew Qt on macOS arm64. Override with -DCMAKE_PREFIX_PATH=...
 if(APPLE AND NOT CMAKE_PREFIX_PATH)
@@ -37,7 +37,7 @@ add_subdirectory(src/engine)
 add_subdirectory(src/ui)
 add_subdirectory(src/app)
 
-if(COMP_BUILD_TESTS)
+if(RUBY_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
@@ -45,5 +45,5 @@ endif()
 message(STATUS "")
 message(STATUS "  ${PROJECT_NAME} ${PROJECT_VERSION}")
 message(STATUS "  build type : ${CMAKE_BUILD_TYPE}")
-message(STATUS "  tests      : ${COMP_BUILD_TESTS}")
+message(STATUS "  tests      : ${RUBY_BUILD_TESTS}")
 message(STATUS "")

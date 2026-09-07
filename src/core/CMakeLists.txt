@@ -1,10 +1,10 @@
-add_library(comp_core STATIC
+add_library(ruby_core STATIC
     src/Units.cpp
     src/Identity.cpp
     src/Animation.cpp
     src/Document.cpp
 )
-add_library(comp::core ALIAS comp_core)
+add_library(ruby::core ALIAS ruby_core)
 
-target_include_directories(comp_core PUBLIC include)
-target_link_libraries(comp_core PRIVATE comp_warnings)
+target_include_directories(ruby_core PUBLIC include)
+target_link_libraries(ruby_core PRIVATE ruby_warnings)

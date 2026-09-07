@@ -6,9 +6,9 @@
 #include <cstdlib>
 #include <string>
 
-#include "comp/core/Identity.h"
+#include "ruby/core/Identity.h"
 
-using namespace comp::core;
+using namespace ruby::core;
 
 namespace {
 

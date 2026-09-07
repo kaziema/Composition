@@ -13,14 +13,14 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
     libswresample
 )
 
-add_library(comp_media STATIC
+add_library(ruby_media STATIC
     src/VideoDecoder.cpp
     src/AudioDecoder.cpp
     src/Probe.cpp
 )
-add_library(comp::media ALIAS comp_media)
+add_library(ruby::media ALIAS ruby_media)
 
-target_include_directories(comp_media PUBLIC include)
-target_link_libraries(comp_media
-    PRIVATE PkgConfig::FFMPEG comp_warnings
+target_include_directories(ruby_media PUBLIC include)
+target_link_libraries(ruby_media
+    PRIVATE PkgConfig::FFMPEG ruby_warnings
 )

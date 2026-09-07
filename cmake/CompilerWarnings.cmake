@@ -1,10 +1,10 @@
-# Shared warning set. Applied via target_link_libraries(<tgt> PRIVATE comp_warnings).
-add_library(comp_warnings INTERFACE)
+# Shared warning set. Applied via target_link_libraries(<tgt> PRIVATE ruby_warnings).
+add_library(ruby_warnings INTERFACE)
 
 if(MSVC)
-    target_compile_options(comp_warnings INTERFACE /W4 /permissive-)
+    target_compile_options(ruby_warnings INTERFACE /W4 /permissive-)
 else()
-    target_compile_options(comp_warnings INTERFACE
+    target_compile_options(ruby_warnings INTERFACE
         -Wall
         -Wextra
         -Wpedantic

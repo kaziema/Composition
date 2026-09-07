@@ -1,10 +1,10 @@
-add_library(comp_audio STATIC
+add_library(ruby_audio STATIC
     src/AudioOutput.cpp
 )
-add_library(comp::audio ALIAS comp_audio)
+add_library(ruby::audio ALIAS ruby_audio)
 
-target_include_directories(comp_audio PUBLIC include)
-target_link_libraries(comp_audio
-    PUBLIC comp::media
-    PRIVATE miniaudio comp_warnings
+target_include_directories(ruby_audio PUBLIC include)
+target_link_libraries(ruby_audio
+    PUBLIC ruby::media
+    PRIVATE miniaudio ruby_warnings
 )

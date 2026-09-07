@@ -6,9 +6,9 @@
 #include <cstdlib>
 #include <vector>
 
-#include "comp/gpu/GpuDevice.h"
+#include "ruby/gpu/GpuDevice.h"
 
-using namespace comp::gpu;
+using namespace ruby::gpu;
 
 namespace {
 

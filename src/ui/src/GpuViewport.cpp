@@ -1,11 +1,11 @@
-#include "comp/ui/GpuViewport.h"
+#include "ruby/ui/GpuViewport.h"
 
 #include <QGuiApplication>
 #include <QResizeEvent>
 #include <QShowEvent>
 #include <algorithm>
 
-namespace comp::ui {
+namespace ruby::ui {
 
 GpuViewport::GpuViewport(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NativeWindow);
@@ -102,4 +102,4 @@ void GpuViewport::paintEvent(QPaintEvent*) {
     surface_->present();
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

@@ -1,11 +1,11 @@
-#include "comp/core/Identity.h"
+#include "ruby/core/Identity.h"
 
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
 #include <unordered_set>
 
-namespace comp::core {
+namespace ruby::core {
 namespace {
 
 bool is_lower_snake(std::string_view s) noexcept {
@@ -183,4 +183,4 @@ std::vector<SchemaProblem> validate_against_previous(const EffectSchema& previou
     return out;
 }
 
-}  // namespace comp::core
+}  // namespace ruby::core

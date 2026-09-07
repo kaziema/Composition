@@ -1,9 +1,9 @@
-#include "comp/ui/Theme.h"
+#include "ruby/ui/Theme.h"
 
 #include <QFontDatabase>
 #include <QStringList>
 
-namespace comp::ui::theme {
+namespace ruby::ui::theme {
 namespace {
 
 QString firstAvailable(const QStringList& candidates, const QString& fallback) {
@@ -153,4 +153,4 @@ QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         .arg(hex(kScrollHandleHover));  // 14
 }
 
-}  // namespace comp::ui::theme
+}  // namespace ruby::ui::theme

@@ -1,9 +1,9 @@
-#include "comp/core/Animation.h"
+#include "ruby/core/Animation.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace comp::core {
+namespace ruby::core {
 namespace {
 
 // Solves the cubic bezier timing curve with control points (p1x, 0) and (p2x, 1),
@@ -139,4 +139,4 @@ Value Property::evaluate(double seconds, const TimeContext& ctx) const {
     return lerp(a.value, b.value, t);
 }
 
-}  // namespace comp::core
+}  // namespace ruby::core

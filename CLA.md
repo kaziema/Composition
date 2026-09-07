@@ -5,7 +5,7 @@ it only has to be done once.
 
 ## Why this exists
 
-Composition is open-core. The public code is source available under the
+Ruby is open-core. The public code is source available under the
 [Business Source License](LICENSE), and a proprietary build is sold on top of it.
 
 Without this agreement, everyone who sends a patch keeps their own copyright over it.

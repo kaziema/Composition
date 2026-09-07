@@ -3,7 +3,7 @@
 
 #include "NativeSurface.h"
 
-namespace comp::gpu {
+namespace ruby::gpu {
 namespace {
 
 // Assigning `view.layer` is ignored once AppKit has made a view layer-backed, and Qt's
@@ -59,4 +59,4 @@ void* prepareNativeSurface(void* native_window) {
     return (__bridge void*)layer;
 }
 
-}  // namespace comp::gpu
+}  // namespace ruby::gpu

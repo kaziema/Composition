@@ -6,13 +6,13 @@
 #include <vector>
 
 #include "NativeSurface.h"
-#include "comp/gpu/GpuDevice.h"
+#include "ruby/gpu/GpuDevice.h"
 
 // Dawn backend. This is the only file in the project that knows WebGPU exists;
 // everything above talks to GpuDevice. If Dawn ever becomes a liability, a second
 // backend lands beside this file and nothing else changes.
 
-namespace comp::gpu {
+namespace ruby::gpu {
 namespace {
 
 wgpu::TextureFormat toWgpu(TextureFormat format) noexcept {
@@ -570,4 +570,4 @@ std::unique_ptr<GpuDevice> create_dawn_device() {
                                         std::move(device), description);
 }
 
-}  // namespace comp::gpu
+}  // namespace ruby::gpu

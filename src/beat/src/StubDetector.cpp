@@ -1,4 +1,4 @@
-#include "comp/beat/Detector.h"
+#include "ruby/beat/Detector.h"
 
 // The public build's detector. Analyses nothing, and says so.
 //
@@ -6,7 +6,7 @@
 // (see RhythmMap and its tests). The stub exists so the public tree compiles, links and
 // runs with the private module absent, which is the whole D6 seam.
 
-namespace comp::beat {
+namespace ruby::beat {
 namespace {
 
 class StubDetector final : public Detector {
@@ -20,10 +20,10 @@ public:
 
 }  // namespace
 
-#ifndef COMP_HAVE_PRIVATE_BEAT
+#ifndef RUBY_HAVE_PRIVATE_BEAT
 std::unique_ptr<Detector> createDetector() {
     return std::make_unique<StubDetector>();
 }
 #endif
 
-}  // namespace comp::beat
+}  // namespace ruby::beat

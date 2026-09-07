@@ -1,9 +1,9 @@
-#include "comp/ui/Playback.h"
+#include "ruby/ui/Playback.h"
 
 #include <QTimer>
 #include <algorithm>
 
-namespace comp::ui {
+namespace ruby::ui {
 
 Playback::Playback(QObject* parent) : QObject(parent) {
     timer_ = new QTimer(this);
@@ -110,4 +110,4 @@ void Playback::tick() {
     }
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

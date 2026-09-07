@@ -1,9 +1,9 @@
-#include "comp/ui/ToolIcons.h"
+#include "ruby/ui/ToolIcons.h"
 
 #include <QPainter>
 #include <QPainterPath>
 
-namespace comp::ui {
+namespace ruby::ui {
 namespace {
 
 constexpr qreal kDesign = 16.0;  // authoring grid
@@ -148,4 +148,4 @@ void paintToolIcon(QPainter& p, const QRect& box, ToolIcon icon, const QColor& c
     p.restore();
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

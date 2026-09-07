@@ -1,4 +1,4 @@
-#include "comp/ui/MainWindow.h"
+#include "ruby/ui/MainWindow.h"
 
 #include <QAction>
 #include <QLabel>
@@ -13,22 +13,22 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 
-#include "comp/ui/DemoProject.h"
-#include "comp/ui/EditorToolBar.h"
-#include "comp/audio/AudioOutput.h"
-#include "comp/beat/Detector.h"
-#include "comp/media/AudioDecoder.h"
-#include "comp/media/Probe.h"
-#include "comp/ui/Format.h"
-#include "comp/ui/GpuViewport.h"
-#include "comp/ui/InspectorView.h"
-#include "comp/ui/Playback.h"
-#include "comp/ui/ProjectPanel.h"
-#include "comp/ui/PanelFrame.h"
-#include "comp/ui/Theme.h"
-#include "comp/ui/TimelineView.h"
+#include "ruby/ui/DemoProject.h"
+#include "ruby/ui/EditorToolBar.h"
+#include "ruby/audio/AudioOutput.h"
+#include "ruby/beat/Detector.h"
+#include "ruby/media/AudioDecoder.h"
+#include "ruby/media/Probe.h"
+#include "ruby/ui/Format.h"
+#include "ruby/ui/GpuViewport.h"
+#include "ruby/ui/InspectorView.h"
+#include "ruby/ui/Playback.h"
+#include "ruby/ui/ProjectPanel.h"
+#include "ruby/ui/PanelFrame.h"
+#include "ruby/ui/Theme.h"
+#include "ruby/ui/TimelineView.h"
 
-namespace comp::ui {
+namespace ruby::ui {
 
 using namespace theme;
 
@@ -129,7 +129,7 @@ QWidget* makeViewerPage(QLabel** timecodeOut, GpuViewport** viewportOut) {
 
 MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     : QMainWindow(parent), gpu_(device) {
-    setWindowTitle(QStringLiteral("Composition"));
+    setWindowTitle(QStringLiteral("Ruby"));
     resize(1440, 900);
 
     buildMenus();
@@ -570,4 +570,4 @@ QWidget* MainWindow::buildBody() {
     return outerSplit_;
 }
 
-}  // namespace comp::ui
+}  // namespace ruby::ui

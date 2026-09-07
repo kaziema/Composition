@@ -1,5 +1,5 @@
 // Decodes real frames from a real file. Needs a video to point at, so it takes a path
-// from COMP_TEST_VIDEO and reports a skip when there isn't one. A test that silently
+// from RUBY_TEST_VIDEO and reports a skip when there isn't one. A test that silently
 // passes is worse than one that says it did nothing.
 
 #include <cstdio>
@@ -8,10 +8,10 @@
 #include <cmath>
 #include <string>
 
-#include "comp/media/AudioDecoder.h"
-#include "comp/media/VideoDecoder.h"
+#include "ruby/media/AudioDecoder.h"
+#include "ruby/media/VideoDecoder.h"
 
-using namespace comp::media;
+using namespace ruby::media;
 
 namespace {
 
@@ -39,9 +39,9 @@ bool hasContent(const VideoFrame& frame) {
 }  // namespace
 
 int main() {
-    const char* path = std::getenv("COMP_TEST_VIDEO");
+    const char* path = std::getenv("RUBY_TEST_VIDEO");
     if (path == nullptr || *path == '\0') {
-        std::puts("media: SKIPPED (set COMP_TEST_VIDEO to a video file)");
+        std::puts("media: SKIPPED (set RUBY_TEST_VIDEO to a video file)");
         return EXIT_SUCCESS;
     }
 

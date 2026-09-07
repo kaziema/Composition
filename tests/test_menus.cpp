@@ -10,7 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "comp/ui/MainWindow.h"
+#include "ruby/ui/MainWindow.h"
 
 namespace {
 
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
 
-    comp::ui::MainWindow window;
+    ruby::ui::MainWindow window;
     QMenuBar* bar = window.menuBar();
 
     const QStringList expected = {"File",   "Edit", "Composition", "Layer", "Effect",

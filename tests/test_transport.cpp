@@ -4,9 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "comp/engine/Transport.h"
+#include "ruby/engine/Transport.h"
 
-using namespace comp::engine;
+using namespace ruby::engine;
 
 namespace {
 

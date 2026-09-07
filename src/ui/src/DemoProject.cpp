@@ -1,7 +1,7 @@
-#include "comp/ui/DemoProject.h"
+#include "ruby/ui/DemoProject.h"
 
-#include "comp/engine/EffectRegistry.h"
-#include "comp/media/Probe.h"
+#include "ruby/engine/EffectRegistry.h"
+#include "ruby/media/Probe.h"
 
 #include <cstdlib>
 #include <initializer_list>
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace comp::ui::demo {
+namespace ruby::ui::demo {
 
 using namespace core;
 
@@ -175,4 +175,4 @@ Project sampleProject() {
     return project;
 }
 
-}  // namespace comp::ui::demo
+}  // namespace ruby::ui::demo
