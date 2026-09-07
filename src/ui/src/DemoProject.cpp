@@ -90,6 +90,7 @@ Project sampleProject() {
     sneaker.inPoint = TimeValue::seconds(0.0);
     sneaker.outPoint = TimeValue::seconds(7.2);
     sneaker.mediaPath = mediaPath(0);
+    sneaker.expanded = true;
     {
         // A graded footage layer, with the grade animated so the effect is obviously
         // doing something over time rather than being a static look.

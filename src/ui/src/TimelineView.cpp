@@ -125,6 +125,21 @@ double TimelineView::timeForX(int x) const noexcept {
     return std::clamp(rel, 0.0, 1.0) * duration();
 }
 
+const Property* TimelineView::propertyFor(const Layer& layer, int effect, int index) {
+    if (index < 0) {
+        return nullptr;
+    }
+    const auto i = static_cast<std::size_t>(index);
+    if (effect < 0) {
+        return i < layer.properties.size() ? &layer.properties[i] : nullptr;
+    }
+    const auto e = static_cast<std::size_t>(effect);
+    if (e >= layer.effects.size()) {
+        return nullptr;
+    }
+    return i < layer.effects[e].params.size() ? &layer.effects[e].params[i] : nullptr;
+}
+
 void TimelineView::rebuildRows() {
     rows_.clear();
     if (comp_ == nullptr) {
@@ -135,24 +150,85 @@ void TimelineView::rebuildRows() {
 
     int y = metrics::kColumnHeaderH;
     for (const Layer& layer : comp_->layers) {
-        rows_.push_back({layer.id, -1, y, metrics::kLayerRowH});
+        Row layerRow;
+        layerRow.kind = RowKind::Layer;
+        layerRow.layer = layer.id;
+        layerRow.top = y;
+        layerRow.height = metrics::kLayerRowH;
+        rows_.push_back(layerRow);
         y += metrics::kLayerRowH;
 
         if (!layer.expanded) {
             continue;
         }
+
+        const auto pushProperty = [&](int effect, std::size_t index) {
+            Row row;
+            row.kind = RowKind::Property;
+            row.layer = layer.id;
+            row.effect = effect;
+            row.propertyIndex = static_cast<int>(index);
+            row.top = y;
+            row.height = metrics::kPropertyRowH;
+            rows_.push_back(row);
+            y += metrics::kPropertyRowH;
+        };
+
         // Only animated properties get a sub-row, matching AE's twirl-down.
         for (std::size_t i = 0; i < layer.properties.size(); ++i) {
-            if (!layer.properties[i].animated()) {
-                continue;
+            if (layer.properties[i].animated()) {
+                pushProperty(-1, i);
             }
-            rows_.push_back({layer.id, static_cast<int>(i), y, metrics::kPropertyRowH});
+        }
+
+        // Then each effect, with a header so it is obvious which stack a parameter
+        // belongs to. The header shows even when nothing under it is animated, because
+        // a silently absent effect is worse than an empty one.
+        for (std::size_t e = 0; e < layer.effects.size(); ++e) {
+            const core::EffectInstance& effect = layer.effects[e];
+
+            Row header;
+            header.kind = RowKind::EffectHeader;
+            header.layer = layer.id;
+            header.effect = static_cast<int>(e);
+            header.top = y;
+            header.height = metrics::kPropertyRowH;
+            rows_.push_back(header);
             y += metrics::kPropertyRowH;
+
+            for (std::size_t i = 0; i < effect.params.size(); ++i) {
+                if (effect.params[i].animated()) {
+                    pushProperty(static_cast<int>(e), i);
+                }
+            }
         }
     }
     contentHeight_ = y;
     scrollY_ = std::clamp(scrollY_, 0, std::max(0, contentHeight_ - height()));
     emit contentHeightChanged(contentHeight_);
+}
+
+void TimelineView::paintEffectHeader(QPainter& p, const Row& row,
+                                     const Layer& layer) const {
+    p.fillRect(QRect(0, row.top, width(), row.height), kRowProperty);
+
+    const auto e = static_cast<std::size_t>(row.effect);
+    if (e >= layer.effects.size()) {
+        return;
+    }
+    const core::EffectInstance& effect = layer.effects[e];
+    const int cy = row.top + row.height / 2;
+
+    // Same green fx marker the inspector uses, so the two panels agree about what an
+    // effect looks like.
+    p.fillRect(QRect(kPropIndent - 26, cy - 4, 8, 8), kExpressionText);
+
+    p.setFont(font());
+    p.setPen(effect.enabled ? kTextBody : kTextFaint);
+    p.drawText(QRect(kPropIndent - 14, row.top, 200, row.height),
+               Qt::AlignVCenter | Qt::AlignLeft,
+               QString::fromStdString(effect.displayName.empty() ? effect.effectId
+                                                                 : effect.displayName));
 }
 
 bool TimelineView::isKeySelected(const KeyRef& ref) const {
@@ -185,7 +261,7 @@ std::optional<KeyRef> TimelineView::keyAt(const QPoint& pos) const {
     const int contentY = pos.y() + scrollY_;
 
     for (const Row& row : rows_) {
-        if (row.propertyIndex < 0) {
+        if (row.kind != RowKind::Property) {
             continue;
         }
         if (contentY < row.top || contentY >= row.top + row.height) {
@@ -195,13 +271,16 @@ std::optional<KeyRef> TimelineView::keyAt(const QPoint& pos) const {
         if (layer == nullptr) {
             return std::nullopt;
         }
-        const Property& prop =
-            layer->properties[static_cast<std::size_t>(row.propertyIndex)];
+        const Property* prop = propertyFor(*layer, row.effect, row.propertyIndex);
+        if (prop == nullptr) {
+            return std::nullopt;
+        }
 
-        for (std::size_t i = 0; i < prop.keys.size(); ++i) {
-            const double kx = xForTime(to_seconds(prop.keys[i].time, ctx));
+        for (std::size_t i = 0; i < prop->keys.size(); ++i) {
+            const double kx = xForTime(to_seconds(prop->keys[i].time, ctx));
             if (std::fabs(kx - static_cast<double>(pos.x())) <= 6.0) {
-                return KeyRef{row.layer, row.propertyIndex, static_cast<int>(i)};
+                return KeyRef{row.layer, row.effect, row.propertyIndex,
+                              static_cast<int>(i)};
             }
         }
         return std::nullopt;
@@ -353,10 +432,13 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
     p.setBrush(Qt::NoBrush);
     p.setRenderHint(QPainter::Antialiasing, false);
 
+    // Effect parameters sit one step further in, under their effect's header.
+    const int labelX = kPropIndent + (row.effect >= 0 ? 12 : 0);
+
     p.setFont(font());
     p.setPen(kTextSecondary);
-    p.drawText(QRect(kPropIndent, row.top, 120, row.height),
-               Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(prop.label));
+    p.drawText(QRect(labelX, row.top, 120, row.height), Qt::AlignVCenter | Qt::AlignLeft,
+               QString::fromStdString(prop.label));
 
     // Scrubbable values are orange, everywhere in this app.
     p.setFont(monoFont(10));
@@ -384,7 +466,7 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
                QPointF(last, static_cast<double>(cy)));
 
     for (std::size_t i = 0; i < prop.keys.size(); ++i) {
-        const KeyRef ref{layer.id, row.propertyIndex, static_cast<int>(i)};
+        const KeyRef ref{layer.id, row.effect, row.propertyIndex, static_cast<int>(i)};
         paintDiamond(p, xForTime(to_seconds(prop.keys[i].time, ctx)),
                      static_cast<double>(cy), isKeySelected(ref));
     }
@@ -434,11 +516,20 @@ void TimelineView::paintEvent(QPaintEvent*) {
         if (layer == nullptr) {
             continue;
         }
-        if (row.propertyIndex < 0) {
-            paintLayerRow(p, onScreen, *layer);
-        } else {
-            paintPropertyRow(p, onScreen, *layer,
-                             layer->properties[static_cast<std::size_t>(row.propertyIndex)]);
+        switch (row.kind) {
+            case RowKind::Layer:
+                paintLayerRow(p, onScreen, *layer);
+                break;
+            case RowKind::EffectHeader:
+                paintEffectHeader(p, onScreen, *layer);
+                break;
+            case RowKind::Property:
+                if (const Property* prop =
+                        propertyFor(*layer, row.effect, row.propertyIndex);
+                    prop != nullptr) {
+                    paintPropertyRow(p, onScreen, *layer, *prop);
+                }
+                break;
         }
     }
 
@@ -482,7 +573,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         if (contentY < row.top || contentY >= row.top + row.height) {
             continue;
         }
-        if (row.propertyIndex >= 0) {
+        if (row.kind != RowKind::Layer) {
             return;
         }
         Layer* layer = comp_->find(row.layer);

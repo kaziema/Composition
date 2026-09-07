@@ -12,11 +12,13 @@ namespace comp::ui {
 // reordered; it becomes a real id the moment retiming lands.
 struct KeyRef {
     core::LayerId layer = 0;
+    int effect = -1;  // -1 when the property belongs to the layer itself
     int property = -1;
     int index = -1;
 
     [[nodiscard]] bool operator==(const KeyRef& other) const noexcept {
-        return layer == other.layer && property == other.property && index == other.index;
+        return layer == other.layer && effect == other.effect &&
+               property == other.property && index == other.index;
     }
 };
 
@@ -60,10 +62,20 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override;
 
 private:
-    // One visible row: either a layer or one of its properties.
+    // What a visible row is. Effects get a header of their own so a twirled-open layer
+    // reads the way AE's does: the layer, then Transform's animated properties, then each
+    // effect with its own animated parameters underneath.
+    enum class RowKind {
+        Layer,
+        EffectHeader,
+        Property,
+    };
+
     struct Row {
+        RowKind kind = RowKind::Layer;
         core::LayerId layer = 0;
-        int propertyIndex = -1;  // -1 means the row is the layer itself
+        int effect = -1;         // -1 when the property belongs to the layer itself
+        int propertyIndex = -1;  // unused for Layer and EffectHeader rows
         int top = 0;
         int height = 0;
     };
@@ -79,6 +91,11 @@ private:
     void paintLayerRow(QPainter& p, const Row& row, const core::Layer& layer) const;
     void paintPropertyRow(QPainter& p, const Row& row, const core::Layer& layer,
                           const core::Property& prop) const;
+    void paintEffectHeader(QPainter& p, const Row& row, const core::Layer& layer) const;
+
+    // Resolves a row's property, whether it lives on the layer or on one of its effects.
+    [[nodiscard]] static const core::Property* propertyFor(const core::Layer& layer,
+                                                           int effect, int index);
     void paintPlayhead(QPainter& p) const;
     static void paintDiamond(QPainter& p, double cx, double cy, bool selected);
 
