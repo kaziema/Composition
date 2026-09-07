@@ -503,6 +503,40 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
     }
 }
 
+void TimelineView::paintRhythm(QPainter& p) const {
+    if (comp_ == nullptr || comp_->rhythm.empty()) {
+        return;
+    }
+    const int top = metrics::kColumnHeaderH;
+    const int bottom = height();
+
+    for (const core::Marker& marker : comp_->rhythm.markers()) {
+        const double x = xForTime(marker.seconds);
+        if (x < trackLeft() || x > width()) {
+            continue;
+        }
+
+        // Lane decides the colour, strength decides the weight. A weak onset should not
+        // look as certain as a strong one, because it is not.
+        QColor colour;
+        switch (marker.lane) {
+            case core::MarkerLane::Downbeat: colour = kAccent;            break;
+            case core::MarkerLane::Beat:     colour = kTextDim;           break;
+            case core::MarkerLane::Vocal:    colour = kExpressionText;    break;
+            case core::MarkerLane::User:     colour = kValueScrubbable;   break;
+        }
+        colour.setAlphaF(0.25 + 0.55 * std::clamp(static_cast<double>(marker.strength),
+                                                  0.0, 1.0));
+
+        p.setPen(QPen(colour, marker.lane == core::MarkerLane::User ? 1.5 : 1.0));
+        p.drawLine(QPointF(x, top), QPointF(x, bottom));
+
+        // A tick in the ruler, so the markers are findable without hunting the tracks.
+        p.setPen(QPen(colour, 2.0));
+        p.drawLine(QPointF(x, top - 5), QPointF(x, top - 1));
+    }
+}
+
 void TimelineView::paintPlayhead(QPainter& p) const {
     const double x = xForTime(currentTime_);
 
@@ -565,6 +599,7 @@ void TimelineView::paintEvent(QPaintEvent*) {
     }
 
     paintHeader(p);
+    paintRhythm(p);
     paintPlayhead(p);
 
     // Hard rule separating the layer column from the tracks.

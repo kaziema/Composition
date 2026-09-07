@@ -96,6 +96,7 @@ private:
     // Resolves a row's property, whether it lives on the layer or on one of its effects.
     [[nodiscard]] static const core::Property* propertyFor(const core::Layer& layer,
                                                            int effect, int index);
+    void paintRhythm(QPainter& p) const;
     void paintPlayhead(QPainter& p) const;
     static void paintDiamond(QPainter& p, double cx, double cy, bool selected);
 

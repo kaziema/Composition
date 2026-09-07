@@ -32,6 +32,6 @@ add_library(comp::ui ALIAS comp_ui)
 target_include_directories(comp_ui PUBLIC include)
 # core is PUBLIC: comp_ui's own headers expose core::Project and core::Composition.
 target_link_libraries(comp_ui
-    PUBLIC Qt6::Widgets comp::core comp::gpu comp::engine comp::media comp::audio
+    PUBLIC Qt6::Widgets comp::core comp::gpu comp::engine comp::media comp::audio comp::beat
     PRIVATE comp_warnings
 )

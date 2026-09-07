@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QString>
 
 #include "comp/core/Document.h"
 #include <optional>
@@ -46,6 +47,7 @@ private:
     core::Project project_;  // TEMPORARY demo content
     std::optional<media::AudioBuffer> audio_;
     std::unique_ptr<audio::AudioOutput> audioOut_;
+    QString rhythmNote_;
     EditorToolBar* toolBar_ = nullptr;
     QLabel* viewerTimecode_ = nullptr;
     InspectorView* inspector_ = nullptr;

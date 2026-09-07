@@ -16,6 +16,7 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 add_library(comp_media STATIC
     src/VideoDecoder.cpp
     src/AudioDecoder.cpp
+    src/Probe.cpp
 )
 add_library(comp::media ALIAS comp_media)
 

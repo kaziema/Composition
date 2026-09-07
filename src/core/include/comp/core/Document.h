@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,46 +15,73 @@ namespace comp::core {
 using LayerId = std::uint64_t;
 using CompId = std::uint64_t;
 
-// --- Beat map ----------------------------------------------------------------
+// --- Rhythm map --------------------------------------------------------------
 //
-// Pillar 2: the beat grid is a document object, not markers the user places. It is
-// produced once by analysis on import and cached with the project. Everything that
-// snaps, quantises, or drives off the music reads from here.
+// Pillar 2: the rhythm of the track is a document object, not markers the user places.
 //
-// Detection itself lives in the private `beat` module (D6). This type is public,
-// and an EMPTY BEAT MAP IS AN ORDINARY LEGAL STATE, not an error. Every query here
-// degrades gracefully when the map is empty, because in the public build it always
-// will be. Nothing above this may assume a beat grid exists.
+// Two lanes, because they are not two versions of one thing (F3, and section 7 parts 2
+// and 3). Beats are a periodic grid you can quantise against; vocal onsets are an
+// aperiodic list where "snap to the half beat" is meaningless. A measured edit cut to
+// syllables at 29ms median while a fitted beat grid landed on the audio worse than a
+// random offset, so the vocal lane is not an edge case.
+//
+// Detection lives in the private `beat` module (D6). This type is public, and an EMPTY
+// MAP IS AN ORDINARY LEGAL STATE: in the public build it always will be. Every query
+// degrades to a no-op rather than failing.
 
-struct Beat {
-    double seconds = 0.0;
-    int index = 0;          // running beat number from the start of the track
-    bool downbeat = false;  // beat 1 of a bar
+enum class MarkerLane {
+    Beat,      // an ordinary beat
+    Downbeat,  // beat one of a bar
+    Vocal,     // a syllable onset
+    User,      // placed or moved by hand
 };
 
-class BeatMap {
-public:
-    BeatMap() = default;
-    BeatMap(std::vector<Beat> beats, double bpm);
+struct Marker {
+    double seconds = 0.0;
+    MarkerLane lane = MarkerLane::Beat;
+    float strength = 1.0f;  // onset strength or detector confidence, 0..1
+    int index = 0;          // running count within its lane
+};
 
-    [[nodiscard]] bool empty() const noexcept { return beats_.empty(); }
+class RhythmMap {
+public:
+    RhythmMap() = default;
+
+    // Replaces one lane, leaving the others alone. User markers are never touched by
+    // this (F3): re-analysis must not discard a correction someone made by hand.
+    void setLane(MarkerLane lane, std::vector<Marker> markers);
+    void clearLane(MarkerLane lane);
+
+    void addUserMarker(double seconds);
+    bool removeMarkerNear(double seconds, double tolerance);
+
+    void setTempo(double bpm) noexcept { bpm_ = bpm; }
     [[nodiscard]] double bpm() const noexcept { return bpm_; }
-    [[nodiscard]] const std::vector<Beat>& beats() const noexcept { return beats_; }
+
+    [[nodiscard]] bool empty() const noexcept { return markers_.empty(); }
+    [[nodiscard]] const std::vector<Marker>& markers() const noexcept { return markers_; }
+    [[nodiscard]] bool has(MarkerLane lane) const noexcept;
 
     // nullopt only when there is nothing to return.
-    [[nodiscard]] std::optional<Beat> nearest(double seconds) const;
-    [[nodiscard]] std::optional<Beat> nearestDownbeat(double seconds) const;
+    [[nodiscard]] std::optional<Marker> nearest(double seconds) const;
+    [[nodiscard]] std::optional<Marker> nearestIn(double seconds,
+                                                  std::initializer_list<MarkerLane> lanes)
+        const;
 
-    // Snap onto the grid. Returns the input unchanged when the map is empty, so
-    // callers never special-case an unanalysed project.
+    // Returns the input unchanged when there is nothing to snap to, so callers never
+    // special-case an unanalysed project.
     [[nodiscard]] double snap(double seconds) const;
-    [[nodiscard]] double snapToDownbeat(double seconds) const;
+    [[nodiscard]] double snapTo(double seconds,
+                                std::initializer_list<MarkerLane> lanes) const;
 
-    // Cut points for "cut to beats": downbeat times inside [from, to).
-    [[nodiscard]] std::vector<double> downbeatsBetween(double from, double to) const;
+    // Cut points in [from, to).
+    [[nodiscard]] std::vector<double> between(double from, double to,
+                                              std::initializer_list<MarkerLane> lanes) const;
 
 private:
-    std::vector<Beat> beats_;
+    void resort();
+
+    std::vector<Marker> markers_;
     double bpm_ = 0.0;
 };
 
@@ -167,7 +195,7 @@ struct Composition {
     double duration = 12.0;  // seconds
 
     std::vector<Layer> layers;  // index 0 is the topmost layer, as in AE
-    BeatMap beats;
+    RhythmMap rhythm;
 
     [[nodiscard]] TimeContext timeContext() const noexcept;
     [[nodiscard]] FrameGeometry geometry() const noexcept { return {width, height}; }

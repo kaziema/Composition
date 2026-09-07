@@ -13,6 +13,7 @@
 #include "comp/ui/DemoProject.h"
 #include "comp/ui/EditorToolBar.h"
 #include "comp/audio/AudioOutput.h"
+#include "comp/beat/Detector.h"
 #include "comp/media/AudioDecoder.h"
 #include "comp/ui/Format.h"
 #include "comp/ui/GpuViewport.h"
@@ -198,6 +199,21 @@ void MainWindow::loadAudio() {
         layer.waveform.low = peaks.low;
         layer.waveform.high = peaks.high;
         audio_ = std::move(*decoded);
+
+        // Rhythm analysis. Absent in the public build, where this returns nothing and
+        // everything downstream carries on with an empty map (D6).
+        auto detector = beat::createDetector();
+        if (detector != nullptr && detector->available()) {
+            const beat::Result vocal =
+                detector->analyze(*audio_, beat::Lane::Vocal);
+            if (!vocal.empty()) {
+                comp.rhythm.setLane(core::MarkerLane::Vocal, vocal.markers);
+            }
+            rhythmNote_ = QStringLiteral("%1 vocal onsets")
+                              .arg(static_cast<int>(vocal.markers.size()));
+        } else {
+            rhythmNote_ = QStringLiteral("no rhythm analysis in this build");
+        }
         return;
     }
 }
@@ -213,6 +229,9 @@ void MainWindow::updateStatus() {
                     .arg(playback_->measuredFps(), 0, 'f', 1);
     } else {
         text += QStringLiteral("   ·   space to play");
+    }
+    if (!rhythmNote_.isEmpty()) {
+        text += QStringLiteral("   ·   %1").arg(rhythmNote_);
     }
     statusBar()->showMessage(text);
 }

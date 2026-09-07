@@ -5,61 +5,107 @@
 
 namespace comp::core {
 
-// --- BeatMap -----------------------------------------------------------------
+// --- RhythmMap ---------------------------------------------------------------
 
-BeatMap::BeatMap(std::vector<Beat> beats, double bpm)
-    : beats_(std::move(beats)), bpm_(bpm) {
-    std::sort(beats_.begin(), beats_.end(),
-              [](const Beat& a, const Beat& b) { return a.seconds < b.seconds; });
+void RhythmMap::resort() {
+    std::sort(markers_.begin(), markers_.end(),
+              [](const Marker& a, const Marker& b) { return a.seconds < b.seconds; });
+}
+
+void RhythmMap::setLane(MarkerLane lane, std::vector<Marker> markers) {
+    // User markers survive re-analysis. That is the whole point of F3: correcting the
+    // detector has to be worth doing, and it is not if re-running throws it away.
+    std::erase_if(markers_, [lane](const Marker& m) { return m.lane == lane; });
+    for (Marker& m : markers) {
+        m.lane = lane;
+    }
+    markers_.insert(markers_.end(), markers.begin(), markers.end());
+    resort();
+}
+
+void RhythmMap::clearLane(MarkerLane lane) {
+    std::erase_if(markers_, [lane](const Marker& m) { return m.lane == lane; });
+}
+
+void RhythmMap::addUserMarker(double seconds) {
+    Marker m;
+    m.seconds = seconds;
+    m.lane = MarkerLane::User;
+    m.strength = 1.0f;
+    markers_.push_back(m);
+    resort();
+}
+
+bool RhythmMap::removeMarkerNear(double seconds, double tolerance) {
+    const auto it = std::find_if(markers_.begin(), markers_.end(), [&](const Marker& m) {
+        return std::fabs(m.seconds - seconds) <= tolerance;
+    });
+    if (it == markers_.end()) {
+        return false;
+    }
+    markers_.erase(it);
+    return true;
+}
+
+bool RhythmMap::has(MarkerLane lane) const noexcept {
+    return std::any_of(markers_.begin(), markers_.end(),
+                       [lane](const Marker& m) { return m.lane == lane; });
 }
 
 namespace {
 
-std::optional<Beat> nearestIn(const std::vector<Beat>& beats, double seconds,
-                              bool downbeatOnly) {
-    const Beat* best = nullptr;
-    double bestDist = 0.0;
-    for (const Beat& b : beats) {
-        if (downbeatOnly && !b.downbeat) {
-            continue;
-        }
-        const double d = std::fabs(b.seconds - seconds);
-        if (best == nullptr || d < bestDist) {
-            best = &b;
-            bestDist = d;
-        }
-    }
-    if (best == nullptr) {
-        return std::nullopt;
-    }
-    return *best;
+bool inLanes(MarkerLane lane, std::initializer_list<MarkerLane> lanes) {
+    return std::find(lanes.begin(), lanes.end(), lane) != lanes.end();
 }
 
 }  // namespace
 
-std::optional<Beat> BeatMap::nearest(double seconds) const {
-    return nearestIn(beats_, seconds, false);
+std::optional<Marker> RhythmMap::nearest(double seconds) const {
+    const Marker* best = nullptr;
+    double bestDist = 0.0;
+    for (const Marker& m : markers_) {
+        const double d = std::fabs(m.seconds - seconds);
+        if (best == nullptr || d < bestDist) {
+            best = &m;
+            bestDist = d;
+        }
+    }
+    return best == nullptr ? std::nullopt : std::optional<Marker>(*best);
 }
 
-std::optional<Beat> BeatMap::nearestDownbeat(double seconds) const {
-    return nearestIn(beats_, seconds, true);
+std::optional<Marker> RhythmMap::nearestIn(double seconds,
+                                           std::initializer_list<MarkerLane> lanes) const {
+    const Marker* best = nullptr;
+    double bestDist = 0.0;
+    for (const Marker& m : markers_) {
+        if (!inLanes(m.lane, lanes)) {
+            continue;
+        }
+        const double d = std::fabs(m.seconds - seconds);
+        if (best == nullptr || d < bestDist) {
+            best = &m;
+            bestDist = d;
+        }
+    }
+    return best == nullptr ? std::nullopt : std::optional<Marker>(*best);
 }
 
-double BeatMap::snap(double seconds) const {
-    const auto b = nearest(seconds);
-    return b ? b->seconds : seconds;
+double RhythmMap::snap(double seconds) const {
+    const auto m = nearest(seconds);
+    return m ? m->seconds : seconds;
 }
 
-double BeatMap::snapToDownbeat(double seconds) const {
-    const auto b = nearestDownbeat(seconds);
-    return b ? b->seconds : seconds;
+double RhythmMap::snapTo(double seconds, std::initializer_list<MarkerLane> lanes) const {
+    const auto m = nearestIn(seconds, lanes);
+    return m ? m->seconds : seconds;
 }
 
-std::vector<double> BeatMap::downbeatsBetween(double from, double to) const {
+std::vector<double> RhythmMap::between(double from, double to,
+                                       std::initializer_list<MarkerLane> lanes) const {
     std::vector<double> out;
-    for (const Beat& b : beats_) {
-        if (b.downbeat && b.seconds >= from && b.seconds < to) {
-            out.push_back(b.seconds);
+    for (const Marker& m : markers_) {
+        if (inLanes(m.lane, lanes) && m.seconds >= from && m.seconds < to) {
+            out.push_back(m.seconds);
         }
     }
     return out;
@@ -170,10 +216,12 @@ std::vector<Property> defaultTransform() {
 TimeContext Composition::timeContext() const noexcept {
     TimeContext ctx;
     ctx.fps = fps;
-    ctx.has_beat_map = !beats.empty();
-    // Falls back to a nominal tempo so `beats` mode still resolves in the public
-    // build, where the detector is absent and the map is always empty.
-    ctx.bpm = ctx.has_beat_map ? beats.bpm() : 120.0;
+    // A beat lane with a tempo is what makes `beats` time mode meaningful. A vocal-only
+    // map has markers but no grid, so it cannot supply one.
+    ctx.has_beat_map = rhythm.has(MarkerLane::Beat) && rhythm.bpm() > 0.0;
+    // Falls back to a nominal tempo so `beats` mode still resolves in the public build,
+    // where the detector is absent and the map is always empty.
+    ctx.bpm = ctx.has_beat_map ? rhythm.bpm() : 120.0;
     return ctx;
 }
 

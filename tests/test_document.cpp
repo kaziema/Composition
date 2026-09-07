@@ -26,64 +26,121 @@ void checkNear(double a, double b, const char* what, double eps = 1e-9) {
     }
 }
 
-BeatMap fourBars(double bpm) {
-    // 16 beats at the given tempo, downbeat every 4.
-    std::vector<Beat> beats;
+RhythmMap fourBars(double bpm) {
+    // 16 beats at the given tempo, a downbeat every 4.
+    std::vector<Marker> beats;
     const double step = 60.0 / bpm;
     for (int i = 0; i < 16; ++i) {
-        beats.push_back({static_cast<double>(i) * step, i, (i % 4) == 0});
+        Marker m;
+        m.seconds = static_cast<double>(i) * step;
+        m.index = i;
+        m.lane = (i % 4 == 0) ? MarkerLane::Downbeat : MarkerLane::Beat;
+        beats.push_back(m);
     }
-    return BeatMap(std::move(beats), bpm);
+    RhythmMap map;
+    map.setLane(MarkerLane::Beat, {});
+    for (const Marker& m : beats) {
+        map.setLane(m.lane, {});
+    }
+    std::vector<Marker> plain, downs;
+    for (const Marker& m : beats) {
+        (m.lane == MarkerLane::Downbeat ? downs : plain).push_back(m);
+    }
+    map.setLane(MarkerLane::Beat, plain);
+    map.setLane(MarkerLane::Downbeat, downs);
+    map.setTempo(bpm);
+    return map;
 }
 
-// The most important test in this file. Beat detection lives in the private module
-// (D6), so in the public build the map is ALWAYS empty. Every query has to degrade
-// to a sane no-op rather than throwing, returning garbage, or crashing.
-void an_empty_beat_map_is_an_ordinary_state() {
-    const BeatMap none;
+// The most important test in this file. Detection lives in the private module (D6), so
+// in the public build the map is ALWAYS empty. Every query has to degrade to a sane
+// no-op rather than throwing, returning garbage, or crashing.
+void an_empty_rhythm_map_is_an_ordinary_state() {
+    const RhythmMap none;
 
-    check(none.empty(), "a default beat map is empty");
+    check(none.empty(), "a default rhythm map is empty");
     check(!none.nearest(3.0).has_value(), "nearest on an empty map returns nothing");
-    check(!none.nearestDownbeat(3.0).has_value(), "nearestDownbeat on empty returns nothing");
+    check(!none.nearestIn(3.0, {MarkerLane::Beat}).has_value(),
+          "a lane query on empty returns nothing");
     checkNear(none.snap(3.14159), 3.14159, "snapping against an empty map is a no-op");
-    checkNear(none.snapToDownbeat(3.14159), 3.14159, "downbeat snap on empty is a no-op");
-    check(none.downbeatsBetween(0.0, 12.0).empty(), "no cut points without a beat map");
+    checkNear(none.snapTo(3.14159, {MarkerLane::Downbeat}), 3.14159,
+              "lane snap on empty is a no-op");
+    check(none.between(0.0, 12.0, {MarkerLane::Downbeat}).empty(),
+          "no cut points without a rhythm map");
+    check(!none.has(MarkerLane::Beat), "an empty map reports no lanes");
 }
 
-void beats_are_sorted_on_construction() {
-    BeatMap map({{2.0, 2, false}, {0.0, 0, true}, {1.0, 1, false}}, 120.0);
-    check(map.beats().size() == 3, "all beats retained");
-    checkNear(map.beats()[0].seconds, 0.0, "sorted first");
-    checkNear(map.beats()[1].seconds, 1.0, "sorted second");
-    checkNear(map.beats()[2].seconds, 2.0, "sorted third");
+void markers_are_sorted_however_they_arrive() {
+    RhythmMap map;
+    map.setLane(MarkerLane::Vocal, {{2.0, MarkerLane::Vocal, 1.0f, 2},
+                                    {0.0, MarkerLane::Vocal, 1.0f, 0},
+                                    {1.0, MarkerLane::Vocal, 1.0f, 1}});
+    check(map.markers().size() == 3, "all markers retained");
+    checkNear(map.markers()[0].seconds, 0.0, "sorted first");
+    checkNear(map.markers()[1].seconds, 1.0, "sorted second");
+    checkNear(map.markers()[2].seconds, 2.0, "sorted third");
 }
 
-void snapping_picks_the_nearest_beat() {
-    const BeatMap map = fourBars(120.0);  // beats every 0.5s
+void snapping_picks_the_nearest_marker() {
+    const RhythmMap map = fourBars(120.0);  // a marker every 0.5s
 
     checkNear(map.snap(0.6), 0.5, "0.6s snaps back to 0.5");
     checkNear(map.snap(0.9), 1.0, "0.9s snaps forward to 1.0");
-    checkNear(map.snap(0.0), 0.0, "an exact beat stays put");
+    checkNear(map.snap(0.0), 0.0, "an exact marker stays put");
 }
 
-// "Cut on the downbeat, shake on the beat" is the grammar of these edits, so
-// downbeat snapping has to ignore the beats in between.
+// "Cut on the downbeat, shake on the beat" is the grammar of these edits, so a downbeat
+// query has to ignore the beats in between.
 void downbeat_snapping_ignores_ordinary_beats() {
-    const BeatMap map = fourBars(120.0);  // downbeats at 0, 2, 4, 6s
+    const RhythmMap map = fourBars(120.0);  // downbeats at 0, 2, 4, 6s
 
-    checkNear(map.snapToDownbeat(0.6), 0.0, "0.6s snaps to the downbeat at 0");
-    checkNear(map.snapToDownbeat(1.7), 2.0, "1.7s snaps to the downbeat at 2");
+    checkNear(map.snapTo(0.6, {MarkerLane::Downbeat}), 0.0, "0.6s snaps to the downbeat at 0");
+    checkNear(map.snapTo(1.7, {MarkerLane::Downbeat}), 2.0, "1.7s snaps to the downbeat at 2");
     checkNear(map.snap(1.7), 1.5, "plain snap would have gone to 1.5 instead");
 }
 
 void cut_points_are_a_half_open_range() {
-    const BeatMap map = fourBars(120.0);  // downbeats at 0, 2, 4, 6
-    const std::vector<double> cuts = map.downbeatsBetween(0.0, 4.0);
+    const RhythmMap map = fourBars(120.0);  // downbeats at 0, 2, 4, 6
+    const std::vector<double> cuts = map.between(0.0, 4.0, {MarkerLane::Downbeat});
 
     check(cuts.size() == 2, "0..4 contains two downbeats");
     checkNear(cuts[0], 0.0, "range includes its start");
     checkNear(cuts[1], 2.0, "second cut point");
-    check(map.downbeatsBetween(0.0, 0.0).empty(), "an empty range yields no cuts");
+    check(map.between(0.0, 0.0, {MarkerLane::Downbeat}).empty(),
+          "an empty range yields no cuts");
+}
+
+// F3: re-running detection must never discard a correction someone made by hand.
+void re_analysis_preserves_user_markers() {
+    RhythmMap map = fourBars(120.0);
+    map.addUserMarker(1.23);
+
+    map.setLane(MarkerLane::Beat, {{9.0, MarkerLane::Beat, 1.0f, 0}});
+    map.setLane(MarkerLane::Downbeat, {});
+
+    const auto user = map.nearestIn(1.23, {MarkerLane::User});
+    check(user.has_value(), "the hand-placed marker survived re-analysis");
+    check(user.has_value() && std::fabs(user->seconds - 1.23) < 1e-9,
+          "and it is exactly where it was put");
+    check(!map.has(MarkerLane::Downbeat), "the replaced lane really was replaced");
+
+    check(map.removeMarkerNear(1.23, 0.05), "a user marker can be removed");
+    check(!map.nearestIn(1.23, {MarkerLane::User}).has_value(), "and then it is gone");
+}
+
+// Two lanes, two different shapes of data. Vocal onsets are aperiodic, so a vocal-only
+// map must not claim a tempo that `beats` time mode would then quantise against.
+void a_vocal_only_map_supplies_no_tempo() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+    comp.rhythm.setLane(MarkerLane::Vocal,
+                        {{0.4, MarkerLane::Vocal, 1.0f, 0},
+                         {1.1, MarkerLane::Vocal, 1.0f, 1}});
+
+    const TimeContext ctx = comp.timeContext();
+    check(!ctx.has_beat_map, "syllables are not a grid, so there is no beat map");
+    checkNear(ctx.bpm, 120.0, "and the nominal fallback tempo still applies");
+    check(!comp.rhythm.empty(), "even though the map has markers in it");
 }
 
 void layer_labels_follow_the_design() {
@@ -161,24 +218,26 @@ void time_context_falls_back_without_a_beat_map() {
     Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
 
     TimeContext ctx = comp.timeContext();
-    check(!ctx.has_beat_map, "a fresh comp has no beat map");
+    check(!ctx.has_beat_map, "a fresh comp has no rhythm map");
     checkNear(ctx.bpm, 120.0, "falls back to a nominal tempo so beats still resolve");
     checkNear(to_seconds(TimeValue::beats(4.0), ctx), 2.0, "one bar at the fallback tempo");
 
-    comp.beats = fourBars(174.0);
+    comp.rhythm = fourBars(174.0);
     ctx = comp.timeContext();
-    check(ctx.has_beat_map, "analysis makes the map present");
+    check(ctx.has_beat_map, "a beat lane with a tempo makes the map present");
     checkNear(ctx.bpm, 174.0, "tempo now comes from the map");
 }
 
 }  // namespace
 
 int main() {
-    an_empty_beat_map_is_an_ordinary_state();
-    beats_are_sorted_on_construction();
-    snapping_picks_the_nearest_beat();
+    an_empty_rhythm_map_is_an_ordinary_state();
+    markers_are_sorted_however_they_arrive();
+    snapping_picks_the_nearest_marker();
     downbeat_snapping_ignores_ordinary_beats();
     cut_points_are_a_half_open_range();
+    re_analysis_preserves_user_markers();
+    a_vocal_only_map_supplies_no_tempo();
     layer_labels_follow_the_design();
     the_default_transform_stores_resolution_independent_units();
     new_layers_land_on_top();
