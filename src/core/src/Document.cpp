@@ -319,6 +319,12 @@ std::string Project::pathFor(const Layer& layer) const {
     return item != nullptr ? item->path : std::string{};
 }
 
+void Project::noteUsedId(std::uint64_t id) noexcept {
+    if (id >= nextId_) {
+        nextId_ = id + 1;
+    }
+}
+
 Composition* Project::find(CompId comp) noexcept {
     const auto it = std::find_if(comps_.begin(), comps_.end(),
                                  [comp](const Composition& c) { return c.id == comp; });

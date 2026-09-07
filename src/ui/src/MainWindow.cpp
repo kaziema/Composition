@@ -5,7 +5,9 @@
 #include <QMenu>
 #include <QFileDialog>
 #include <algorithm>
+#include <QCloseEvent>
 #include <QFileInfo>
+#include <QMessageBox>
 #include <QMenuBar>
 #include <QTimer>
 #include <QPainter>
@@ -22,6 +24,7 @@
 #include "ruby/ui/Format.h"
 #include "ruby/ui/GpuViewport.h"
 #include "ruby/ui/InspectorView.h"
+#include "ruby/io/ProjectIO.h"
 #include "ruby/ui/NewCompositionDialog.h"
 #include "ruby/ui/Playback.h"
 #include "ruby/ui/ProjectPanel.h"
@@ -130,7 +133,6 @@ QWidget* makeViewerPage(QLabel** timecodeOut, GpuViewport** viewportOut) {
 
 MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     : QMainWindow(parent), gpu_(device) {
-    setWindowTitle(QStringLiteral("Ruby"));
     resize(1440, 900);
 
     buildMenus();
@@ -153,6 +155,9 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
     refreshCompositionTabs();
     updateStatus();
+    // Title comes from document state, so it has to be set once at launch rather than
+    // only when something changes.
+    markClean();
 
     // While playing, report the frame rate we actually achieve rather than the one we
     // are aiming for. A number that always reads 30 would be useless.
@@ -223,6 +228,7 @@ void MainWindow::importMedia() {
     }
     statusBar()->showMessage(message, 6000);
 
+    markDirty();
     emit mediaImported();
 }
 
@@ -241,6 +247,150 @@ core::Composition* MainWindow::activeComposition() {
     return &project_.compositions().front();
 }
 
+void MainWindow::newProject() {
+    if (!confirmDiscard()) {
+        return;
+    }
+    project_ = core::Project{};
+    projectPath_.clear();
+    activeComp_ = 0;
+    audio_.reset();
+    rhythmNote_.clear();
+
+    // A project with no composition is a legal but useless state, so make one rather
+    // than dropping the user into an app where nothing works until they find a menu.
+    core::Composition& comp =
+        project_.addComposition("Comp 1", 1080, 1920, 30.0, 15.0);
+    setActiveComposition(comp.id);
+    projectPanel_->refresh();
+    markClean();
+}
+
+void MainWindow::openProject() {
+    if (!confirmDiscard()) {
+        return;
+    }
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Open Project"), QString(),
+        QStringLiteral("Ruby project (*.rbypr);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    core::Project loaded;
+    const io::LoadReport report = io::load(loaded, path.toStdString());
+    if (!report.ok) {
+        QMessageBox::warning(this, QStringLiteral("Could not open"),
+                             QString::fromStdString(report.error));
+        return;
+    }
+
+    project_ = std::move(loaded);
+    projectPath_ = path;
+    activeComp_ = 0;
+    audio_.reset();
+    rhythmNote_.clear();
+
+    core::Composition* active = activeComposition();
+    if (active != nullptr) {
+        setActiveComposition(active->id);
+    }
+    projectPanel_->setProject(&project_);
+    if (viewport_ != nullptr) {
+        viewport_->setProject(&project_);
+    }
+    refreshCompositionTabs();
+    markClean();
+
+    // Anything the loader had to repair is said out loud. A project that quietly opens
+    // missing a link is worse than one that tells you which link it lost.
+    if (!report.notes.empty()) {
+        QStringList notes;
+        for (const std::string& note : report.notes) {
+            notes << QString::fromStdString(note);
+        }
+        QMessageBox::information(this, QStringLiteral("Opened with changes"),
+                                 notes.join(QStringLiteral("\n")));
+    }
+    statusBar()->showMessage(QStringLiteral("Opened %1").arg(QFileInfo(path).fileName()),
+                             5000);
+}
+
+bool MainWindow::saveProject(bool forcePrompt) {
+    QString path = projectPath_;
+    if (path.isEmpty() || forcePrompt) {
+        path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Save Project"),
+            path.isEmpty() ? QStringLiteral("Untitled.rbypr") : path,
+            QStringLiteral("Ruby project (*.rbypr)"));
+        if (path.isEmpty()) {
+            return false;
+        }
+        if (!path.endsWith(QStringLiteral(".rbypr"))) {
+            path += QStringLiteral(".rbypr");
+        }
+    }
+
+    std::string error;
+    if (!io::save(project_, path.toStdString(), &error)) {
+        QMessageBox::warning(this, QStringLiteral("Could not save"),
+                             QString::fromStdString(error));
+        return false;
+    }
+
+    projectPath_ = path;
+    markClean();
+    statusBar()->showMessage(QStringLiteral("Saved %1").arg(QFileInfo(path).fileName()),
+                             4000);
+    return true;
+}
+
+bool MainWindow::confirmDiscard() {
+    if (!dirty_) {
+        return true;
+    }
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("Unsaved changes"),
+        QStringLiteral("Save changes to this project first?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (answer == QMessageBox::Cancel) {
+        return false;
+    }
+    if (answer == QMessageBox::Save) {
+        return saveProject(false);
+    }
+    return true;
+}
+
+void MainWindow::markDirty() {
+    if (!dirty_) {
+        dirty_ = true;
+        updateTitle();
+    }
+}
+
+void MainWindow::markClean() {
+    dirty_ = false;
+    updateTitle();
+}
+
+void MainWindow::updateTitle() {
+    const QString name = projectPath_.isEmpty()
+                             ? QStringLiteral("Untitled")
+                             : QFileInfo(projectPath_).fileName();
+    setWindowTitle(QStringLiteral("%1%2 — Ruby")
+                       .arg(name, dirty_ ? QStringLiteral(" •") : QString()));
+}
+
+void MainWindow::closeEvent(QCloseEvent* e) {
+    if (confirmDiscard()) {
+        e->accept();
+    } else {
+        e->ignore();
+    }
+}
+
 void MainWindow::newComposition() {
     NewCompositionDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted) {
@@ -252,6 +402,7 @@ void MainWindow::newComposition() {
         s.name.toStdString(), s.width, s.height, s.fps, s.duration);
     setActiveComposition(comp.id);
     projectPanel_->refresh();
+    markDirty();
 
     statusBar()->showMessage(QStringLiteral("Created %1  ·  %2x%3  ·  %4 fps  ·  %5s")
                                  .arg(s.name)
@@ -350,6 +501,7 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
     }
     projectPanel_->refresh();
     updateStatus();
+    markDirty();
 
     statusBar()->showMessage(
         QStringLiteral("Added %1").arg(QString::fromStdString(item->name)), 4000);
@@ -423,8 +575,15 @@ void MainWindow::buildMenus() {
     // Handoff menu set, in order:
     // File, Edit, Composition, Layer, Effect, Animation, View, Window, Help.
     auto* file = menuBar()->addMenu(QStringLiteral("File"));
-    addPending(file, {QStringLiteral("New Project"), QStringLiteral("Open Project..."),
-                      QStringLiteral("Save Project")});
+    file->addAction(QStringLiteral("New Project"),
+                    QKeySequence(QStringLiteral("Ctrl+Shift+N")), this,
+                    &MainWindow::newProject);
+    file->addAction(QStringLiteral("Open Project..."), QKeySequence::Open, this,
+                    &MainWindow::openProject);
+    file->addAction(QStringLiteral("Save Project"), QKeySequence::Save, this,
+                    [this] { saveProject(false); });
+    file->addAction(QStringLiteral("Save Project As..."), QKeySequence::SaveAs, this,
+                    [this] { saveProject(true); });
     file->addSeparator();
     file->addAction(QStringLiteral("Import Media..."), QKeySequence(QStringLiteral("Ctrl+I")),
                     this, &MainWindow::importMedia);

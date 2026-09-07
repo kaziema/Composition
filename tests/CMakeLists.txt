@@ -10,6 +10,10 @@ ruby_add_test(test_animation)
 ruby_add_test(test_document)
 ruby_add_test(test_project)
 
+add_executable(test_projectio test_projectio.cpp)
+target_link_libraries(test_projectio PRIVATE ruby::io ruby_warnings)
+add_test(NAME test_projectio COMMAND test_projectio)
+
 add_executable(test_transport test_transport.cpp)
 target_link_libraries(test_transport PRIVATE ruby::engine ruby_warnings)
 add_test(NAME test_transport COMMAND test_transport)

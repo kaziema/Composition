@@ -262,6 +262,10 @@ public:
 
     [[nodiscard]] Composition* find(CompId comp) noexcept;
 
+    // Loading restores ids from a file rather than minting new ones, so the generator
+    // has to be told what is already taken or the next new layer collides with an old.
+    void noteUsedId(std::uint64_t id) noexcept;
+
 private:
     std::vector<Composition> comps_;
     std::vector<MediaItem> media_;

@@ -3,6 +3,8 @@
 #include <QMainWindow>
 #include <QString>
 
+class QCloseEvent;
+
 #include "ruby/core/Document.h"
 #include <optional>
 
@@ -45,15 +47,27 @@ signals:
     void mediaImported();
 
 public slots:
+    void newProject();
+    void openProject();
+    bool saveProject(bool forcePrompt);
     void importMedia();
     void newComposition();
     void addMediaToComposition(core::MediaId id);
     void setActiveComposition(core::CompId id);
 
+protected:
+    // Closing with unsaved work has to be interceptable, so this is an override rather
+    // than a signal connection.
+    void closeEvent(QCloseEvent* e) override;
+
 private:
     void buildMenus();
     void updateStatus();
     void loadAudio();
+    bool confirmDiscard();
+    void markDirty();
+    void markClean();
+    void updateTitle();
     void refreshCompositionTabs();
     [[nodiscard]] core::Composition* activeComposition();
     QWidget* buildBody();
@@ -74,6 +88,8 @@ private:
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
     core::CompId activeComp_ = 0;
+    QString projectPath_;
+    bool dirty_ = false;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;
     QSplitter* outerSplit_ = nullptr;
