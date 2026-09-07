@@ -153,6 +153,9 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
 
     setCentralWidget(root);
 
+    setFocusPolicy(Qt::StrongFocus);
+    setFocus();
+
     refreshCompositionTabs();
     refreshUndoActions();
     updateStatus();

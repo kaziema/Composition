@@ -2,6 +2,7 @@
 
 #include <QFileInfo>
 #include <QLineEdit>
+#include <QShortcut>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QVBoxLayout>
@@ -54,6 +55,10 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
 
     search_ = new QLineEdit(this);
     search_->setPlaceholderText(QStringLiteral("Search"));
+    // Click focus only. As the first focusable widget in the window it would otherwise
+    // hold focus from launch, and a QLineEdit swallows the spacebar as text before the
+    // play shortcut ever sees it, so the transport would be dead until you clicked away.
+    search_->setFocusPolicy(Qt::ClickFocus);
     search_->setFixedHeight(kSearchH - 8);
     search_->setStyleSheet(
         QStringLiteral("QLineEdit { background: %1; border: 1px solid %2; color: %3; "
@@ -61,6 +66,16 @@ ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
             .arg(kFieldBg.name(), kFieldBorder.name(), kTextBody.name()));
     layout->addWidget(search_);
     layout->addStretch();
+
+    // Escape hands focus back rather than leaving you stuck in a field you are done with.
+    auto* leave = new QShortcut(QKeySequence(Qt::Key_Escape), search_);
+    leave->setContext(Qt::WidgetShortcut);
+    connect(leave, &QShortcut::activated, this, [this] {
+        search_->clearFocus();
+        if (window() != nullptr) {
+            window()->setFocus();
+        }
+    });
 
     connect(search_, &QLineEdit::textChanged, this, [this](const QString& text) {
         filter_ = text;
