@@ -56,6 +56,7 @@ signals:
     void contentHeightChanged(int pixels);
 
 protected:
+    bool event(QEvent* e) override;
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;

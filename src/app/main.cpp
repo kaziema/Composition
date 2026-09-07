@@ -16,6 +16,10 @@ int main(int argc, char** argv) {
     QApplication::setStyle(QStringLiteral("Fusion"));
     app.setPalette(comp::ui::theme::palette());
     app.setStyleSheet(comp::ui::theme::styleSheet());
+    // The design caps UI transitions at 80ms; a tooltip that takes a second to appear
+    // is the same complaint in slower form.
+    QApplication::setStyle(QApplication::style());
+    qApp->setEffectEnabled(Qt::UI_AnimateTooltip, false);
 
     // TEMPORARY: any file paths on the command line become the demo's footage layers,
     // until the app can import media itself.

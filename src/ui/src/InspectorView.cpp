@@ -1,7 +1,9 @@
 #include "comp/ui/InspectorView.h"
 
 #include <QLineEdit>
+#include <QHelpEvent>
 #include <QMouseEvent>
+#include <QToolTip>
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
@@ -378,6 +380,55 @@ void InspectorView::commitEditor() {
         applyValue(editField_, typed);
     }
     update();
+}
+
+bool InspectorView::event(QEvent* e) {
+    if (e->type() != QEvent::ToolTip) {
+        return QWidget::event(e);
+    }
+    auto* help = static_cast<QHelpEvent*>(e);
+    const QPoint pos = help->pos();
+    QString text;
+
+    if (const ValueField* field = fieldAt(pos); field != nullptr) {
+        // The single least discoverable thing in the panel: these numbers are draggable.
+        text = QStringLiteral("Drag to change  ·  double-click to type  ·  hold shift for "
+                              "fine steps");
+        if (const Property* prop = resolve(field->property);
+            prop != nullptr && prop->animated()) {
+            text += QStringLiteral("\nAnimated, so a change adds a keyframe at the playhead");
+        }
+    } else if (pos.y() >= kSubtitleH) {
+        int cursor = kSubtitleH;
+        for (const GroupRow& group : groups_) {
+            if (pos.y() >= cursor && pos.y() < cursor + metrics::kInspectorGroupH) {
+                text = group.effect >= 0
+                           ? QStringLiteral("%1 — an effect on this layer. Click to "
+                                            "collapse.")
+                                 .arg(QString::fromStdString(group.name))
+                           : QStringLiteral("%1 — click to collapse")
+                                 .arg(QString::fromStdString(group.name));
+                break;
+            }
+            cursor += metrics::kInspectorGroupH;
+            if (group.expanded) {
+                cursor += metrics::kInspectorRowH *
+                          static_cast<int>(group.properties.size());
+            }
+            // The keyframe indicator sits left of the label on every property row.
+            if (pos.x() < kLabelX && pos.y() < cursor) {
+                text = QStringLiteral("Filled means this property is animated");
+                break;
+            }
+        }
+    }
+
+    if (text.isEmpty()) {
+        QToolTip::hideText();
+    } else {
+        QToolTip::showText(help->globalPos(), text, this);
+    }
+    return true;
 }
 
 void InspectorView::mousePressEvent(QMouseEvent* e) {

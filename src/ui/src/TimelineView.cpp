@@ -1,7 +1,9 @@
 #include "comp/ui/TimelineView.h"
 
 #include <QFontMetrics>
+#include <QHelpEvent>
 #include <QMouseEvent>
+#include <QToolTip>
 #include <QPainter>
 #include <QPainterPath>
 #include <QHBoxLayout>
@@ -605,6 +607,93 @@ void TimelineView::paintEvent(QPaintEvent*) {
     // Hard rule separating the layer column from the tracks.
     p.setPen(kDivider);
     p.drawLine(trackLeft(), 0, trackLeft(), height());
+}
+
+bool TimelineView::event(QEvent* e) {
+    if (e->type() != QEvent::ToolTip) {
+        return QWidget::event(e);
+    }
+    auto* help = static_cast<QHelpEvent*>(e);
+    const QPoint pos = help->pos();
+    const int contentY = pos.y() + scrollY_;
+    QString text;
+
+    if (comp_ != nullptr && pos.y() < metrics::kColumnHeaderH) {
+        text = (pos.x() < trackLeft())
+                   ? QStringLiteral("Layer columns — visibility, audio, solo, blend mode "
+                                    "and parent")
+                   : QStringLiteral("Time ruler — click or drag to scrub");
+    } else if (comp_ != nullptr) {
+        for (const Row& row : rows_) {
+            if (contentY < row.top || contentY >= row.top + row.height) {
+                continue;
+            }
+            const Layer* layer = comp_->find(row.layer);
+            if (layer == nullptr) {
+                break;
+            }
+
+            if (row.kind == RowKind::Layer && pos.x() < trackLeft()) {
+                // The A/V column is three unlabelled dots. Nobody guesses these.
+                if (pos.x() < 24) {
+                    text = QStringLiteral("Visibility — hide this layer without deleting it");
+                } else if (pos.x() < 38) {
+                    text = QStringLiteral("Audio — whether this layer contributes sound");
+                } else if (pos.x() < 56) {
+                    text = QStringLiteral("Solo — show only the soloed layers");
+                } else if (pos.x() >= kAvW + kIndexW && pos.x() < kAvW + kIndexW + 13) {
+                    text = QStringLiteral("Twirl — show this layer's animated properties "
+                                          "and effects");
+                } else {
+                    text = QStringLiteral("%1 — drag its bar to move, drag an edge to trim")
+                               .arg(QString::fromStdString(layer->name));
+                }
+            } else if (row.kind == RowKind::EffectHeader) {
+                text = QStringLiteral("Effect on this layer. Its parameters appear in the "
+                                      "Inspector.");
+            } else if (row.kind == RowKind::Property) {
+                if (pos.x() < kPropIndent - 12) {
+                    text = QStringLiteral("Stopwatch — this property is animated");
+                } else if (pos.x() >= trackLeft() - kNavW && pos.x() < trackLeft()) {
+                    text = QStringLiteral("Previous key  ·  add or remove a key here  ·  "
+                                          "next key");
+                } else if (pos.x() >= trackLeft()) {
+                    text = QStringLiteral("Keyframes — click to select, shift-click to add "
+                                          "to the selection");
+                }
+            }
+            break;
+        }
+    }
+
+    // Rhythm markers win over whatever is behind them; they are the thin lines people
+    // will actually wonder about.
+    if (comp_ != nullptr && pos.x() >= trackLeft() && !comp_->rhythm.empty()) {
+        for (const core::Marker& marker : comp_->rhythm.markers()) {
+            if (std::fabs(xForTime(marker.seconds) - pos.x()) > 3.0) {
+                continue;
+            }
+            const char* lane = "marker";
+            switch (marker.lane) {
+                case core::MarkerLane::Beat:     lane = "Beat";        break;
+                case core::MarkerLane::Downbeat: lane = "Downbeat";    break;
+                case core::MarkerLane::Vocal:    lane = "Vocal onset"; break;
+                case core::MarkerLane::User:     lane = "Your marker"; break;
+            }
+            text = QStringLiteral("%1 at %2s   ·   strength %3")
+                       .arg(QString::fromUtf8(lane))
+                       .arg(marker.seconds, 0, 'f', 2)
+                       .arg(static_cast<double>(marker.strength), 0, 'f', 2);
+            break;
+        }
+    }
+
+    if (text.isEmpty()) {
+        QToolTip::hideText();
+    } else {
+        QToolTip::showText(help->globalPos(), text, this);
+    }
+    return true;
 }
 
 void TimelineView::mousePressEvent(QMouseEvent* e) {

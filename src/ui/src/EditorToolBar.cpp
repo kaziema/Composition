@@ -2,7 +2,9 @@
 
 #include <QFontMetrics>
 #include <iterator>
+#include <QHelpEvent>
 #include <QMouseEvent>
+#include <QToolTip>
 #include <QPainter>
 
 #include "comp/ui/Theme.h"
@@ -23,6 +25,21 @@ constexpr ToolIcon kTools[] = {
     ToolIcon::Hand,      ToolIcon::Anchor, ToolIcon::Effects,
 };
 constexpr int kToolCount = static_cast<int>(std::size(kTools));
+
+// Name plus what it does. A bare name on an abstract glyph tells you what it is called,
+// not what it is for, and "Pan Behind" is the classic example of a name that explains
+// nothing to someone who has not already been taught it.
+constexpr const char* kToolTips[] = {
+    "Selection Tool — pick and transform layers in the viewer",
+    "Move Tool — reposition the selected layer",
+    "Type Tool — create and edit text layers",
+    "Shape Tool — draw rectangles, ellipses and polygons",
+    "Pen Tool — draw bezier paths and masks by hand",
+    "Mask Tool — mask a layer to a shape",
+    "Hand Tool — pan the viewer without moving anything",
+    "Anchor Point Tool — move a layer's origin without moving the layer",
+    "Effects — browse and apply effects",
+};
 
 constexpr int kEdgePad = 8;
 constexpr int kToolGap = 1;
@@ -174,6 +191,40 @@ void EditorToolBar::mousePressEvent(QMouseEvent* e) {
             return;
         }
     }
+}
+
+bool EditorToolBar::event(QEvent* e) {
+    // The whole bar is one widget, so tooltips are resolved by hit-testing rather than
+    // by having a child per control.
+    if (e->type() == QEvent::ToolTip) {
+        auto* help = static_cast<QHelpEvent*>(e);
+        const QPoint pos = help->pos();
+
+        for (int i = 0; i < toolRects_.size() && i < kToolCount; ++i) {
+            if (toolRects_.at(i).contains(pos)) {
+                QToolTip::showText(help->globalPos(),
+                                   QString::fromUtf8(kToolTips[i]), this);
+                return true;
+            }
+        }
+        for (const Switch& sw : switches_) {
+            if (!sw.pillRect.contains(pos) && !sw.labelRect.contains(pos)) {
+                continue;
+            }
+            const QString text =
+                sw.label == QStringLiteral("Snapping")
+                    ? QStringLiteral("Snapping — layer edges, the playhead and rhythm "
+                                     "markers pull toward each other while dragging")
+                    : QStringLiteral("Motion Blur — blur layers along their movement "
+                                     "between frames");
+            QToolTip::showText(help->globalPos(), text, this);
+            return true;
+        }
+
+        QToolTip::hideText();
+        return true;
+    }
+    return QWidget::event(e);
 }
 
 void EditorToolBar::mouseMoveEvent(QMouseEvent* e) {
