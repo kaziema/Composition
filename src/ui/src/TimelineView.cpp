@@ -1340,15 +1340,23 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     zoom_ = new QSlider(Qt::Horizontal, this);
     zoom_->setRange(0, 1000);
     zoom_->setToolTip(QStringLiteral("Zoom the timeline"));
-    zoom_->setFixedWidth(metrics::kLayerColumnW - 24);
+    zoom_->setFixedWidth(180);
 
     timeScroll_ = new QScrollBar(Qt::Horizontal, this);
 
+    // Zoom slider centred in the bar, time scrollbar on the right, as AE lays it out.
+    //
+    // The 2:1:1 stretch is what actually centres it. The scrollbar on the right has to be
+    // balanced by twice as much space on the left, or "equal spacers either side of the
+    // slider" would park it at a quarter of the way across and only look centred if the
+    // scrollbar were not there.
     auto* timeRow = new QWidget(this);
     auto* timeLayout = new QHBoxLayout(timeRow);
-    timeLayout->setContentsMargins(12, 0, 0, 0);
+    timeLayout->setContentsMargins(12, 0, 12, 0);
     timeLayout->setSpacing(12);
+    timeLayout->addStretch(2);
     timeLayout->addWidget(zoom_);
+    timeLayout->addStretch(1);
     timeLayout->addWidget(timeScroll_, 1);
 
     layout->addWidget(bar_);
@@ -1391,11 +1399,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     // difference between "an hour" and "fifty minutes" and give the entire useful range,
     // seconds down to frames, the last few pixels.
     connect(zoom_, &QSlider::valueChanged, this, [this](int value) {
-        if (zoom_->signalsBlocked()) {
-            return;
-        }
         core::Composition* comp = view_->composition();
-        if (comp == nullptr) {
+        if (comp == nullptr || comp->duration <= 0.0) {
             return;
         }
         const double lo = std::log(std::max(1e-3, view_->minimumSpan()));
@@ -1416,15 +1421,29 @@ void TimelinePanel::syncTimeScrollRange() {
     const double span = view_->viewSpan();
     const int overflow = static_cast<int>(std::round(std::max(0.0, total - span) * 1000.0));
 
+    // Always visible, never hidden. Two reasons.
+    //
+    // It is the zoom readout: the thumb's width against the groove is how much of the
+    // composition you are looking at, so fully zoomed out means a full width thumb that
+    // cannot move, which is what every other NLE does.
+    //
+    // And hiding it was actively breaking the zoom slider. Zooming in from a fitted view
+    // made this appear, which relaid out the bottom bar mid-drag and threw the slider to
+    // one end. A control that materialises while you are using its neighbour is a bug
+    // generator, not a space saving.
     QSignalBlocker block(timeScroll_);
     timeScroll_->setRange(0, overflow);
-    timeScroll_->setPageStep(static_cast<int>(std::round(span * 1000.0)));
+    // Qt derives the thumb's length from pageStep, so 1.5x pageStep is 1.5x thumb. That
+    // is the only lever: there is no separate handle-size property to set.
+    timeScroll_->setPageStep(static_cast<int>(std::round(span * 1500.0)));
     timeScroll_->setSingleStep(std::max(1, static_cast<int>(std::round(span * 100.0))));
     timeScroll_->setValue(static_cast<int>(std::round(view_->viewStart() * 1000.0)));
-    // Hidden when the whole composition is on screen: a scrollbar that cannot scroll is
-    // just a line taking up eight pixels.
-    timeScroll_->setVisible(overflow > 0);
 
+    // While the user has hold of the slider, the mouse is the source of truth. Writing a
+    // value back underneath their thumb makes the handle fight the cursor.
+    if (zoom_->isSliderDown()) {
+        return;
+    }
     const double minimum = view_->minimumSpan();
     const double lo = std::log(std::max(1e-3, minimum));
     const double hi = std::log(std::max(minimum * 1.001, total));
