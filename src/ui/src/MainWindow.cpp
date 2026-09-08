@@ -1078,6 +1078,19 @@ void MainWindow::buildMenus() {
                       QStringLiteral("Apply Animation Preset...")});
 
     auto* view = menuBar()->addMenu(QStringLiteral("View"));
+    // Named for the timeline explicitly. AE's View > Zoom In means the viewer, and those
+    // three are still pending below; claiming their labels for the timeline would make
+    // the menu lie about which panel it is about to change.
+    view->addAction(QStringLiteral("Zoom In Timeline"),
+                    QKeySequence(QStringLiteral("=")), this,
+                    [this] { timelinePanel_->zoomIn(); });
+    view->addAction(QStringLiteral("Zoom Out Timeline"),
+                    QKeySequence(QStringLiteral("-")), this,
+                    [this] { timelinePanel_->zoomOut(); });
+    view->addAction(QStringLiteral("Fit Timeline to Window"),
+                    QKeySequence(QStringLiteral(";")), this,
+                    [this] { timelinePanel_->zoomToFit(); });
+    view->addSeparator();
     addPending(view, {QStringLiteral("Zoom In"), QStringLiteral("Zoom Out"),
                       QStringLiteral("Fit to Window"), QString(),
                       QStringLiteral("Show Guides"), QStringLiteral("Show Title/Action Safe"),

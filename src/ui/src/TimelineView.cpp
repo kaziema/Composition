@@ -13,6 +13,7 @@
 #include <QPainterPath>
 #include <QHBoxLayout>
 #include <QScrollBar>
+#include <QSlider>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -79,11 +80,24 @@ TimelineView::TimelineView(QWidget* parent) : QWidget(parent) {
 }
 
 void TimelineView::setComposition(core::Composition* comp) {
+    // This is called for plain refreshes as well as for genuine switches, so the zoom
+    // can only be reset when the composition actually changed. Resetting on every
+    // refresh would throw the user out of their zoom every time they nudged a layer.
+    const core::CompId previous = comp_ != nullptr ? comp_->id : 0;
+    const core::CompId incoming = comp != nullptr ? comp->id : 0;
+
     comp_ = comp;
     selected_.reset();
     if (comp_ != nullptr && !comp_->layers.empty()) {
         selected_ = comp_->layers.front().id;
     }
+
+    if (incoming != previous || viewSpan_ <= 0.0) {
+        zoomToFit();
+    } else {
+        durationChanged();
+    }
+
     rebuildRows();
     update();
 }
@@ -120,21 +134,135 @@ double TimelineView::duration() const noexcept {
     return (comp_ != nullptr && comp_->duration > 0.0) ? comp_->duration : 12.0;
 }
 
+// Ruler labels. Sub-second steps need decimals or every tick reads the same; past a
+// minute the bare second count stops being legible as a time.
+QString rulerLabel(double seconds, double step) {
+    const int total = static_cast<int>(std::floor(seconds));
+    const int mm = total / 60;
+    const int ss = total % 60;
+    if (step < 1.0) {
+        return QStringLiteral("%1:%2.%3")
+            .arg(mm)
+            .arg(ss, 2, 10, QLatin1Char('0'))
+            .arg(static_cast<int>(std::round((seconds - total) * 10.0)) % 10);
+    }
+    return QStringLiteral("%1:%2").arg(mm).arg(ss, 2, 10, QLatin1Char('0'));
+}
+
 int TimelineView::trackLeft() const noexcept { return metrics::kLayerColumnW; }
+
+// The track region. Everything drawn on the time axis is clipped to this, because with
+// a scrolled view a bar's left edge lands at a negative x and would otherwise paint
+// straight over the layer names, mode and parent columns.
+QRect TimelineView::trackRect() const noexcept {
+    return {trackLeft(), 0, trackWidth(), height()};
+}
 
 int TimelineView::trackWidth() const noexcept {
     return std::max(1, width() - metrics::kLayerColumnW);
 }
 
 double TimelineView::xForTime(double seconds) const noexcept {
+    const double span = viewSpan_ > 0.0 ? viewSpan_ : duration();
     return static_cast<double>(trackLeft()) +
-           (seconds / duration()) * static_cast<double>(trackWidth());
+           ((seconds - viewStart_) / span) * static_cast<double>(trackWidth());
 }
 
 double TimelineView::timeForX(int x) const noexcept {
+    const double span = viewSpan_ > 0.0 ? viewSpan_ : duration();
     const double rel = static_cast<double>(x - trackLeft()) /
                        static_cast<double>(trackWidth());
-    return std::clamp(rel, 0.0, 1.0) * duration();
+    // Clamped to the visible window, not to the composition: you cannot drag something
+    // to a time that is not on screen, and letting the value run off produces bars that
+    // silently teleport when the mouse leaves the widget.
+    return viewStart_ + std::clamp(rel, 0.0, 1.0) * span;
+}
+
+void TimelineView::clampView() {
+    const double total = duration();
+    const double minimum = std::min(minimumSpan(), total);
+    viewSpan_ = std::clamp(viewSpan_ > 0.0 ? viewSpan_ : total, minimum, total);
+    viewStart_ = std::clamp(viewStart_, 0.0, std::max(0.0, total - viewSpan_));
+}
+
+void TimelineView::setViewStart(double seconds) {
+    const double before = viewStart_;
+    viewStart_ = seconds;
+    fit_ = false;
+    clampView();
+    if (std::fabs(viewStart_ - before) < 1e-12) {
+        return;
+    }
+    update();
+    emit viewRangeChanged(viewStart_, viewSpan_);
+}
+
+double TimelineView::minimumSpan() const noexcept {
+    // Two frames. Narrower than that is not useful and makes the arithmetic fragile.
+    return 2.0 / std::max(1.0, comp_ != nullptr ? comp_->fps : 30.0);
+}
+
+void TimelineView::setViewSpan(double span, double anchorSeconds) {
+    // Hold anchorSeconds at the same fraction across the track. Without this the view
+    // recentres on every step and zooming in on a specific cut becomes a chase.
+    const double current = viewSpan_ > 0.0 ? viewSpan_ : duration();
+    const double frac = std::clamp((anchorSeconds - viewStart_) / current, 0.0, 1.0);
+
+    viewSpan_ = span;
+    clampView();
+    viewStart_ = anchorSeconds - frac * viewSpan_;
+    clampView();
+
+    // Clamping can hand back the whole composition, and that IS fit, whatever the user
+    // was doing to get there. Saying otherwise strands them out of fit-follows-duration.
+    fit_ = viewStart_ <= 1e-9 && viewSpan_ >= duration() - 1e-9;
+
+    update();
+    emit viewRangeChanged(viewStart_, viewSpan_);
+}
+
+void TimelineView::zoomBy(double factor, double anchorSeconds) {
+    if (factor <= 0.0) {
+        return;
+    }
+    setViewSpan((viewSpan_ > 0.0 ? viewSpan_ : duration()) / factor, anchorSeconds);
+}
+
+void TimelineView::zoomToFit() {
+    viewStart_ = 0.0;
+    viewSpan_ = duration();
+    fit_ = true;
+    update();
+    emit viewRangeChanged(viewStart_, viewSpan_);
+}
+
+void TimelineView::durationChanged() {
+    if (fit_) {
+        zoomToFit();
+        return;
+    }
+    clampView();
+    update();
+    emit viewRangeChanged(viewStart_, viewSpan_);
+}
+
+// Ticks land on a 1/2/5 progression so labels stay round however far you zoom, and the
+// interval is chosen by how much room a label needs, not by the duration. A tick every
+// second is fine at 12 seconds and 3600 lines of overdraw at an hour.
+double TimelineView::tickInterval() const noexcept {
+    const double span = viewSpan_ > 0.0 ? viewSpan_ : duration();
+    const double minPixels = 64.0;
+    const double wanted = span * minPixels / std::max(1.0, static_cast<double>(trackWidth()));
+
+    static constexpr double kSteps[] = {0.04, 0.1, 0.2, 0.5, 1.0,  2.0,   5.0,   10.0,
+                                        15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0,
+                                        1800.0, 3600.0};
+    for (const double step : kSteps) {
+        if (step >= wanted) {
+            return step;
+        }
+    }
+    return kSteps[std::size(kSteps) - 1];
 }
 
 const Property* TimelineView::propertyFor(const Layer& layer, int effect, int index) {
@@ -391,20 +519,29 @@ void TimelineView::paintHeader(QPainter& p) const {
     p.drawText(QRect(trackLeft() - kParentW, 0, kParentW, h),
                Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Parent"));
 
-    // Ruler: a tick every second, labels on even seconds only.
-    const int seconds = static_cast<int>(std::round(duration()));
+    // Ruler. Only the visible window is walked, and the spacing adapts, so this costs
+    // the same at twelve seconds as it does at three hours.
+    p.save();
+    p.setClipRect(trackRect());
+    const double step = tickInterval();
+    const double first = std::floor(viewStart_ / step) * step;
+    const double last = viewStart_ + (viewSpan_ > 0.0 ? viewSpan_ : duration());
     p.setFont(monoFont(9));
-    for (int s = 0; s <= seconds; ++s) {
-        const double x = xForTime(static_cast<double>(s));
+    for (double t = first; t <= last + step * 0.5; t += step) {
+        if (t < -1e-9) {
+            continue;
+        }
+        const double x = xForTime(t);
+        if (x < trackLeft() - 1.0 || x > width()) {
+            continue;
+        }
         p.setPen(kRulerTick);
         p.drawLine(QPointF(x, 0.0), QPointF(x, static_cast<double>(h)));
-        if (s % 2 == 0) {
-            p.setPen(kTextDim);
-            p.drawText(QRectF(x + 3.0, 0.0, 40.0, static_cast<double>(h)),
-                       Qt::AlignVCenter | Qt::AlignLeft,
-                       QStringLiteral("0:%1").arg(s, 2, 10, QLatin1Char('0')));
-        }
+        p.setPen(kTextDim);
+        p.drawText(QRectF(x + 3.0, 0.0, 56.0, static_cast<double>(h)),
+                   Qt::AlignVCenter | Qt::AlignLeft, rulerLabel(t, step));
     }
+    p.restore();
 
     p.setPen(kDivider);
     p.drawLine(0, h - 1, width(), h - 1);
@@ -484,12 +621,21 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
 
     // The bar, on the track side.
     const core::TimeContext ctx = comp_->timeContext();
-    const double x0 = xForTime(to_seconds(layer.inPoint, ctx));
-    const double x1 = xForTime(to_seconds(layer.outPoint, ctx));
+    // Clamped to just outside the widget for DRAWING only. Zoomed all the way in, a bar
+    // edge can sit a billion pixels off screen, and the waveform loop below casts those
+    // bounds to int. Hit testing uses the unclamped values, as it should: a click is
+    // always inside the widget, so the comparison works either way.
+    const double drawLo = static_cast<double>(trackLeft()) - 64.0;
+    const double drawHi = static_cast<double>(width()) + 64.0;
+    const double x0 = std::clamp(xForTime(to_seconds(layer.inPoint, ctx)), drawLo, drawHi);
+    const double x1 = std::clamp(xForTime(to_seconds(layer.outPoint, ctx)), drawLo, drawHi);
     const double barTop = row.top + (row.height - metrics::kLayerBarH) / 2.0;
 
     const QRectF bar(x0, barTop, std::max(2.0, x1 - x0),
                      static_cast<double>(metrics::kLayerBarH));
+
+    p.save();
+    p.setClipRect(trackRect());
     p.fillRect(bar, colors.bar);
     p.fillRect(QRectF(bar.left(), bar.top(), bar.width(), 1.0), colors.topEdge);
 
@@ -536,6 +682,7 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
         p.setPen(QPen(colors.topEdge, 1.0, Qt::DotLine));
         p.drawLine(QPointF(compEnd, bar.top()), QPointF(compEnd, bar.bottom()));
     }
+    p.restore();
 
     p.setPen(kRuleSoft);
     p.drawLine(0, row.top + row.height - 1, width(), row.top + row.height - 1);
@@ -584,8 +731,15 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
     }
 
     // Span line between the first and last key, then the diamonds on top of it.
-    const double first = xForTime(to_seconds(prop.keys.front().time, ctx));
-    const double last = xForTime(to_seconds(prop.keys.back().time, ctx));
+    const double drawLo = static_cast<double>(trackLeft()) - 64.0;
+    const double drawHi = static_cast<double>(width()) + 64.0;
+    const double first =
+        std::clamp(xForTime(to_seconds(prop.keys.front().time, ctx)), drawLo, drawHi);
+    const double last =
+        std::clamp(xForTime(to_seconds(prop.keys.back().time, ctx)), drawLo, drawHi);
+
+    p.save();
+    p.setClipRect(trackRect());
     p.setPen(QPen(kKeyConnector, 1.0));
     p.drawLine(QPointF(first, static_cast<double>(cy)),
                QPointF(last, static_cast<double>(cy)));
@@ -595,6 +749,7 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
         paintDiamond(p, xForTime(to_seconds(prop.keys[i].time, ctx)),
                      static_cast<double>(cy), isKeySelected(ref));
     }
+    p.restore();
 }
 
 void TimelineView::paintRhythm(QPainter& p) const {
@@ -604,6 +759,8 @@ void TimelineView::paintRhythm(QPainter& p) const {
     const int top = metrics::kColumnHeaderH;
     const int bottom = height();
 
+    p.save();
+    p.setClipRect(trackRect());
     for (const core::Marker& marker : comp_->rhythm.markers()) {
         const double x = xForTime(marker.seconds);
         if (x < trackLeft() || x > width()) {
@@ -629,11 +786,14 @@ void TimelineView::paintRhythm(QPainter& p) const {
         p.setPen(QPen(colour, 2.0));
         p.drawLine(QPointF(x, top - 5), QPointF(x, top - 1));
     }
+    p.restore();
 }
 
 void TimelineView::paintPlayhead(QPainter& p) const {
     const double x = xForTime(currentTime_);
 
+    p.save();
+    p.setClipRect(trackRect());
     p.setPen(QPen(kAccent, 1.0));
     p.drawLine(QPointF(x, 0.0), QPointF(x, static_cast<double>(height())));
 
@@ -650,6 +810,7 @@ void TimelineView::paintPlayhead(QPainter& p) const {
     p.setBrush(kAccent);
     p.drawPath(handle);
     p.setBrush(Qt::NoBrush);
+    p.restore();
 }
 
 void TimelineView::paintEvent(QPaintEvent*) {
@@ -700,8 +861,11 @@ void TimelineView::paintEvent(QPaintEvent*) {
     // stack. Without this you are guessing, and the snap is invisible.
     if (dropRow_ >= 0) {
         const double x = xForTime(dropTime_);
+        p.save();
+        p.setClipRect(trackRect());
         p.setPen(QPen(kValueScrubbable, 1.0, Qt::DashLine));
         p.drawLine(QPointF(x, metrics::kColumnHeaderH), QPointF(x, height()));
+        p.restore();
 
         int y = metrics::kColumnHeaderH;
         int index = 0;
@@ -1062,13 +1226,44 @@ void TimelineView::mouseReleaseEvent(QMouseEvent*) {
         // which feels like the app fighting you. This happens before editEnded so it lands
         // inside the same undo step as the move that caused it.
         if (comp_ != nullptr && comp_->growToFit()) {
-            update();
+            durationChanged();
             emit compositionResized(comp_->duration);
             emit layersChanged();
         }
         emit editEnded();
     }
     scrubbing_ = false;
+}
+
+void TimelineView::wheelEvent(QWheelEvent* e) {
+    // Modifier + wheel zooms about the cursor, which is the convention everywhere from
+    // AE to a browser. Bare wheel scrolls: vertically through layers, horizontally
+    // through time, so a trackpad pans the timeline the way it pans anything else.
+    const QPointF pos = e->position();
+    if (e->modifiers().testFlag(Qt::ControlModifier) ||
+        e->modifiers().testFlag(Qt::MetaModifier)) {
+        const int dy = e->angleDelta().y() != 0 ? e->angleDelta().y() : e->angleDelta().x();
+        if (dy != 0) {
+            const double anchor = pos.x() >= trackLeft()
+                                      ? timeForX(static_cast<int>(pos.x()))
+                                      : viewStart_;
+            zoomBy(std::pow(1.0015, static_cast<double>(dy)), anchor);
+        }
+        e->accept();
+        return;
+    }
+
+    const QPoint delta = e->angleDelta();
+    if (delta.x() != 0) {
+        const double span = viewSpan_ > 0.0 ? viewSpan_ : duration();
+        setViewStart(viewStart_ -
+                     span * (static_cast<double>(delta.x()) /
+                             std::max(1.0, static_cast<double>(trackWidth()))) * 2.0);
+    }
+    if (delta.y() != 0) {
+        setScrollY(scrollY_ - delta.y());
+    }
+    e->accept();
 }
 
 // --- Sub-toolbar -------------------------------------------------------------
@@ -1139,8 +1334,26 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     bodyLayout->addWidget(view_, 1);
     bodyLayout->addWidget(scroll_);
 
+    // Bottom bar, laid out like AE's: zoom slider under the layer column, time scrollbar
+    // under the track it actually scrolls. A full-width scrollbar would imply it scrolls
+    // the layer names too.
+    zoom_ = new QSlider(Qt::Horizontal, this);
+    zoom_->setRange(0, 1000);
+    zoom_->setToolTip(QStringLiteral("Zoom the timeline"));
+    zoom_->setFixedWidth(metrics::kLayerColumnW - 24);
+
+    timeScroll_ = new QScrollBar(Qt::Horizontal, this);
+
+    auto* timeRow = new QWidget(this);
+    auto* timeLayout = new QHBoxLayout(timeRow);
+    timeLayout->setContentsMargins(12, 0, 0, 0);
+    timeLayout->setSpacing(12);
+    timeLayout->addWidget(zoom_);
+    timeLayout->addWidget(timeScroll_, 1);
+
     layout->addWidget(bar_);
     layout->addWidget(body, 1);
+    layout->addWidget(timeRow);
 
     connect(scroll_, &QScrollBar::valueChanged, view_, &TimelineView::setScrollY);
     connect(view_, &TimelineView::contentHeightChanged, this, [this](int) {
@@ -1163,6 +1376,62 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::compositionResized, this,
             &TimelinePanel::compositionResized);
     connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
+
+    // Scrollbar in whole milliseconds: QScrollBar is integer-only, and seconds would
+    // make the smallest possible drag a one second jump.
+    connect(timeScroll_, &QScrollBar::valueChanged, this, [this](int value) {
+        if (!timeScroll_->signalsBlocked()) {
+            view_->setViewStart(static_cast<double>(value) / 1000.0);
+        }
+    });
+    connect(view_, &TimelineView::viewRangeChanged, this,
+            [this](double, double) { syncTimeScrollRange(); });
+
+    // Zooming is logarithmic. Linear would spend most of the slider's travel on the
+    // difference between "an hour" and "fifty minutes" and give the entire useful range,
+    // seconds down to frames, the last few pixels.
+    connect(zoom_, &QSlider::valueChanged, this, [this](int value) {
+        if (zoom_->signalsBlocked()) {
+            return;
+        }
+        core::Composition* comp = view_->composition();
+        if (comp == nullptr) {
+            return;
+        }
+        const double lo = std::log(std::max(1e-3, view_->minimumSpan()));
+        const double hi = std::log(std::max(view_->minimumSpan() * 1.001, comp->duration));
+        // Left is zoomed out, right is zoomed in, so the slider runs high span to low.
+        const double span = std::exp(hi - (hi - lo) * (value / 1000.0));
+        view_->setViewSpan(span, view_->currentTime());
+    });
+}
+
+void TimelinePanel::zoomIn() { view_->zoomBy(1.5, view_->currentTime()); }
+void TimelinePanel::zoomOut() { view_->zoomBy(1.0 / 1.5, view_->currentTime()); }
+void TimelinePanel::zoomToFit() { view_->zoomToFit(); }
+
+void TimelinePanel::syncTimeScrollRange() {
+    core::Composition* comp = view_->composition();
+    const double total = comp != nullptr ? comp->duration : 0.0;
+    const double span = view_->viewSpan();
+    const int overflow = static_cast<int>(std::round(std::max(0.0, total - span) * 1000.0));
+
+    QSignalBlocker block(timeScroll_);
+    timeScroll_->setRange(0, overflow);
+    timeScroll_->setPageStep(static_cast<int>(std::round(span * 1000.0)));
+    timeScroll_->setSingleStep(std::max(1, static_cast<int>(std::round(span * 100.0))));
+    timeScroll_->setValue(static_cast<int>(std::round(view_->viewStart() * 1000.0)));
+    // Hidden when the whole composition is on screen: a scrollbar that cannot scroll is
+    // just a line taking up eight pixels.
+    timeScroll_->setVisible(overflow > 0);
+
+    const double minimum = view_->minimumSpan();
+    const double lo = std::log(std::max(1e-3, minimum));
+    const double hi = std::log(std::max(minimum * 1.001, total));
+    const double here = std::log(std::clamp(span, minimum, std::max(minimum, total)));
+    QSignalBlocker blockZoom(zoom_);
+    zoom_->setValue(
+        static_cast<int>(std::round((hi - here) / std::max(1e-9, hi - lo) * 1000.0)));
 }
 
 void TimelinePanel::setCurrentTime(double seconds) { view_->setCurrentTime(seconds); }
@@ -1198,6 +1467,7 @@ void TimelinePanel::refresh() {
 void TimelinePanel::setComposition(core::Composition* comp) {
     view_->setComposition(comp);
     syncScrollRange();
+    syncTimeScrollRange();
     // setComposition picks an initial selection, so announce it or the inspector starts
     // out empty while a layer is visibly highlighted.
     if (const auto initial = view_->selectedLayer(); initial.has_value()) {

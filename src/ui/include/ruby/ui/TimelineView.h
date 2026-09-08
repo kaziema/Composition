@@ -8,6 +8,7 @@ class QDragLeaveEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QScrollBar;
+class QSlider;
 
 #include "ruby/core/Document.h"
 
@@ -61,6 +62,36 @@ public:
     void setSnapping(bool on);
     [[nodiscard]] bool snapping() const noexcept { return snapping_; }
 
+    // --- Horizontal zoom -----------------------------------------------------
+    //
+    // The track maps a visible WINDOW of time onto its width, not the whole
+    // composition. Once a comp can grow to an hour because somebody dropped an hour of
+    // footage into it, a fixed whole-comp mapping puts a two second cut inside one pixel.
+    //
+    // viewStart_/viewSpan_ are seconds, not a zoom multiplier, because every caller
+    // already thinks in seconds and a multiplier would need the duration to mean
+    // anything. Duration moves on its own now, so it is a bad thing to be relative to.
+    [[nodiscard]] double viewStart() const noexcept { return viewStart_; }
+    [[nodiscard]] double viewSpan() const noexcept { return viewSpan_; }
+    void setViewStart(double seconds);
+
+    // factor > 1 zooms in. anchorSeconds stays put under the cursor, which is the whole
+    // trick to zooming feeling controlled rather than teleporting.
+    void zoomBy(double factor, double anchorSeconds);
+    void zoomToFit();
+
+    // Set the window width directly, holding anchorSeconds in place. The slider drives
+    // this; zoomBy is this with the span worked out from a factor.
+    void setViewSpan(double span, double anchorSeconds);
+
+    // The narrowest window allowed, in seconds. The slider needs it to lay out its
+    // range, and it depends on the comp's frame rate.
+    [[nodiscard]] double minimumSpan() const noexcept;
+
+    // Follows the duration when it changes. A view that was showing the whole comp keeps
+    // showing the whole comp; a view somebody zoomed into is left where they put it.
+    void durationChanged();
+
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);
@@ -73,6 +104,9 @@ signals:
 
     // The composition grew to contain a layer that ran past its end.
     void compositionResized(double seconds);
+
+    // The visible window moved, so the horizontal scrollbar has to follow.
+    void viewRangeChanged(double start, double span);
 
     // Media dropped from the project panel: which clip, when, and how far down the
     // stack. The window owns creating the layer; the view only decides where.
@@ -88,6 +122,7 @@ protected:
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
 
 private:
     // What a visible row is. Effects get a header of their own so a twirled-open layer
@@ -111,9 +146,16 @@ private:
     void rebuildRows();
     [[nodiscard]] int trackLeft() const noexcept;
     [[nodiscard]] int trackWidth() const noexcept;
+    [[nodiscard]] QRect trackRect() const noexcept;
     [[nodiscard]] double xForTime(double seconds) const noexcept;
     [[nodiscard]] double timeForX(int x) const noexcept;
     [[nodiscard]] double duration() const noexcept;
+
+    // Keeps the window inside the composition and never lets it collapse.
+    void clampView();
+
+    // Ruler spacing that survives both a 3 second comp and a 3 hour one.
+    [[nodiscard]] double tickInterval() const noexcept;
 
     void paintHeader(QPainter& p) const;
     void paintLayerRow(QPainter& p, const Row& row, const core::Layer& layer) const;
@@ -157,6 +199,14 @@ private:
     std::vector<Row> rows_;
 
     bool snapping_ = true;
+
+    // The visible time window. Span of 0 means "not set yet"; setComposition fits it.
+    double viewStart_ = 0.0;
+    double viewSpan_ = 0.0;
+
+    // True while the view is showing the whole composition. Sticky, so growing the comp
+    // keeps a fitted view fitted instead of leaving it looking at an arbitrary slice.
+    bool fit_ = true;
     DragMode dragMode_ = DragMode::None;
     core::LayerId dragLayer_ = 0;
     double dragGrabOffset_ = 0.0;  // seconds between the cursor and the layer's in point
@@ -187,6 +237,11 @@ public:
     // keyframe, so the counts in the sub-toolbar move too.
     void refresh();
 
+    // Zoom, forwarded so the window can bind keys without reaching into the view.
+    void zoomIn();
+    void zoomOut();
+    void zoomToFit();
+
     // Driven by playback. Emits currentTimeChanged like a scrub would, so the viewer
     // and inspector follow without needing to know where the time came from.
     void setCurrentTime(double seconds);
@@ -212,9 +267,13 @@ private:
 
     void syncScrollRange();
 
+    void syncTimeScrollRange();
+
     SubToolBar* bar_ = nullptr;
     TimelineView* view_ = nullptr;
     QScrollBar* scroll_ = nullptr;
+    QScrollBar* timeScroll_ = nullptr;
+    QSlider* zoom_ = nullptr;
 };
 
 }  // namespace ruby::ui
