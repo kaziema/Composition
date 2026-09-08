@@ -13,6 +13,7 @@ qt_add_library(ruby_ui STATIC
     src/TimelineView.cpp
     src/InspectorView.cpp
     src/ProjectPanel.cpp
+    src/PooledMediaPanel.cpp
     src/StatusReadout.cpp
     src/NewCompositionDialog.cpp
     src/GpuViewport.cpp
@@ -27,6 +28,7 @@ qt_add_library(ruby_ui STATIC
     include/ruby/ui/TimelineView.h
     include/ruby/ui/InspectorView.h
     include/ruby/ui/ProjectPanel.h
+    include/ruby/ui/PooledMediaPanel.h
     include/ruby/ui/StatusReadout.h
     include/ruby/ui/NewCompositionDialog.h
     include/ruby/ui/GpuViewport.h

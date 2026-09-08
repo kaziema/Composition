@@ -51,6 +51,10 @@ public:
     }
     void selectLayer(core::LayerId layer);
 
+    // Nothing selected is a real state, not an error state: it is what Deselect All
+    // leaves behind, and what deleting the last layer has to fall back to.
+    void clearSelection();
+
     // Vertical scroll is manual rather than a QScrollArea, so the column header and
     // ruler can stay pinned at y=0 while the rows move underneath them. A timeline
     // whose ruler scrolls off the top is useless.
@@ -108,6 +112,10 @@ signals:
     // The visible window moved, so the horizontal scrollbar has to follow.
     void viewRangeChanged(double start, double span);
 
+    // Right click. The view resolves and selects the row; the window owns the menu,
+    // because the menu is the Edit menu's actions and those live there.
+    void layerContextMenuRequested(const QPoint& globalPos);
+
     // Media dropped from the project panel: which clip, when, and how far down the
     // stack. The window owns creating the layer; the view only decides where.
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
@@ -123,6 +131,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseReleaseEvent(QMouseEvent* e) override;
     void wheelEvent(QWheelEvent* e) override;
+    void contextMenuEvent(QContextMenuEvent* e) override;
 
 private:
     // What a visible row is. Effects get a header of their own so a twirled-open layer
@@ -249,6 +258,7 @@ public:
 
     [[nodiscard]] std::optional<core::LayerId> selectedLayer() const;
     void selectLayer(core::LayerId layer);
+    void clearSelection();
 
 signals:
     void currentTimeChanged(double seconds);
@@ -257,6 +267,7 @@ signals:
     void editEnded();
     void layersChanged();
     void compositionResized(double seconds);
+    void layerContextMenuRequested(const QPoint& globalPos);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 
 protected:

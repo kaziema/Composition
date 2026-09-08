@@ -12,6 +12,7 @@ class QCloseEvent;
 #include "ruby/gpu/GpuDevice.h"
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/io/History.h"
+#include "ruby/io/MediaPool.h"
 #include "ruby/media/AudioDecoder.h"
 
 class QLabel;
@@ -24,6 +25,7 @@ class GpuViewport;
 class Playback;
 class PanelFrame;
 class ProjectPanel;
+class PooledMediaPanel;
 class StatusReadout;
 class TimelinePanel;
 class InspectorView;
@@ -63,6 +65,21 @@ public slots:
     void newComposition();
     void compositionSettings();
 
+    // Edit menu. Selection is one layer at a time, so these all act on that one.
+    void deleteLayer();
+    void duplicateLayer();
+    void cutLayer();
+    void copyLayer();
+    void pasteLayer();
+    void deselectAll();
+
+    // Right click on a layer. Pops the same QActions the Edit and Layer menus use, so
+    // the two can never drift apart or show different shortcuts for the same thing.
+    void showLayerContextMenu(const QPoint& globalPos);
+
+    // Shared by delete and cut. Picks the next sensible selection and refreshes.
+    void removeSelectedLayer(const QString& undoLabel);
+
     // Called whenever growToFit actually moved the duration. Growth silently rescales
     // every bar on the timeline, so it has to be announced or it reads as a glitch.
     void noteCompositionGrew();
@@ -97,6 +114,17 @@ private:
     static PanelFrame* makePanel(const QStringList& tabs, const QString& note);
     static QWidget* makePlaceholder(const QString& note);
 
+
+    // Layer clipboard. A whole Layer by value: it carries its own properties, keyframes
+    // and effects, and media/precomp references are project-level ids that stay valid
+    // when it is pasted into a different composition.
+    std::optional<core::Layer> clipboard_;
+
+    // App-level, not project-level: every clip ever imported, in any project. Lives in
+    // per-user app data, loaded at launch, written on import.
+    io::MediaPool pool_;
+    QString poolPath_;
+
     core::Project project_;  // TEMPORARY demo content
     std::optional<media::AudioBuffer> audio_;
     std::unique_ptr<audio::AudioOutput> audioOut_;
@@ -107,6 +135,7 @@ private:
     GpuViewport* viewport_ = nullptr;
     Playback* playback_ = nullptr;
     ProjectPanel* projectPanel_ = nullptr;
+    PooledMediaPanel* pooledPanel_ = nullptr;
     StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
@@ -115,6 +144,12 @@ private:
     bool dirty_ = false;
     io::History history_;
     QAction* undoAction_ = nullptr;
+    QAction* cutAction_ = nullptr;
+    QAction* copyAction_ = nullptr;
+    QAction* pasteAction_ = nullptr;
+    QAction* duplicateAction_ = nullptr;
+    QAction* deleteAction_ = nullptr;
+    QAction* splitAction_ = nullptr;
     QAction* redoAction_ = nullptr;
     gpu::GpuDevice* gpu_ = nullptr;
     QSplitter* bodySplit_ = nullptr;

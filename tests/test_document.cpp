@@ -308,6 +308,29 @@ void growth_resolves_layers_timed_in_beats() {
     checkNear(comp.duration, 8.0, "eight seconds");
 }
 
+
+// Deleting a layer must not leave a parent link pointing into a hole.
+void removing_a_layer_orphans_its_children() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    // Read the id before adding anything else: addLayer inserts at the front, so the
+    // reference handed back by the first call does not survive the second.
+    const LayerId parentId = project.addLayer(comp, "null", LayerKind::Null).id;
+    project.addLayer(comp, "text", LayerKind::Text).parent = parentId;
+
+    check(!comp.removeLayer(9999), "removing an id that is not here reports failure");
+    check(comp.layers.size() == 2, "and removes nothing");
+
+    check(comp.removeLayer(parentId), "the parent is removed");
+    check(comp.layers.size() == 1, "one layer left");
+
+    const Layer* orphan = comp.find(comp.layers.front().id);
+    check(orphan != nullptr, "the child survived");
+    check(!orphan->parent.has_value(),
+          "and its parent link was cleared rather than left dangling");
+}
+
 }  // namespace
 
 int main() {
@@ -327,6 +350,7 @@ int main() {
     a_composition_never_shrinks_itself();
     a_manual_shrink_leaves_layers_overhanging();
     growth_resolves_layers_timed_in_beats();
+    removing_a_layer_orphans_its_children();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

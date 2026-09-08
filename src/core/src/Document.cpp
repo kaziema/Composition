@@ -253,6 +253,21 @@ int Composition::totalKeyframes() const noexcept {
     return total;
 }
 
+bool Composition::removeLayer(LayerId layer) noexcept {
+    const auto at = std::find_if(layers.begin(), layers.end(),
+                                 [layer](const Layer& l) { return l.id == layer; });
+    if (at == layers.end()) {
+        return false;
+    }
+    layers.erase(at);
+    for (Layer& l : layers) {
+        if (l.parent.has_value() && *l.parent == layer) {
+            l.parent.reset();
+        }
+    }
+    return true;
+}
+
 double Composition::contentEnd() const noexcept {
     const TimeContext ctx = timeContext();
     double end = 0.0;

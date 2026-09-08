@@ -235,6 +235,15 @@ struct Composition {
     // have to be unique within the composition that holds them.
     [[nodiscard]] LayerId nextLayerId() const noexcept;
 
+    // Remove a layer, and with it any parent link pointing at it. Returns false if the
+    // id was not here.
+    //
+    // Clearing the children matters: a parent id that outlives its layer is a dangling
+    // reference that only bites later, when something walks the chain and finds nothing.
+    // Orphaning a child to the composition root is the recoverable failure; a link into
+    // a hole is not.
+    bool removeLayer(LayerId layer) noexcept;
+
     // The time the last layer stops. 0.0 for an empty composition.
     [[nodiscard]] double contentEnd() const noexcept;
 

@@ -13,6 +13,7 @@
 #include <QPainterPath>
 #include <QHBoxLayout>
 #include <QScrollBar>
+#include <QContextMenuEvent>
 #include <QSlider>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -116,6 +117,15 @@ void TimelineView::setSnapping(bool on) { snapping_ = on; }
 
 void TimelineView::selectLayer(core::LayerId layer) {
     selected_ = layer;
+    rebuildRows();
+    update();
+}
+
+void TimelineView::clearSelection() {
+    selected_.reset();
+    // Keyframe selection goes with it. Leaving keys selected on a layer that is no
+    // longer selected is how J/K and Delete end up acting on something invisible.
+    selectedKeys_.clear();
     rebuildRows();
     update();
 }
@@ -1235,6 +1245,33 @@ void TimelineView::mouseReleaseEvent(QMouseEvent*) {
     scrubbing_ = false;
 }
 
+void TimelineView::contextMenuEvent(QContextMenuEvent* e) {
+    if (comp_ == nullptr) {
+        return;
+    }
+    // Right clicking a layer selects it first. Acting on whatever happened to be selected
+    // before, while the user is pointing at something else, is how people delete the
+    // wrong thing. Works from either side of the panel: the name column and the bar are
+    // the same row.
+    if (e->pos().y() >= metrics::kColumnHeaderH) {
+        const int contentY = e->pos().y() + scrollY_;
+        for (const Row& row : rows_) {
+            if (row.kind != RowKind::Layer) {
+                continue;
+            }
+            if (contentY >= row.top && contentY < row.top + row.height) {
+                if (!selected_.has_value() || *selected_ != row.layer) {
+                    selectLayer(row.layer);
+                    emit selectionChanged(row.layer);
+                }
+                break;
+            }
+        }
+    }
+    emit layerContextMenuRequested(e->globalPos());
+    e->accept();
+}
+
 void TimelineView::wheelEvent(QWheelEvent* e) {
     // Modifier + wheel zooms about the cursor, which is the convention everywhere from
     // AE to a browser. Bare wheel scrolls: vertically through layers, horizontally
@@ -1384,6 +1421,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::compositionResized, this,
             &TimelinePanel::compositionResized);
     connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
+    connect(view_, &TimelineView::layerContextMenuRequested, this,
+            &TimelinePanel::layerContextMenuRequested);
 
     // Scrollbar in whole milliseconds: QScrollBar is integer-only, and seconds would
     // make the smallest possible drag a one second jump.
@@ -1462,6 +1501,8 @@ std::optional<core::LayerId> TimelinePanel::selectedLayer() const {
 }
 
 void TimelinePanel::selectLayer(core::LayerId layer) { view_->selectLayer(layer); }
+
+void TimelinePanel::clearSelection() { view_->clearSelection(); }
 
 void TimelinePanel::syncScrollRange() {
     const int overflow = std::max(0, view_->contentHeight() - view_->height());

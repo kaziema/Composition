@@ -1,0 +1,50 @@
+#pragma once
+
+#include <QString>
+#include <QWidget>
+#include <vector>
+
+#include "ruby/io/MediaPool.h"
+
+namespace ruby::ui {
+
+// Every piece of media ever imported into the app, in one folder, across every project.
+//
+// Painted the same way as the project panel rather than sharing its code. The two lists
+// look alike and behave differently: this one is app-scoped, has no compositions, has no
+// search yet, and has to show entries whose files are no longer on disk. Sharing the
+// widget would mean a growing pile of "if pool" branches through a class that is already
+// doing one job well.
+class PooledMediaPanel : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit PooledMediaPanel(QWidget* parent = nullptr);
+
+    void setPool(const io::MediaPool* pool);
+    void refresh();
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent* e) override;
+
+private:
+    struct Row {
+        QString name;
+        QString type;
+        QString duration;
+        QString added;
+        QColor swatch;
+        bool missing = false;
+    };
+
+    [[nodiscard]] int rowAt(int y) const;
+    void rebuild();
+
+    const io::MediaPool* pool_ = nullptr;
+    std::vector<Row> rows_;
+    int selected_ = -1;
+    bool folderOpen_ = true;
+};
+
+}  // namespace ruby::ui

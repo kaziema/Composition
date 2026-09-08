@@ -3,7 +3,10 @@
 #include <QAction>
 #include <QLabel>
 #include <QMenu>
+#include <QDateTime>
+#include <QDir>
 #include <QFileDialog>
+#include <QStandardPaths>
 #include <algorithm>
 #include <limits>
 #include <QCloseEvent>
@@ -28,6 +31,7 @@
 #include "ruby/io/ProjectIO.h"
 #include "ruby/ui/NewCompositionDialog.h"
 #include "ruby/ui/Playback.h"
+#include "ruby/ui/PooledMediaPanel.h"
 #include "ruby/ui/ProjectPanel.h"
 #include "ruby/ui/StatusReadout.h"
 #include "ruby/ui/PanelFrame.h"
@@ -138,6 +142,15 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
+    // The pool lives in per-user app data, not beside any project, because it outlives
+    // every project. Loaded before the panels are built so the tab is populated the first
+    // time it is shown rather than after the first import.
+    const QString dataDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dataDir);
+    poolPath_ = dataDir + QStringLiteral("/media-pool.json");
+    pool_.load(poolPath_.toStdString());
+
     // TEMPORARY: a demo composition so the timeline has something to draw.
     // Goes away once the app can open a project file.
     project_ = demo::sampleProject();
@@ -209,6 +222,7 @@ void MainWindow::importMedia() {
     recordEdit(QStringLiteral("Import Media"));
 
     int added = 0;
+    bool pooledNew = false;
     QStringList rejected;
     for (const QString& path : paths) {
         const std::string local = path.toStdString();
@@ -223,6 +237,20 @@ void MainWindow::importMedia() {
         project_.addMedia(local, QFileInfo(path).fileName().toStdString(), kind,
                           info->duration, info->width, info->height, info->fps,
                           info->hasAudio);
+
+        // Also into the app-level pool. First-seen is stamped here because it cannot be
+        // recovered later: a file's own timestamps say when it was made, not when you
+        // first pulled it into Ruby.
+        io::PooledItem pooled;
+        pooled.path = local;
+        pooled.name = QFileInfo(path).fileName().toStdString();
+        pooled.kind = kind;
+        pooled.duration = info->duration;
+        pooled.bytes = QFileInfo(path).size();
+        pooled.firstSeen = QDateTime::currentSecsSinceEpoch();
+        if (pool_.add(pooled)) {
+            pooledNew = true;
+        }
         ++added;
     }
 
@@ -234,6 +262,15 @@ void MainWindow::importMedia() {
         message += QStringLiteral("   ·   could not read: %1").arg(rejected.join(", "));
     }
     statusBar()->showMessage(message, 6000);
+
+    // The pool is saved right here rather than at quit. It is a record of things you
+    // did, and a crash three hours later should not be able to erase this morning.
+    if (pooledNew) {
+        pool_.save(poolPath_.toStdString());
+        if (pooledPanel_ != nullptr) {
+            pooledPanel_->refresh();
+        }
+    }
 
     markDirty();
     emit mediaImported();
@@ -737,6 +774,191 @@ void MainWindow::noteCompositionGrew() {
         5000);
 }
 
+// --- Edit menu ---------------------------------------------------------------
+
+void MainWindow::removeSelectedLayer(const QString& undoLabel) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr) {
+        return;
+    }
+    const core::LayerId going = layer->id;
+
+    // Work out what to select next BEFORE removing, while the indices still mean
+    // something. The layer that slides up into this slot is the natural next choice,
+    // and the one above it when we just deleted the bottom of the stack.
+    const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
+                                 [going](const core::Layer& l) { return l.id == going; });
+    const auto index = static_cast<std::size_t>(std::distance(comp->layers.begin(), at));
+
+    recordEdit(undoLabel);
+    if (!comp->removeLayer(going)) {
+        return;
+    }
+
+    // The composition does NOT shrink back. Deleting the layer that stretched it leaves
+    // the duration where it is, same as every other way duration is treated.
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+        if (comp->layers.empty()) {
+            timelinePanel_->clearSelection();
+        } else {
+            const std::size_t next = std::min(index, comp->layers.size() - 1);
+            timelinePanel_->selectLayer(comp->layers[next].id);
+        }
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
+void MainWindow::deleteLayer() {
+    if (selectedLayer() == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Select a layer to delete"), 4000);
+        return;
+    }
+    removeSelectedLayer(QStringLiteral("Delete Layer"));
+}
+
+void MainWindow::copyLayer() {
+    const core::Layer* layer = selectedLayer();
+    if (layer == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Select a layer to copy"), 4000);
+        return;
+    }
+    clipboard_ = *layer;
+    statusBar()->showMessage(
+        QStringLiteral("Copied %1").arg(QString::fromStdString(layer->name)), 4000);
+}
+
+void MainWindow::cutLayer() {
+    const core::Layer* layer = selectedLayer();
+    if (layer == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Select a layer to cut"), 4000);
+        return;
+    }
+    clipboard_ = *layer;
+    removeSelectedLayer(QStringLiteral("Cut Layer"));
+}
+
+void MainWindow::pasteLayer() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr || !clipboard_.has_value()) {
+        return;
+    }
+    recordEdit(QStringLiteral("Paste Layer"));
+
+    core::Layer copy = *clipboard_;
+    copy.id = comp->nextLayerId();
+    // Parenting is by layer id, which only means anything inside one composition. Paste
+    // into a different comp and that id is either nothing or, worse, somebody else.
+    copy.parent.reset();
+
+    comp->layers.insert(comp->layers.begin(), std::move(copy));
+    const core::LayerId pasted = comp->layers.front().id;
+    const bool grew = comp->growToFit();
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+        timelinePanel_->selectLayer(pasted);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+    statusBar()->showMessage(
+        QStringLiteral("Pasted %1")
+            .arg(QString::fromStdString(comp->layers.front().name)), 4000);
+    if (grew) {
+        noteCompositionGrew();
+    }
+}
+
+void MainWindow::duplicateLayer() {
+    core::Composition* comp = activeComposition();
+    const core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Select a layer to duplicate"), 4000);
+        return;
+    }
+    recordEdit(QStringLiteral("Duplicate Layer"));
+
+    core::Layer copy = *layer;
+    copy.id = comp->nextLayerId();
+    copy.parent.reset();
+
+    // Directly above the original, not on top of the stack. A duplicate that jumps to
+    // the top of a twenty layer comp is a duplicate you then have to go and find.
+    const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
+                                 [id = layer->id](const core::Layer& l) {
+                                     return l.id == id;
+                                 });
+    const core::LayerId made = copy.id;
+    comp->layers.insert(at, std::move(copy));
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+        timelinePanel_->selectLayer(made);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
+// Built from the menu bar's own QActions rather than fresh ones. Duplicating them here
+// would mean two places to update, two shortcut strings to keep in step, and eventually a
+// context menu that does something subtly different from the menu it copies.
+void MainWindow::showLayerContextMenu(const QPoint& globalPos) {
+    const bool hasLayer = selectedLayer() != nullptr;
+    cutAction_->setEnabled(hasLayer);
+    copyAction_->setEnabled(hasLayer);
+    duplicateAction_->setEnabled(hasLayer);
+    deleteAction_->setEnabled(hasLayer);
+    splitAction_->setEnabled(hasLayer);
+    pasteAction_->setEnabled(clipboard_.has_value());
+
+    QMenu menu(this);
+    menu.addAction(cutAction_);
+    menu.addAction(copyAction_);
+    menu.addAction(pasteAction_);
+    menu.addAction(duplicateAction_);
+    menu.addSeparator();
+    menu.addAction(splitAction_);
+    menu.addSeparator();
+    menu.addAction(deleteAction_);
+    menu.exec(globalPos);
+
+    // Hand them back. These are the menu bar's actions, and leaving one disabled because
+    // of what happened to be selected during a right click would silently break the Edit
+    // menu until the next right click put it back.
+    cutAction_->setEnabled(true);
+    copyAction_->setEnabled(true);
+    pasteAction_->setEnabled(true);
+    duplicateAction_->setEnabled(true);
+    deleteAction_->setEnabled(true);
+    splitAction_->setEnabled(true);
+}
+
+void MainWindow::deselectAll() {
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->clearSelection();
+    }
+}
+
 void MainWindow::setActiveComposition(core::CompId id) {
     core::Composition* comp = project_.find(id);
     if (comp == nullptr) {
@@ -1010,10 +1232,24 @@ void MainWindow::buildMenus() {
     redoAction_ = edit->addAction(QStringLiteral("Redo"), QKeySequence::Redo, this,
                                   &MainWindow::redo);
     edit->addSeparator();
-    addPending(edit, {
-                      QStringLiteral("Cut"), QStringLiteral("Copy"), QStringLiteral("Paste"),
-                      QStringLiteral("Duplicate"), QStringLiteral("Delete"), QString(),
-                      QStringLiteral("Select All"), QStringLiteral("Deselect All")});
+    cutAction_ = edit->addAction(QStringLiteral("Cut"), QKeySequence::Cut, this,
+                                &MainWindow::cutLayer);
+    copyAction_ = edit->addAction(QStringLiteral("Copy"), QKeySequence::Copy, this,
+                                  &MainWindow::copyLayer);
+    pasteAction_ = edit->addAction(QStringLiteral("Paste"), QKeySequence::Paste, this,
+                                   &MainWindow::pasteLayer);
+    duplicateAction_ = edit->addAction(QStringLiteral("Duplicate"),
+                                       QKeySequence(QStringLiteral("Ctrl+D")), this,
+                                       &MainWindow::duplicateLayer);
+    deleteAction_ = edit->addAction(QStringLiteral("Delete"), QKeySequence::Delete, this,
+                                    &MainWindow::deleteLayer);
+    edit->addSeparator();
+    // Select All stays pending: selection is one layer at a time, so it has nothing to
+    // mean yet. It needs multi-layer selection, which is its own piece of work.
+    addPending(edit, {QStringLiteral("Select All")});
+    edit->addAction(QStringLiteral("Deselect All"),
+                    QKeySequence(QStringLiteral("Ctrl+Shift+A")), this,
+                    &MainWindow::deselectAll);
 
     auto* comp = menuBar()->addMenu(QStringLiteral("Composition"));
     comp->addAction(QStringLiteral("New Composition..."),
@@ -1029,9 +1265,9 @@ void MainWindow::buildMenus() {
                       QStringLiteral("Add to Render Queue")});
 
     auto* layer = menuBar()->addMenu(QStringLiteral("Layer"));
-    layer->addAction(QStringLiteral("Split at Playhead"),
-                     QKeySequence(QStringLiteral("Ctrl+Shift+D")), this,
-                     &MainWindow::splitLayerAtPlayhead);
+    splitAction_ = layer->addAction(QStringLiteral("Split at Playhead"),
+                                    QKeySequence(QStringLiteral("Ctrl+Shift+D")), this,
+                                    &MainWindow::splitLayerAtPlayhead);
     layer->addSeparator();
     layer->addAction(QStringLiteral("Move In Point to Playhead"),
                      QKeySequence(Qt::Key_BracketLeft), this,
@@ -1146,11 +1382,15 @@ QWidget* MainWindow::buildBody() {
     bodySplit_->setChildrenCollapsible(false);
 
     auto* project = new PanelFrame({QStringLiteral("Project"),
+                                    QStringLiteral("Pooled Media"),
                                     QStringLiteral("Comp Map"),
                                     QStringLiteral("Media")});
     projectPanel_ = new ProjectPanel;
     projectPanel_->setProject(&project_);
+    pooledPanel_ = new PooledMediaPanel;
+    pooledPanel_->setPool(&pool_);
     project->addPage(projectPanel_);
+    project->addPage(pooledPanel_);
     project->addPage(makePlaceholder(QStringLiteral("composition map")));
     project->addPage(makePlaceholder(QStringLiteral("media browser")));
 
@@ -1280,6 +1520,8 @@ QWidget* MainWindow::buildBody() {
             &MainWindow::addMediaToComposition);
     connect(timelinePanel, &TimelinePanel::mediaDropped, this,
             &MainWindow::dropMediaIntoComposition);
+    connect(timelinePanel, &TimelinePanel::layerContextMenuRequested, this,
+            &MainWindow::showLayerContextMenu);
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);
