@@ -1,7 +1,12 @@
 #include "ruby/ui/TimelineView.h"
 
 #include <QFontMetrics>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QHelpEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QToolTip>
 #include <QPainter>
@@ -13,6 +18,7 @@
 #include <cmath>
 
 #include "ruby/ui/Format.h"
+#include "ruby/ui/ProjectPanel.h"
 #include "ruby/ui/Theme.h"
 
 namespace ruby::ui {
@@ -65,6 +71,7 @@ QFont monoFont(int px) { return numericFont(px); }
 
 TimelineView::TimelineView(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
+    setAcceptDrops(true);
     setMinimumHeight(240);
     QFont f = font();
     f.setPixelSize(type::kRowLabel);
@@ -519,6 +526,17 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.setPen(QPen(QColor("#0d0d0d"), 1.0));
     p.drawLine(QPointF(bar.left(), bar.bottom()), QPointF(bar.right(), bar.bottom()));
 
+    // A layer may legitimately run past the end of the composition. Mark the overhang so
+    // it reads as "there is more clip here" rather than as a drawing glitch.
+    const double compEnd = xForTime(comp_->duration);
+    if (bar.right() > compEnd + 1.0) {
+        const QRectF beyond(std::max(bar.left(), compEnd), bar.top(),
+                            bar.right() - std::max(bar.left(), compEnd), bar.height());
+        p.fillRect(beyond, QColor(0, 0, 0, 90));
+        p.setPen(QPen(colors.topEdge, 1.0, Qt::DotLine));
+        p.drawLine(QPointF(compEnd, bar.top()), QPointF(compEnd, bar.bottom()));
+    }
+
     p.setPen(kRuleSoft);
     p.drawLine(0, row.top + row.height - 1, width(), row.top + row.height - 1);
 }
@@ -677,6 +695,30 @@ void TimelineView::paintEvent(QPaintEvent*) {
     paintHeader(p);
     paintRhythm(p);
     paintPlayhead(p);
+
+    // Where a pending drop would land: the time it snapped to, and the slot in the
+    // stack. Without this you are guessing, and the snap is invisible.
+    if (dropRow_ >= 0) {
+        const double x = xForTime(dropTime_);
+        p.setPen(QPen(kValueScrubbable, 1.0, Qt::DashLine));
+        p.drawLine(QPointF(x, metrics::kColumnHeaderH), QPointF(x, height()));
+
+        int y = metrics::kColumnHeaderH;
+        int index = 0;
+        for (const Row& row : rows_) {
+            if (row.kind != RowKind::Layer) {
+                continue;
+            }
+            if (index == dropRow_) {
+                y = row.top - scrollY_;
+                break;
+            }
+            y = row.top + row.height - scrollY_;
+            ++index;
+        }
+        p.setPen(QPen(kValueScrubbable, 2.0));
+        p.drawLine(0, y, width(), y);
+    }
 
     // Hard rule separating the layer column from the tracks.
     p.setPen(kDivider);
@@ -945,6 +987,68 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e) {
     setCursor(shape);
 }
 
+// --- drops from the project panel --------------------------------------------
+
+namespace {
+
+bool carriesMedia(const QMimeData* data) {
+    return data != nullptr && data->hasFormat(ProjectPanel::mediaMimeType());
+}
+
+}  // namespace
+
+void TimelineView::dragEnterEvent(QDragEnterEvent* e) {
+    if (comp_ != nullptr && carriesMedia(e->mimeData())) {
+        e->acceptProposedAction();
+    }
+}
+
+void TimelineView::dragMoveEvent(QDragMoveEvent* e) {
+    if (comp_ == nullptr || !carriesMedia(e->mimeData())) {
+        return;
+    }
+    const QPoint pos = e->position().toPoint();
+
+    // Snapped, so a dropped clip lands on a syllable or against its neighbour rather
+    // than wherever the cursor happened to be.
+    dropTime_ = std::max(0.0, snapTime(timeForX(pos.x()), 0));
+
+    // Vertical position picks where in the stack it goes, the way footage drops in AE.
+    dropRow_ = 0;
+    const int contentY = pos.y() + scrollY_;
+    int index = 0;
+    for (const Row& row : rows_) {
+        if (row.kind != RowKind::Layer) {
+            continue;
+        }
+        if (contentY >= row.top + row.height / 2) {
+            dropRow_ = index + 1;
+        }
+        ++index;
+    }
+    e->acceptProposedAction();
+    update();
+}
+
+void TimelineView::dragLeaveEvent(QDragLeaveEvent*) {
+    dropRow_ = -1;
+    update();
+}
+
+void TimelineView::dropEvent(QDropEvent* e) {
+    if (comp_ == nullptr || !carriesMedia(e->mimeData())) {
+        return;
+    }
+    const auto id = static_cast<core::MediaId>(
+        e->mimeData()->data(ProjectPanel::mediaMimeType()).toULongLong());
+    const double at = dropTime_;
+    const int row = std::max(0, dropRow_);
+
+    dropRow_ = -1;
+    e->acceptProposedAction();
+    emit mediaDropped(id, at, row);
+}
+
 void TimelineView::mouseReleaseEvent(QMouseEvent*) {
     if (dragMode_ != DragMode::None) {
         dragMode_ = DragMode::None;
@@ -1043,6 +1147,7 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::editBegan, this, &TimelinePanel::editBegan);
     connect(view_, &TimelineView::editEnded, this, &TimelinePanel::editEnded);
     connect(view_, &TimelineView::layersChanged, this, &TimelinePanel::layersChanged);
+    connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
 }
 
 void TimelinePanel::setCurrentTime(double seconds) { view_->setCurrentTime(seconds); }

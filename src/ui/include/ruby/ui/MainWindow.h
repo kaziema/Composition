@@ -62,6 +62,7 @@ public slots:
     void importMedia();
     void newComposition();
     void addMediaToComposition(core::MediaId id);
+    void dropMediaIntoComposition(core::MediaId media, double seconds, int layerIndex);
     void setActiveComposition(core::CompId id);
 
 protected:

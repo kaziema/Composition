@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPoint>
 #include <QString>
 #include <QWidget>
 #include <cstdint>
@@ -31,9 +32,16 @@ signals:
     void mediaActivated(core::MediaId media);
     void compositionActivated(core::CompId comp);
 
+public:
+    // MIME type carrying a MediaId, so the timeline can accept a drop from here and
+    // reject a drop from anywhere else. Needs its own access specifier: everything after
+    // `signals:` is a signal until one appears, and moc will try to generate this.
+    static const char* mediaMimeType();
+
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
 
@@ -56,6 +64,8 @@ private:
     QLineEdit* search_ = nullptr;
     QString filter_;
     int selected_ = -1;
+    QPoint pressAt_;
+    bool maybeDragging_ = false;
     qint64 totalBytes_ = 0;
 };
 

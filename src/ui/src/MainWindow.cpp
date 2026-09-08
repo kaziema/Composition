@@ -688,6 +688,66 @@ void MainWindow::refreshCompositionTabs() {
     timelineTabs_->setTabs(names);
 }
 
+void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
+                                          int layerIndex) {
+    core::Composition* comp = activeComposition();
+    const core::MediaItem* item = project_.findMedia(id);
+    if (comp == nullptr || item == nullptr) {
+        return;
+    }
+    recordEdit(QStringLiteral("Add %1").arg(QString::fromStdString(item->name)));
+
+    core::Layer& layer = project_.addLayer(*comp, item->name,
+                                           item->isVideo() ? core::LayerKind::Footage
+                                                           : core::LayerKind::Audio);
+    layer.media = id;
+
+    // The drop position is the clip's start, not its centre: you drop where you want it
+    // to begin.
+    //
+    // The layer keeps its SOURCE length even when that runs past the end of the
+    // composition. Clamping it there silently threw away footage: drop a 9.8s clip at
+    // 8.6s in a 12s comp and you got a 3.4s layer with no indication anything had been
+    // cut. A bar running off the right edge is honest and is what AE does; the comp
+    // simply does not render past its own end, and you can extend it or trim by hand.
+    const double start = std::max(0.0, seconds);
+    const double length = item->duration > 0.0 ? item->duration : comp->duration;
+    layer.inPoint = core::TimeValue::seconds(start);
+    layer.outPoint = core::TimeValue::seconds(start + length);
+
+    // addLayer puts it on top; move it to where it was dropped in the stack.
+    const auto placed = std::find_if(
+        comp->layers.begin(), comp->layers.end(),
+        [id = layer.id](const core::Layer& l) { return l.id == id; });
+    if (placed != comp->layers.end()) {
+        core::Layer moved = std::move(*placed);
+        const core::LayerId movedId = moved.id;
+        comp->layers.erase(placed);
+        const auto at = std::min(static_cast<std::size_t>(std::max(0, layerIndex)),
+                                 comp->layers.size());
+        comp->layers.insert(comp->layers.begin() + static_cast<long>(at),
+                            std::move(moved));
+
+        if (timelinePanel_ != nullptr) {
+            timelinePanel_->setComposition(comp);
+            timelinePanel_->selectLayer(movedId);
+        }
+    }
+
+    if (item->hasAudio && !item->isVideo()) {
+        loadAudio();
+        if (audioOut_ != nullptr) {
+            audioOut_->setBuffer(audio_.has_value() ? &*audio_ : nullptr);
+        }
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    projectPanel_->refresh();
+    updateStatus();
+    markDirty();
+}
+
 void MainWindow::addMediaToComposition(core::MediaId id) {
     core::Composition* active = activeComposition();
     if (active == nullptr) {
@@ -708,11 +768,12 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
     core::Layer& layer = project_.addLayer(comp, item->name, kind);
     layer.media = id;
 
-    // A clip enters at the start and runs for as long as it has, but never past the end
-    // of the composition. Trimming it is the user's job, not ours.
+    // A clip enters at the start and runs for its own full length, even if that is
+    // longer than the composition. Trimming is the user's job, and truncating on import
+    // hides how much footage there actually is.
     layer.inPoint = core::TimeValue::seconds(0.0);
     layer.outPoint = core::TimeValue::seconds(
-        item->duration > 0.0 ? std::min(item->duration, comp.duration) : comp.duration);
+        item->duration > 0.0 ? item->duration : comp.duration);
 
     // A newly added track becomes the one we analyse and play.
     if (kind == core::LayerKind::Audio) {
@@ -1089,6 +1150,8 @@ QWidget* MainWindow::buildBody() {
     });
     connect(projectPanel_, &ProjectPanel::mediaActivated, this,
             &MainWindow::addMediaToComposition);
+    connect(timelinePanel, &TimelinePanel::mediaDropped, this,
+            &MainWindow::dropMediaIntoComposition);
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);

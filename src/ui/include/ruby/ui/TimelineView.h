@@ -3,6 +3,10 @@
 #include <QString>
 #include <QWidget>
 
+class QDragEnterEvent;
+class QDragLeaveEvent;
+class QDragMoveEvent;
+class QDropEvent;
 class QScrollBar;
 
 #include "ruby/core/Document.h"
@@ -67,8 +71,16 @@ signals:
     void editEnded();
     void layersChanged();
 
+    // Media dropped from the project panel: which clip, when, and how far down the
+    // stack. The window owns creating the layer; the view only decides where.
+    void mediaDropped(core::MediaId media, double seconds, int layerIndex);
+
 protected:
     bool event(QEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dragLeaveEvent(QDragLeaveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
@@ -153,6 +165,10 @@ private:
     std::optional<core::LayerId> selected_;
     std::vector<KeyRef> selectedKeys_;
     bool scrubbing_ = false;
+
+    // Where a drop would land, while one is in flight. -1 means no drop pending.
+    double dropTime_ = 0.0;
+    int dropRow_ = -1;
 };
 
 // Timeline panel: the 26px sub-toolbar over the view.
@@ -182,6 +198,7 @@ signals:
     void editBegan(const QString& label);
     void editEnded();
     void layersChanged();
+    void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

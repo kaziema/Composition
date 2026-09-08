@@ -1,7 +1,11 @@
 #include "ruby/ui/ProjectPanel.h"
 
 #include <QFileInfo>
+#include <QApplication>
+#include <QDrag>
 #include <QLineEdit>
+#include <QMimeData>
+#include <QPixmap>
 #include <QShortcut>
 #include <QMouseEvent>
 #include <QPainter>
@@ -245,12 +249,62 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
                Qt::AlignVCenter | Qt::AlignRight, formatSize(totalBytes_));
 }
 
+const char* ProjectPanel::mediaMimeType() { return "application/x-ruby-media"; }
+
 void ProjectPanel::mousePressEvent(QMouseEvent* e) {
-    const int row = rowAt(e->position().toPoint().y());
+    const QPoint pos = e->position().toPoint();
+    const int row = rowAt(pos.y());
     if (row != selected_) {
         selected_ = row;
         update();
     }
+    pressAt_ = pos;
+    // Only media can be dragged out. Dropping a composition onto its own timeline is a
+    // question with no good answer yet.
+    maybeDragging_ = row >= 0 && !rows_[static_cast<std::size_t>(row)].isComposition;
+}
+
+void ProjectPanel::mouseMoveEvent(QMouseEvent* e) {
+    if (!maybeDragging_ || (e->buttons() & Qt::LeftButton) == 0) {
+        return;
+    }
+    // Qt's own threshold, so a slightly shaky click does not become a drag.
+    if ((e->position().toPoint() - pressAt_).manhattanLength() <
+        QApplication::startDragDistance()) {
+        return;
+    }
+    if (selected_ < 0 || selected_ >= static_cast<int>(rows_.size())) {
+        return;
+    }
+    const Row& row = rows_[static_cast<std::size_t>(selected_)];
+    maybeDragging_ = false;
+
+    auto* data = new QMimeData;
+    data->setData(mediaMimeType(), QByteArray::number(qulonglong(row.id)));
+    data->setText(row.name);  // so dropping elsewhere at least says what it was
+
+    auto* drag = new QDrag(this);
+    drag->setMimeData(data);
+
+    // A small label under the cursor, so it is obvious what is being carried.
+    const QFontMetrics fm(font());
+    const int w = fm.horizontalAdvance(row.name) + 18;
+    QPixmap badge(w, metrics::kProjectRowH);
+    badge.fill(Qt::transparent);
+    {
+        QPainter p(&badge);
+        p.fillRect(badge.rect(), kRowSelected);
+        p.setPen(kFieldBorder);
+        p.drawRect(badge.rect().adjusted(0, 0, -1, -1));
+        p.fillRect(QRect(5, (badge.height() - 8) / 2, 5, 8), row.swatch);
+        p.setFont(font());
+        p.setPen(kTextSelectedLayer);
+        p.drawText(badge.rect().adjusted(14, 0, -4, 0),
+                   Qt::AlignVCenter | Qt::AlignLeft, row.name);
+    }
+    drag->setPixmap(badge);
+    drag->setHotSpot(QPoint(10, badge.height() / 2));
+    drag->exec(Qt::CopyAction);
 }
 
 void ProjectPanel::mouseDoubleClickEvent(QMouseEvent* e) {
