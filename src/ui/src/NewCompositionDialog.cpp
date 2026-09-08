@@ -34,7 +34,25 @@ constexpr Preset kPresets[] = {
 }  // namespace
 
 NewCompositionDialog::NewCompositionDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("New Composition"));
+    build(false, 0.0);
+}
+
+NewCompositionDialog::NewCompositionDialog(const Settings& existing, double contentEnd,
+                                           QWidget* parent)
+    : QDialog(parent) {
+    build(true, contentEnd);
+
+    name_->setText(existing.name);
+    width_->setValue(existing.width);
+    height_->setValue(existing.height);
+    fps_->setCurrentText(QString::number(existing.fps, 'g', 5));
+    duration_->setValue(existing.duration);
+    name_->selectAll();
+}
+
+void NewCompositionDialog::build(bool editing, double contentEnd) {
+    setWindowTitle(editing ? QStringLiteral("Composition Settings")
+                           : QStringLiteral("New Composition"));
     setModal(true);
 
     auto* layout = new QVBoxLayout(this);
@@ -70,7 +88,10 @@ NewCompositionDialog::NewCompositionDialog(QWidget* parent) : QDialog(parent) {
     form->addRow(QStringLiteral("Frame rate"), fps_);
 
     duration_ = new QDoubleSpinBox(this);
-    duration_->setRange(0.5, 3600.0);
+    // The cap is deliberately absurd. Duration now grows to whatever gets dropped in,
+    // and this dialog is the only way to bring it back down, so a limit lower than the
+    // longest clip somebody might drop would strand them with no way to shrink.
+    duration_->setRange(0.5, 86400.0);
     duration_->setDecimals(2);
     duration_->setSuffix(QStringLiteral(" s"));
     duration_->setValue(15.0);
@@ -78,9 +99,24 @@ NewCompositionDialog::NewCompositionDialog(QWidget* parent) : QDialog(parent) {
 
     layout->addLayout(form);
 
+    // Shrinking is a guessing game without this. The number you almost always want is
+    // "where my last layer stops", and that is not readable off a timeline that has just
+    // rescaled to an hour.
+    if (editing && contentEnd > 0.0) {
+        auto* hint = new QLabel(
+            QStringLiteral("Layers run to %1 s. A shorter duration keeps them, it just "
+                           "stops rendering there.")
+                .arg(contentEnd, 0, 'f', 2),
+            this);
+        hint->setWordWrap(true);
+        hint->setStyleSheet(QStringLiteral("color: %1;").arg(theme::kTextDim.name()));
+        layout->addWidget(hint);
+    }
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Create"));
+    buttons->button(QDialogButtonBox::Ok)->setText(editing ? QStringLiteral("Apply")
+                                                          : QStringLiteral("Create"));
     layout->addWidget(buttons);
 
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -103,7 +139,9 @@ NewCompositionDialog::NewCompositionDialog(QWidget* parent) : QDialog(parent) {
     connect(width_, &QSpinBox::valueChanged, this, markCustom);
     connect(height_, &QSpinBox::valueChanged, this, markCustom);
 
-    applyPreset(0);
+    if (!editing) {
+        applyPreset(0);
+    }
     name_->setFocus();
     name_->selectAll();
 }

@@ -71,6 +71,9 @@ signals:
     void editEnded();
     void layersChanged();
 
+    // The composition grew to contain a layer that ran past its end.
+    void compositionResized(double seconds);
+
     // Media dropped from the project panel: which clip, when, and how far down the
     // stack. The window owns creating the layer; the view only decides where.
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
@@ -198,6 +201,7 @@ signals:
     void editBegan(const QString& label);
     void editEnded();
     void layersChanged();
+    void compositionResized(double seconds);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 
 protected:

@@ -234,6 +234,25 @@ struct Composition {
     // Splitting a layer needs a fresh id without going back to the project. Ids only
     // have to be unique within the composition that holds them.
     [[nodiscard]] LayerId nextLayerId() const noexcept;
+
+    // The time the last layer stops. 0.0 for an empty composition.
+    [[nodiscard]] double contentEnd() const noexcept;
+
+    // Grow the composition so it contains all of its layers. Returns true if the
+    // duration actually changed.
+    //
+    // This only ever grows. A composition never shrinks itself, for two reasons.
+    //
+    // Growing is safe: nothing is hidden, nothing is lost, and the worst case is empty
+    // space at the end. Shrinking hides content, so it stays a deliberate act in
+    // Composition Settings. If deleting a layer silently pulled the end in, undo would
+    // restore the layer but you would also be fighting to get your duration back.
+    //
+    // And a composition is a source. Nest it in another composition and its duration is
+    // a stated fact about it, not a side effect of what happens to be inside it today.
+    // A duration that only ever moves outward can never invalidate a trim somebody
+    // already made downstream.
+    bool growToFit() noexcept;
 };
 
 // --- Project -----------------------------------------------------------------

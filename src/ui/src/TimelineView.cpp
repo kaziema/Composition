@@ -932,7 +932,9 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e) {
                     std::fabs(xForTime(byTail) - xForTime(in)) < 8.0) {
                     in = byTail;
                 }
-                in = std::clamp(in, 0.0, std::max(0.0, comp_->duration - length));
+                // Only a floor. Dragging a layer past the end of the composition is
+                // allowed; the composition grows to meet it on release.
+                in = std::max(0.0, in);
                 layer->inPoint = core::TimeValue::seconds(in);
                 layer->outPoint = core::TimeValue::seconds(in + length);
                 break;
@@ -944,8 +946,8 @@ void TimelineView::mouseMoveEvent(QMouseEvent* e) {
                 break;
             }
             case DragMode::TrimOut: {
-                const double out = std::clamp(snap(timeForX(pos.x())),
-                                              dragOriginalIn_ + minimum, comp_->duration);
+                const double out =
+                    std::max(snap(timeForX(pos.x())), dragOriginalIn_ + minimum);
                 layer->outPoint = core::TimeValue::seconds(out);
                 break;
             }
@@ -1053,6 +1055,17 @@ void TimelineView::mouseReleaseEvent(QMouseEvent*) {
     if (dragMode_ != DragMode::None) {
         dragMode_ = DragMode::None;
         dragLayer_ = 0;
+
+        // Growth waits for the release rather than tracking the drag. If the composition
+        // stretched continuously while you pulled, the whole timeline would rescale under
+        // the cursor and the bar would shrink away from the mouse as you dragged it right,
+        // which feels like the app fighting you. This happens before editEnded so it lands
+        // inside the same undo step as the move that caused it.
+        if (comp_ != nullptr && comp_->growToFit()) {
+            update();
+            emit compositionResized(comp_->duration);
+            emit layersChanged();
+        }
         emit editEnded();
     }
     scrubbing_ = false;
@@ -1147,6 +1160,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::editBegan, this, &TimelinePanel::editBegan);
     connect(view_, &TimelineView::editEnded, this, &TimelinePanel::editEnded);
     connect(view_, &TimelineView::layersChanged, this, &TimelinePanel::layersChanged);
+    connect(view_, &TimelineView::compositionResized, this,
+            &TimelinePanel::compositionResized);
     connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
 }
 

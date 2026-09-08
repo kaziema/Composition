@@ -61,6 +61,11 @@ public slots:
     bool saveProject(bool forcePrompt);
     void importMedia();
     void newComposition();
+    void compositionSettings();
+
+    // Called whenever growToFit actually moved the duration. Growth silently rescales
+    // every bar on the timeline, so it has to be announced or it reads as a glitch.
+    void noteCompositionGrew();
     void addMediaToComposition(core::MediaId id);
     void dropMediaIntoComposition(core::MediaId media, double seconds, int layerIndex);
     void setActiveComposition(core::CompId id);

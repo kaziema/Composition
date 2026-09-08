@@ -228,6 +228,86 @@ void time_context_falls_back_without_a_beat_map() {
     checkNear(ctx.bpm, 174.0, "tempo now comes from the map");
 }
 
+// A composition grows to hold what is in it, and never pulls back in on its own.
+void a_composition_grows_to_hold_its_content() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    check(!comp.growToFit(), "an empty comp has nothing to grow around");
+    checkNear(comp.duration, 12.0, "and its duration is left alone");
+    checkNear(comp.contentEnd(), 0.0, "an empty comp ends at zero");
+
+    Layer& shortClip = project.addLayer(comp, "short", LayerKind::Footage);
+    shortClip.inPoint = TimeValue::seconds(0.0);
+    shortClip.outPoint = TimeValue::seconds(5.0);
+    check(!comp.growToFit(), "a layer inside the comp does not move the end");
+    checkNear(comp.duration, 12.0, "duration unchanged");
+
+    Layer& longClip = project.addLayer(comp, "long", LayerKind::Footage);
+    longClip.inPoint = TimeValue::seconds(8.6);
+    longClip.outPoint = TimeValue::seconds(18.4);
+    checkNear(comp.contentEnd(), 18.4, "the end is the last layer's out point");
+    check(comp.growToFit(), "a layer past the end grows the comp");
+    checkNear(comp.duration, 18.4, "grown to exactly the content end, with no padding");
+
+    check(!comp.growToFit(), "growing is idempotent");
+}
+
+// The whole point of the rule: growth is automatic, shrinking is the user's job.
+void a_composition_never_shrinks_itself() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    Layer& clip = project.addLayer(comp, "long", LayerKind::Footage);
+    clip.inPoint = TimeValue::seconds(0.0);
+    clip.outPoint = TimeValue::seconds(60.0);
+    check(comp.growToFit(), "grew to fit the long clip");
+    checkNear(comp.duration, 60.0, "sixty seconds");
+
+    // Trimming the clip right down leaves the empty tail behind on purpose. Getting rid
+    // of it is a trip to Composition Settings, not something that happens under you.
+    clip.outPoint = TimeValue::seconds(2.0);
+    check(!comp.growToFit(), "a shorter layer does not shrink the comp");
+    checkNear(comp.duration, 60.0, "the empty tail stays until the user removes it");
+
+    // Same for deleting the layer outright.
+    comp.layers.clear();
+    check(!comp.growToFit(), "an emptied comp does not collapse");
+    checkNear(comp.duration, 60.0, "still sixty seconds");
+}
+
+// Shrinking by hand is allowed to leave layers hanging over the end. Truncating them
+// would be the destructive clamp this whole design exists to avoid.
+void a_manual_shrink_leaves_layers_overhanging() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 60.0);
+
+    Layer& clip = project.addLayer(comp, "clip", LayerKind::Footage);
+    clip.inPoint = TimeValue::seconds(0.0);
+    clip.outPoint = TimeValue::seconds(40.0);
+
+    comp.duration = 10.0;  // what Composition Settings will do
+    checkNear(comp.contentEnd(), 40.0, "the layer keeps its full extent");
+    check(comp.growToFit(), "and asking to fit again grows it straight back");
+    checkNear(comp.duration, 40.0, "no footage was lost by shrinking");
+}
+
+// Layers timed in beats have to resolve before they can be compared to a duration in
+// seconds, or a beats-mode layer would read as ending at zero.
+void growth_resolves_layers_timed_in_beats() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 4.0);
+    comp.rhythm = fourBars(120.0);
+
+    Layer& clip = project.addLayer(comp, "clip", LayerKind::Footage);
+    clip.inPoint = TimeValue::beats(0.0);
+    clip.outPoint = TimeValue::beats(16.0);  // 8s at 120bpm
+
+    checkNear(comp.contentEnd(), 8.0, "beats resolved against the comp's own tempo");
+    check(comp.growToFit(), "grew past its four seconds");
+    checkNear(comp.duration, 8.0, "eight seconds");
+}
+
 }  // namespace
 
 int main() {
@@ -243,6 +323,10 @@ int main() {
     new_layers_land_on_top();
     keyframe_counts_roll_up();
     time_context_falls_back_without_a_beat_map();
+    a_composition_grows_to_hold_its_content();
+    a_composition_never_shrinks_itself();
+    a_manual_shrink_leaves_layers_overhanging();
+    growth_resolves_layers_timed_in_beats();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

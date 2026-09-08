@@ -365,19 +365,26 @@ void MainWindow::nudgeLayerEdge(bool inPoint, bool trim) {
             if (t <= in + minimum) {
                 return;
             }
-            layer->outPoint = core::TimeValue::seconds(std::min(t, comp->duration));
+            layer->outPoint = core::TimeValue::seconds(t);
         }
     } else {
         const double length = out - in;
-        const double newIn = std::clamp(inPoint ? t : t - length, 0.0,
-                                        std::max(0.0, comp->duration - length));
+        const double newIn = std::max(0.0, inPoint ? t : t - length);
         layer->inPoint = core::TimeValue::seconds(newIn);
         layer->outPoint = core::TimeValue::seconds(newIn + length);
     }
 
+    // Nudging a layer past the end extends the composition to meet it. A keyboard edit
+    // is a single discrete step rather than a continuous gesture, so unlike a drag there
+    // is nothing to wait for: grow now.
+    const bool grew = comp->growToFit();
+
     timelinePanel_->setComposition(comp);
     if (viewport_ != nullptr) {
         viewport_->update();
+    }
+    if (grew) {
+        noteCompositionGrew();
     }
 }
 
@@ -641,6 +648,95 @@ void MainWindow::newComposition() {
                              6000);
 }
 
+// The only way a composition ever gets shorter.
+//
+// Duration grows by itself whenever a layer runs past the end and never shrinks by
+// itself, so everything that empties out the tail of a comp ends up here. Deliberately
+// so: growing hides nothing, shrinking hides content.
+void MainWindow::compositionSettings() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        return;
+    }
+
+    NewCompositionDialog::Settings current;
+    current.name = QString::fromStdString(comp->name);
+    current.width = comp->width;
+    current.height = comp->height;
+    current.fps = comp->fps;
+    current.duration = comp->duration;
+
+    NewCompositionDialog dialog(current, comp->contentEnd(), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const NewCompositionDialog::Settings s = dialog.settings();
+    if (s.name == current.name && s.width == current.width &&
+        s.height == current.height && s.fps == current.fps &&
+        s.duration == current.duration) {
+        return;  // nothing to record
+    }
+
+    recordEdit(QStringLiteral("Composition Settings"));
+    comp->name = s.name.toStdString();
+    comp->width = s.width;
+    comp->height = s.height;
+    comp->fps = s.fps;
+
+    // Layers are NOT trimmed to a shorter duration. They keep their out points and hang
+    // over the end, which is the same state a long clip lands in when it is dropped.
+    // Cutting them here would destroy work to tidy up a number.
+    comp->duration = s.duration;
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (playback_ != nullptr) {
+        playback_->configure(comp->duration, comp->fps);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    refreshCompositionTabs();
+    projectPanel_->refresh();
+    updateStatus();
+    markDirty();
+
+    statusBar()->showMessage(QStringLiteral("%1  ·  %2x%3  ·  %4 fps  ·  %5s")
+                                 .arg(s.name)
+                                 .arg(s.width)
+                                 .arg(s.height)
+                                 .arg(s.fps, 0, 'g', 5)
+                                 .arg(s.duration, 0, 'f', 2),
+                             6000);
+}
+
+// Growth changes the composition's duration, which is not a cosmetic fact: the transport
+// loops on it, so without this the comp would get longer while playback kept turning over
+// at the old end. Every bar on the timeline also rescales at once, which looks like a
+// rendering fault unless something says what happened.
+void MainWindow::noteCompositionGrew() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        return;
+    }
+    if (playback_ != nullptr) {
+        playback_->configure(comp->duration, comp->fps);
+    }
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+    statusBar()->showMessage(
+        QStringLiteral("Composition extended to %1 to fit the layer")
+            .arg(formatTimecode(comp->duration, comp->fps)),
+        5000);
+}
+
 void MainWindow::setActiveComposition(core::CompId id) {
     core::Composition* comp = project_.find(id);
     if (comp == nullptr) {
@@ -714,6 +810,7 @@ void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
     const double length = item->duration > 0.0 ? item->duration : comp->duration;
     layer.inPoint = core::TimeValue::seconds(start);
     layer.outPoint = core::TimeValue::seconds(start + length);
+    const bool grew = comp->growToFit();
 
     // addLayer puts it on top; move it to where it was dropped in the stack.
     const auto placed = std::find_if(
@@ -746,6 +843,12 @@ void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
     projectPanel_->refresh();
     updateStatus();
     markDirty();
+
+    // Last, so it wins the status bar. "Added clip.mov" is the less useful of the two
+    // messages when the whole timeline just rescaled underneath you.
+    if (grew) {
+        noteCompositionGrew();
+    }
 }
 
 void MainWindow::addMediaToComposition(core::MediaId id) {
@@ -774,6 +877,7 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
     layer.inPoint = core::TimeValue::seconds(0.0);
     layer.outPoint = core::TimeValue::seconds(
         item->duration > 0.0 ? item->duration : comp.duration);
+    const bool grew = comp.growToFit();
 
     // A newly added track becomes the one we analyse and play.
     if (kind == core::LayerKind::Audio) {
@@ -795,6 +899,9 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
 
     statusBar()->showMessage(
         QStringLiteral("Added %1").arg(QString::fromStdString(item->name)), 4000);
+    if (grew) {
+        noteCompositionGrew();
+    }
 }
 
 void MainWindow::loadAudio() {
@@ -912,7 +1019,10 @@ void MainWindow::buildMenus() {
     comp->addAction(QStringLiteral("New Composition..."),
                     QKeySequence(QStringLiteral("Ctrl+N")), this,
                     &MainWindow::newComposition);
-    addPending(comp, {QStringLiteral("Composition Settings..."), QString(),
+    comp->addAction(QStringLiteral("Composition Settings..."),
+                    QKeySequence(QStringLiteral("Ctrl+K")), this,
+                    &MainWindow::compositionSettings);
+    addPending(comp, {QString(),
                       QStringLiteral("Analyze Audio for Beats"),
                       QStringLiteral("Edit Beat Map..."),
                       QStringLiteral("Cut to Beats"), QString(),
@@ -1134,6 +1244,11 @@ QWidget* MainWindow::buildBody() {
             viewport_->update();
         }
     });
+    // The view grows the composition itself on mouse release, since it is the thing that
+    // knows a drag ended. The window still has to hear about it: the transport loops on
+    // duration and the status bar owes the user an explanation for the rescale.
+    connect(timelinePanel, &TimelinePanel::compositionResized, this,
+            [this](double) { noteCompositionGrew(); });
 
     // The Snapping switch finally does something.
     connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,

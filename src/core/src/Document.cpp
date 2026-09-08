@@ -253,6 +253,24 @@ int Composition::totalKeyframes() const noexcept {
     return total;
 }
 
+double Composition::contentEnd() const noexcept {
+    const TimeContext ctx = timeContext();
+    double end = 0.0;
+    for (const Layer& l : layers) {
+        end = std::max(end, to_seconds(l.outPoint, ctx));
+    }
+    return end;
+}
+
+bool Composition::growToFit() noexcept {
+    const double end = contentEnd();
+    if (end <= duration) {
+        return false;
+    }
+    duration = end;
+    return true;
+}
+
 // --- Project -----------------------------------------------------------------
 
 Composition& Project::addComposition(std::string name, int w, int h,
