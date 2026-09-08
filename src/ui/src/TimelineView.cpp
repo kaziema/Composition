@@ -91,6 +91,14 @@ void TimelineView::setScrollY(int y) {
     update();
 }
 
+void TimelineView::setSnapping(bool on) { snapping_ = on; }
+
+void TimelineView::selectLayer(core::LayerId layer) {
+    selected_ = layer;
+    rebuildRows();
+    update();
+}
+
 void TimelineView::setCurrentTime(double seconds) {
     const double clamped = std::clamp(seconds, 0.0, duration());
     if (std::fabs(clamped - currentTime_) < 1e-9) {
@@ -283,6 +291,77 @@ std::optional<KeyRef> TimelineView::keyAt(const QPoint& pos) const {
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+double TimelineView::snapTime(double seconds, core::LayerId ignore) const {
+    if (!snapping_ || comp_ == nullptr) {
+        return seconds;
+    }
+
+    // Pixels, not seconds. A time threshold is an enormous grab radius zoomed out and
+    // unreachable zoomed in; the feel has to be constant on screen.
+    constexpr double kThresholdPx = 8.0;
+    const double cursorX = xForTime(seconds);
+
+    double bestTime = seconds;
+    double bestDistance = kThresholdPx;
+
+    const auto consider = [&](double candidate) {
+        const double distance = std::fabs(xForTime(candidate) - cursorX);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestTime = candidate;
+        }
+    };
+
+    consider(0.0);
+    consider(comp_->duration);
+    consider(currentTime_);
+
+    const core::TimeContext ctx = comp_->timeContext();
+    for (const Layer& layer : comp_->layers) {
+        if (layer.id == ignore) {
+            continue;  // a layer must not snap to itself
+        }
+        consider(to_seconds(layer.inPoint, ctx));
+        consider(to_seconds(layer.outPoint, ctx));
+    }
+
+    // The part no other editor has: cuts grab the syllable.
+    for (const core::Marker& marker : comp_->rhythm.markers()) {
+        consider(marker.seconds);
+    }
+
+    return bestTime;
+}
+
+TimelineView::DragMode TimelineView::hitTestBar(const Layer& layer, const QPoint& pos,
+                                                const Row& row) const {
+    if (comp_ == nullptr || pos.x() < trackLeft()) {
+        return DragMode::None;
+    }
+    if (pos.y() < row.top || pos.y() >= row.top + row.height) {
+        return DragMode::None;
+    }
+
+    const core::TimeContext ctx = comp_->timeContext();
+    const double left = xForTime(to_seconds(layer.inPoint, ctx));
+    const double right = xForTime(to_seconds(layer.outPoint, ctx));
+    const double x = pos.x();
+
+    // Edge grabs win over the body. Kept small so a short bar is still movable, and
+    // clamped so a very short bar does not become all edge and nothing to drag.
+    const double edge = std::min(6.0, std::max(2.0, (right - left) / 3.0));
+    if (x >= left - edge && x <= left + edge) {
+        return DragMode::TrimIn;
+    }
+    if (x >= right - edge && x <= right + edge) {
+        return DragMode::TrimOut;
+    }
+    if (x > left && x < right) {
+        return DragMode::MoveLayer;
+    }
+    return DragMode::None;
 }
 
 void TimelineView::paintHeader(QPainter& p) const {
@@ -699,10 +778,44 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         return;
     }
 
-    // Track side. A keyframe under the cursor wins over scrubbing, otherwise the click
-    // clears the key selection and starts a scrub.
+    // Track side. Layer bars and keyframes both take precedence over scrubbing.
     if (pos.x() >= trackLeft()) {
         if (pos.y() >= metrics::kColumnHeaderH) {
+            const int contentY = pos.y() + scrollY_;
+            for (const Row& row : rows_) {
+                if (row.kind != RowKind::Layer) {
+                    continue;
+                }
+                if (contentY < row.top || contentY >= row.top + row.height) {
+                    continue;
+                }
+                Layer* layer = comp_->find(row.layer);
+                if (layer == nullptr) {
+                    break;
+                }
+                Row onScreen = row;
+                onScreen.top -= scrollY_;
+                const DragMode mode = hitTestBar(*layer, pos, onScreen);
+                if (mode == DragMode::None) {
+                    break;
+                }
+
+                const core::TimeContext ctx = comp_->timeContext();
+                dragMode_ = mode;
+                dragLayer_ = layer->id;
+                dragOriginalIn_ = to_seconds(layer->inPoint, ctx);
+                dragOriginalOut_ = to_seconds(layer->outPoint, ctx);
+                dragGrabOffset_ = timeForX(pos.x()) - dragOriginalIn_;
+
+                selected_ = layer->id;
+                emit selectionChanged(layer->id);
+                emit editBegan(mode == DragMode::MoveLayer
+                                   ? QStringLiteral("Move Layer")
+                                   : QStringLiteral("Trim Layer"));
+                update();
+                return;
+            }
+
             if (const auto hit = keyAt(pos); hit.has_value()) {
                 toggleKeySelection(*hit, additive);
                 update();
@@ -748,12 +861,98 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
 }
 
 void TimelineView::mouseMoveEvent(QMouseEvent* e) {
-    if (scrubbing_) {
-        setCurrentTime(timeForX(e->position().toPoint().x()));
+    const QPoint pos = e->position().toPoint();
+
+    if (dragMode_ != DragMode::None && comp_ != nullptr) {
+        Layer* layer = comp_->find(dragLayer_);
+        if (layer == nullptr) {
+            return;
+        }
+        // Holding a modifier suspends snapping for one drag, for the times the snap is
+        // fighting you rather than helping.
+        const bool suspend = e->modifiers().testFlag(Qt::AltModifier);
+        const auto snap = [&](double t) {
+            return suspend ? t : snapTime(t, dragLayer_);
+        };
+
+        // A layer with no duration cannot be grabbed again, so trims stop a frame short
+        // rather than collapsing.
+        const double minimum = 1.0 / std::max(1.0, comp_->fps);
+
+        switch (dragMode_) {
+            case DragMode::MoveLayer: {
+                const double length = dragOriginalOut_ - dragOriginalIn_;
+                double in = snap(timeForX(pos.x()) - dragGrabOffset_);
+                // Snap the tail too: butting a clip against the next one is as common
+                // as lining its head up.
+                const double byTail = snap(in + length) - length;
+                if (!suspend && std::fabs(byTail - in) > 1e-9 &&
+                    std::fabs(xForTime(byTail) - xForTime(in)) < 8.0) {
+                    in = byTail;
+                }
+                in = std::clamp(in, 0.0, std::max(0.0, comp_->duration - length));
+                layer->inPoint = core::TimeValue::seconds(in);
+                layer->outPoint = core::TimeValue::seconds(in + length);
+                break;
+            }
+            case DragMode::TrimIn: {
+                const double in = std::clamp(snap(timeForX(pos.x())), 0.0,
+                                             dragOriginalOut_ - minimum);
+                layer->inPoint = core::TimeValue::seconds(in);
+                break;
+            }
+            case DragMode::TrimOut: {
+                const double out = std::clamp(snap(timeForX(pos.x())),
+                                              dragOriginalIn_ + minimum, comp_->duration);
+                layer->outPoint = core::TimeValue::seconds(out);
+                break;
+            }
+            case DragMode::None:
+                break;
+        }
+        emit layersChanged();
+        update();
+        return;
     }
+
+    if (scrubbing_) {
+        setCurrentTime(timeForX(pos.x()));
+        return;
+    }
+
+    // Cursor tells you what a press would do before you commit to it.
+    Qt::CursorShape shape = Qt::ArrowCursor;
+    if (comp_ != nullptr && pos.x() >= trackLeft() && pos.y() >= metrics::kColumnHeaderH) {
+        const int contentY = pos.y() + scrollY_;
+        for (const Row& row : rows_) {
+            if (row.kind != RowKind::Layer || contentY < row.top ||
+                contentY >= row.top + row.height) {
+                continue;
+            }
+            if (const Layer* layer = comp_->find(row.layer); layer != nullptr) {
+                Row onScreen = row;
+                onScreen.top -= scrollY_;
+                switch (hitTestBar(*layer, pos, onScreen)) {
+                    case DragMode::TrimIn:
+                    case DragMode::TrimOut:  shape = Qt::SizeHorCursor; break;
+                    case DragMode::MoveLayer: shape = Qt::OpenHandCursor; break;
+                    case DragMode::None:      break;
+                }
+            }
+            break;
+        }
+    }
+    setCursor(shape);
 }
 
-void TimelineView::mouseReleaseEvent(QMouseEvent*) { scrubbing_ = false; }
+void TimelineView::mouseReleaseEvent(QMouseEvent*) {
+    if (dragMode_ != DragMode::None) {
+        dragMode_ = DragMode::None;
+        dragLayer_ = 0;
+        emit editEnded();
+    }
+    scrubbing_ = false;
+}
 
 // --- Sub-toolbar -------------------------------------------------------------
 
@@ -841,9 +1040,20 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     });
     connect(view_, &TimelineView::selectionChanged, this,
             &TimelinePanel::selectionChanged);
+    connect(view_, &TimelineView::editBegan, this, &TimelinePanel::editBegan);
+    connect(view_, &TimelineView::editEnded, this, &TimelinePanel::editEnded);
+    connect(view_, &TimelineView::layersChanged, this, &TimelinePanel::layersChanged);
 }
 
 void TimelinePanel::setCurrentTime(double seconds) { view_->setCurrentTime(seconds); }
+
+void TimelinePanel::setSnapping(bool on) { view_->setSnapping(on); }
+
+std::optional<core::LayerId> TimelinePanel::selectedLayer() const {
+    return view_->selectedLayer();
+}
+
+void TimelinePanel::selectLayer(core::LayerId layer) { view_->selectLayer(layer); }
 
 void TimelinePanel::syncScrollRange() {
     const int overflow = std::max(0, view_->contentHeight() - view_->height());

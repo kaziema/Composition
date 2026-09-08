@@ -237,6 +237,14 @@ const Layer* Composition::find(LayerId layer) const noexcept {
     return it == layers.end() ? nullptr : &*it;
 }
 
+LayerId Composition::nextLayerId() const noexcept {
+    LayerId highest = 0;
+    for (const Layer& l : layers) {
+        highest = std::max(highest, l.id);
+    }
+    return highest + 1;
+}
+
 int Composition::totalKeyframes() const noexcept {
     int total = 0;
     for (const Layer& l : layers) {

@@ -230,6 +230,10 @@ struct Composition {
     [[nodiscard]] const Layer* find(LayerId layer) const noexcept;
 
     [[nodiscard]] int totalKeyframes() const noexcept;
+
+    // Splitting a layer needs a fresh id without going back to the project. Ids only
+    // have to be unique within the composition that holds them.
+    [[nodiscard]] LayerId nextLayerId() const noexcept;
 };
 
 // --- Project -----------------------------------------------------------------

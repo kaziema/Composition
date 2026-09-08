@@ -50,6 +50,8 @@ signals:
     void mediaImported();
 
 public slots:
+    void splitLayerAtPlayhead();
+    void toggleSelectedLayerProperties();
     void undo();
     void redo();
     void beginEdit(const QString& label);
@@ -79,6 +81,9 @@ private:
     void recordEdit(const QString& label);
     void refreshUndoActions();
     void afterDocumentReplaced();
+    [[nodiscard]] core::Layer* selectedLayer();
+    void nudgeLayerEdge(bool inPoint, bool trim);
+    void jumpToKeyframe(bool forward);
     void refreshCompositionTabs();
     [[nodiscard]] core::Composition* activeComposition();
     QWidget* buildBody();

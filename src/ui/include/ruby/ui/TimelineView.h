@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QString>
 #include <QWidget>
 
 class QScrollBar;
@@ -43,6 +44,7 @@ public:
     [[nodiscard]] std::optional<core::LayerId> selectedLayer() const noexcept {
         return selected_;
     }
+    void selectLayer(core::LayerId layer);
 
     // Vertical scroll is manual rather than a QScrollArea, so the column header and
     // ruler can stay pinned at y=0 while the rows move underneath them. A timeline
@@ -50,10 +52,20 @@ public:
     void setScrollY(int y);
     [[nodiscard]] int contentHeight() const noexcept { return contentHeight_; }
 
+    // Snapping pulls drags toward the playhead, other layers' edges, and rhythm
+    // markers. Driven by the tool bar switch.
+    void setSnapping(bool on);
+    [[nodiscard]] bool snapping() const noexcept { return snapping_; }
+
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);
     void contentHeightChanged(int pixels);
+
+    // A drag is one undo step, so the window brackets it rather than recording per move.
+    void editBegan(const QString& label);
+    void editEnded();
+    void layersChanged();
 
 protected:
     bool event(QEvent* e) override;
@@ -108,8 +120,33 @@ private:
     [[nodiscard]] bool isKeySelected(const KeyRef& ref) const;
     void toggleKeySelection(const KeyRef& ref, bool additive);
 
+    // What a press on a layer bar started. Moving and trimming are different
+    // intentions and behave differently under snapping, so they are distinct modes
+    // rather than one drag with a flag.
+    enum class DragMode {
+        None,
+        MoveLayer,
+        TrimIn,
+        TrimOut,
+    };
+
+    // Snaps `seconds` to the nearest interesting time within a few pixels, ignoring the
+    // layer being dragged. The threshold is in pixels rather than seconds on purpose:
+    // "within 0.1s" is an enormous grab radius zoomed out and unreachable zoomed in.
+    [[nodiscard]] double snapTime(double seconds, core::LayerId ignore) const;
+
+    [[nodiscard]] DragMode hitTestBar(const core::Layer& layer, const QPoint& pos,
+                                      const Row& row) const;
+
     core::Composition* comp_ = nullptr;
     std::vector<Row> rows_;
+
+    bool snapping_ = true;
+    DragMode dragMode_ = DragMode::None;
+    core::LayerId dragLayer_ = 0;
+    double dragGrabOffset_ = 0.0;  // seconds between the cursor and the layer's in point
+    double dragOriginalIn_ = 0.0;
+    double dragOriginalOut_ = 0.0;
     double currentTime_ = 3.14;
     int scrollY_ = 0;
     int contentHeight_ = 0;
@@ -134,10 +171,17 @@ public:
     // Driven by playback. Emits currentTimeChanged like a scrub would, so the viewer
     // and inspector follow without needing to know where the time came from.
     void setCurrentTime(double seconds);
+    void setSnapping(bool on);
+
+    [[nodiscard]] std::optional<core::LayerId> selectedLayer() const;
+    void selectLayer(core::LayerId layer);
 
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);
+    void editBegan(const QString& label);
+    void editEnded();
+    void layersChanged();
 
 protected:
     void resizeEvent(QResizeEvent* e) override;

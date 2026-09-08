@@ -5,6 +5,7 @@
 #include <QMenu>
 #include <QFileDialog>
 #include <algorithm>
+#include <limits>
 #include <QCloseEvent>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -324,6 +325,151 @@ void MainWindow::redo() {
     afterDocumentReplaced();
     markDirty();
     refreshUndoActions();
+}
+
+core::Layer* MainWindow::selectedLayer() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr || timelinePanel_ == nullptr) {
+        return nullptr;
+    }
+    const auto id = timelinePanel_->selectedLayer();
+    return id.has_value() ? comp->find(*id) : nullptr;
+}
+
+// `[` and `]` MOVE the layer so an edge lands on the playhead. Option makes the same
+// key TRIM instead. Move and trim are different intentions, and one key with a modifier
+// is why people do both without thinking about it.
+void MainWindow::nudgeLayerEdge(bool inPoint, bool trim) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || playback_ == nullptr) {
+        return;
+    }
+    const core::TimeContext ctx = comp->timeContext();
+    const double t = playback_->time();
+    const double in = to_seconds(layer->inPoint, ctx);
+    const double out = to_seconds(layer->outPoint, ctx);
+    const double minimum = 1.0 / std::max(1.0, comp->fps);
+
+    recordEdit(trim ? QStringLiteral("Trim Layer") : QStringLiteral("Move Layer"));
+
+    if (trim) {
+        // A trim that would invert or collapse the layer is refused rather than clamped
+        // to nothing: a zero-length bar cannot be grabbed again.
+        if (inPoint) {
+            if (t >= out - minimum) {
+                return;
+            }
+            layer->inPoint = core::TimeValue::seconds(std::max(0.0, t));
+        } else {
+            if (t <= in + minimum) {
+                return;
+            }
+            layer->outPoint = core::TimeValue::seconds(std::min(t, comp->duration));
+        }
+    } else {
+        const double length = out - in;
+        const double newIn = std::clamp(inPoint ? t : t - length, 0.0,
+                                        std::max(0.0, comp->duration - length));
+        layer->inPoint = core::TimeValue::seconds(newIn);
+        layer->outPoint = core::TimeValue::seconds(newIn + length);
+    }
+
+    timelinePanel_->setComposition(comp);
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+}
+
+void MainWindow::splitLayerAtPlayhead() {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || playback_ == nullptr) {
+        return;
+    }
+    const core::TimeContext ctx = comp->timeContext();
+    const double t = playback_->time();
+    const double in = to_seconds(layer->inPoint, ctx);
+    const double out = to_seconds(layer->outPoint, ctx);
+
+    // Splitting outside the layer, or exactly on an edge, would make a zero-length half.
+    if (t <= in || t >= out) {
+        statusBar()->showMessage(
+            QStringLiteral("Move the playhead inside the layer to split it"), 4000);
+        return;
+    }
+
+    recordEdit(QStringLiteral("Split Layer"));
+
+    // The second half is a full copy: same media, effects and keyframes. Keyframes are
+    // kept in both halves rather than divided, which is what AE does and what lets you
+    // undo a split by trimming rather than by re-animating.
+    core::Layer tail = *layer;
+    tail.id = comp->nextLayerId();
+    tail.inPoint = core::TimeValue::seconds(t);
+    tail.outPoint = core::TimeValue::seconds(out);
+
+    layer->outPoint = core::TimeValue::seconds(t);
+
+    const auto position = std::find_if(
+        comp->layers.begin(), comp->layers.end(),
+        [id = layer->id](const core::Layer& l) { return l.id == id; });
+    const core::LayerId tailId = tail.id;
+    comp->layers.insert(position, std::move(tail));  // the tail sits above the head
+
+    timelinePanel_->setComposition(comp);
+    timelinePanel_->selectLayer(tailId);
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
+}
+
+void MainWindow::toggleSelectedLayerProperties() {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr) {
+        return;
+    }
+    layer->expanded = !layer->expanded;
+    timelinePanel_->setComposition(comp);
+}
+
+// J and K walk the keyframes of the selected layer, including the ones on its effects.
+void MainWindow::jumpToKeyframe(bool forward) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || playback_ == nullptr) {
+        return;
+    }
+    const core::TimeContext ctx = comp->timeContext();
+    const double now = playback_->time();
+
+    double best = forward ? std::numeric_limits<double>::max()
+                          : std::numeric_limits<double>::lowest();
+    bool found = false;
+
+    const auto consider = [&](const core::Property& prop) {
+        for (const core::Keyframe& k : prop.keys) {
+            const double t = to_seconds(k.time, ctx);
+            if (forward ? (t > now + 1e-6 && t < best) : (t < now - 1e-6 && t > best)) {
+                best = t;
+                found = true;
+            }
+        }
+    };
+    for (const core::Property& p : layer->properties) {
+        consider(p);
+    }
+    for (const core::EffectInstance& fx : layer->effects) {
+        for (const core::Property& p : fx.params) {
+            consider(p);
+        }
+    }
+
+    if (found) {
+        playback_->seek(best);
+    }
 }
 
 void MainWindow::newProject() {
@@ -712,6 +858,23 @@ void MainWindow::buildMenus() {
                       QStringLiteral("Add to Render Queue")});
 
     auto* layer = menuBar()->addMenu(QStringLiteral("Layer"));
+    layer->addAction(QStringLiteral("Split at Playhead"),
+                     QKeySequence(QStringLiteral("Ctrl+Shift+D")), this,
+                     &MainWindow::splitLayerAtPlayhead);
+    layer->addSeparator();
+    layer->addAction(QStringLiteral("Move In Point to Playhead"),
+                     QKeySequence(Qt::Key_BracketLeft), this,
+                     [this] { nudgeLayerEdge(true, false); });
+    layer->addAction(QStringLiteral("Move Out Point to Playhead"),
+                     QKeySequence(Qt::Key_BracketRight), this,
+                     [this] { nudgeLayerEdge(false, false); });
+    layer->addAction(QStringLiteral("Trim In Point to Playhead"),
+                     QKeySequence(Qt::ALT | Qt::Key_BracketLeft), this,
+                     [this] { nudgeLayerEdge(true, true); });
+    layer->addAction(QStringLiteral("Trim Out Point to Playhead"),
+                     QKeySequence(Qt::ALT | Qt::Key_BracketRight), this,
+                     [this] { nudgeLayerEdge(false, true); });
+    layer->addSeparator();
     addPending(layer, {QStringLiteral("New Text Layer"), QStringLiteral("New Shape Layer"),
                        QStringLiteral("New Solid"), QStringLiteral("New Adjustment Layer"),
                        QStringLiteral("New Null"), QString(),
@@ -728,6 +891,14 @@ void MainWindow::buildMenus() {
                         QStringLiteral("Remove All Effects")});
 
     auto* anim = menuBar()->addMenu(QStringLiteral("Animation"));
+    anim->addAction(QStringLiteral("Reveal Animated Properties"),
+                    QKeySequence(Qt::Key_U), this,
+                    &MainWindow::toggleSelectedLayerProperties);
+    anim->addAction(QStringLiteral("Previous Keyframe"), QKeySequence(Qt::Key_J), this,
+                    [this] { jumpToKeyframe(false); });
+    anim->addAction(QStringLiteral("Next Keyframe"), QKeySequence(Qt::Key_K), this,
+                    [this] { jumpToKeyframe(true); });
+    anim->addSeparator();
     addPending(anim, {QStringLiteral("Add Keyframe"), QStringLiteral("Toggle Hold Keyframe"),
                       QString(), QStringLiteral("Keyframe Assistant..."),
                       QStringLiteral("Snap Keyframes to Beat"),
@@ -892,6 +1063,20 @@ QWidget* MainWindow::buildBody() {
             &TimelinePanel::refresh);
     connect(inspector_, &InspectorView::editBegan, this, &MainWindow::beginEdit);
     connect(inspector_, &InspectorView::editEnded, this, &MainWindow::endEdit);
+
+    // Dragging a bar is one undo step, and the viewer has to follow because a layer's
+    // in and out points decide whether it is on screen at all.
+    connect(timelinePanel, &TimelinePanel::editBegan, this, &MainWindow::beginEdit);
+    connect(timelinePanel, &TimelinePanel::editEnded, this, &MainWindow::endEdit);
+    connect(timelinePanel, &TimelinePanel::layersChanged, this, [this] {
+        if (viewport_ != nullptr) {
+            viewport_->update();
+        }
+    });
+
+    // The Snapping switch finally does something.
+    connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,
+            &TimelinePanel::setSnapping);
 
     connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
     connect(projectPanel_, &ProjectPanel::compositionActivated, this,
