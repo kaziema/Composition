@@ -32,6 +32,7 @@
 #include "ruby/io/ProjectIO.h"
 #include "ruby/ui/NewCompositionDialog.h"
 #include "ruby/ui/NewSolidDialog.h"
+#include "ruby/ui/NewTextDialog.h"
 #include "ruby/ui/Playback.h"
 #include "ruby/ui/PooledMediaPanel.h"
 #include "ruby/ui/ProjectPanel.h"
@@ -1133,6 +1134,93 @@ void MainWindow::newSolidLayer() {
     statusBar()->showMessage(QStringLiteral("Created solid %1").arg(s.name), 4000);
 }
 
+namespace {
+
+void applyTextSettings(core::Layer& layer, const NewTextDialog::Settings& s) {
+    layer.text = s.text.toStdString();
+    layer.fontFamily = s.fontFamily.toStdString();
+    layer.fontSize = s.fontSize;
+    layer.tracking = s.tracking;
+    layer.lineHeight = s.lineHeight;
+    layer.strokeWidth = s.strokeWidth;
+    layer.textAlign = s.align;
+    layer.textColor = core::Value::rgba(
+        static_cast<double>(s.color.redF()), static_cast<double>(s.color.greenF()),
+        static_cast<double>(s.color.blueF()), static_cast<double>(s.color.alphaF()));
+    layer.strokeColor = core::Value::rgba(static_cast<double>(s.strokeColor.redF()),
+                                          static_cast<double>(s.strokeColor.greenF()),
+                                          static_cast<double>(s.strokeColor.blueF()), 1.0);
+}
+
+NewTextDialog::Settings settingsFrom(const core::Layer& layer) {
+    NewTextDialog::Settings s;
+    s.text = QString::fromStdString(layer.text);
+    s.fontFamily = QString::fromStdString(layer.fontFamily);
+    s.fontSize = layer.fontSize;
+    s.tracking = layer.tracking;
+    s.lineHeight = layer.lineHeight;
+    s.strokeWidth = layer.strokeWidth;
+    s.align = layer.textAlign;
+    s.color = QColor::fromRgbF(layer.textColor.c[0], layer.textColor.c[1],
+                               layer.textColor.c[2], layer.textColor.c[3]);
+    s.strokeColor = QColor::fromRgbF(layer.strokeColor.c[0], layer.strokeColor.c[1],
+                                     layer.strokeColor.c[2], 1.0);
+    return s;
+}
+
+}  // namespace
+
+void MainWindow::newTextLayer() {
+    NewTextDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const NewTextDialog::Settings s = dialog.settings();
+
+    // The layer is named after what it says. A timeline of layers called "Text 1" through
+    // "Text 9" tells you nothing; one called "DROP 09.12" tells you everything.
+    QString name = s.text.split(QLatin1Char('\n')).first().trimmed();
+    if (name.isEmpty()) {
+        name = QStringLiteral("Text");
+    }
+
+    core::Layer* layer =
+        createLayer(QStringLiteral("New Text Layer"), name.toStdString(),
+                    core::LayerKind::Text);
+    if (layer == nullptr) {
+        return;
+    }
+    applyTextSettings(*layer, s);
+    layer->label = core::LabelColor::Lavender;  // the design's colour for text and shape
+
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    statusBar()->showMessage(QStringLiteral("Created text layer"), 4000);
+}
+
+// There is no text field in the inspector yet, so the dialog is also the editor.
+void MainWindow::editTextLayer() {
+    core::Layer* layer = selectedLayer();
+    if (layer == nullptr || layer->kind != core::LayerKind::Text) {
+        return;
+    }
+    NewTextDialog dialog(settingsFrom(*layer), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    recordEdit(QStringLiteral("Edit Text"));
+    applyTextSettings(*layer, dialog.settings());
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(activeComposition());
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
+}
+
 void MainWindow::newNullLayer() {
     if (createLayer(QStringLiteral("New Null"), "Null", core::LayerKind::Null) != nullptr) {
         statusBar()->showMessage(QStringLiteral("Created null"), 4000);
@@ -1541,7 +1629,13 @@ void MainWindow::buildMenus() {
     layer->addAction(QStringLiteral("New Null"),
                      QKeySequence(QStringLiteral("Ctrl+Alt+Shift+Y")), this,
                      &MainWindow::newNullLayer);
-    addPending(layer, {QStringLiteral("New Text Layer"), QStringLiteral("New Shape Layer"),
+    layer->addAction(QStringLiteral("New Text Layer..."),
+                     QKeySequence(QStringLiteral("Ctrl+Alt+Shift+T")), this,
+                     &MainWindow::newTextLayer);
+    layer->addAction(QStringLiteral("Text Settings..."),
+                     QKeySequence(QStringLiteral("Ctrl+Shift+T")), this,
+                     &MainWindow::editTextLayer);
+    addPending(layer, {QStringLiteral("New Shape Layer"),
                        QStringLiteral("New Adjustment Layer"), QString(),
                        QStringLiteral("Pre-compose..."), QString(),
                        QStringLiteral("Add Mask"), QStringLiteral("Auto-Roto Subject..."),

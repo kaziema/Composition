@@ -127,6 +127,13 @@ enum class LayerKind {
     Audio,
 };
 
+// Horizontal alignment of a text layer's lines against each other.
+enum class TextAlign {
+    Left,
+    Center,
+    Right,
+};
+
 enum class BlendMode {
     Normal,
     Add,
@@ -195,6 +202,24 @@ struct Layer {
     bool enabled = true;       // the eye: whether the layer is drawn
     bool audioEnabled = true;  // the speaker: whether it is heard
     bool solo = false;
+
+    // Text layers only.
+    //
+    // A structured model rather than a blob of HTML. Olive stores rich text as HTML, which
+    // is convenient right up until the project format quietly depends on which HTML subset
+    // this version of Qt understands. These fields mean the same thing in ten years.
+    //
+    // One style for the whole layer in v1. Per-run styling and AE-style animator groups
+    // both build on top of this rather than replacing it.
+    std::string text;
+    std::string fontFamily = "Helvetica";
+    double fontSize = 72.0;      // points at 96 DPI, fixed so a size means one thing
+    double tracking = 0.0;       // extra advance per character, in points
+    double lineHeight = 1.2;     // multiple of the font's natural line spacing
+    Value textColor = Value::rgba(1.0, 1.0, 1.0, 1.0);
+    Value strokeColor = Value::rgba(0.0, 0.0, 0.0, 1.0);
+    double strokeWidth = 0.0;    // 0 disables the stroke entirely
+    TextAlign textAlign = TextAlign::Center;
 
     // Solid layers only.
     //

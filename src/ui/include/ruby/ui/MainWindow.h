@@ -80,6 +80,10 @@ public slots:
     void newSolidLayer();
     void newNullLayer();
 
+    // Also the editor: double-clicking a text layer's name reopens it seeded.
+    void newTextLayer();
+    void editTextLayer();
+
     // Shared by both: place the layer, span the composition, select it, refresh.
     core::Layer* createLayer(const QString& undoLabel, const std::string& name,
                              core::LayerKind kind);

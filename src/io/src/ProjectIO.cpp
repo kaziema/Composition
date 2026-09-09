@@ -17,6 +17,38 @@ using namespace ruby::core;
 // middle silently reinterprets every older project, and it makes the file unreadable to
 // a human trying to work out what went wrong.
 
+// Colours are stored as four numbers. A missing or malformed one leaves the value at its
+// default rather than half-writing it, so a hand-edited file cannot produce a colour that
+// is partly one thing and partly another.
+void readRgba(const json& obj, const char* key, Value& into) {
+    if (!obj.contains(key) || !obj[key].is_array() || obj[key].size() != 4) {
+        return;
+    }
+    Value parsed;
+    for (std::size_t i = 0; i < 4; ++i) {
+        if (!obj[key][i].is_number()) {
+            return;
+        }
+        parsed.c[i] = obj[key][i].get<double>();
+    }
+    parsed.count = 4;
+    into = parsed;
+}
+
+const char* name(TextAlign a) {
+    switch (a) {
+        case TextAlign::Left:   return "left";
+        case TextAlign::Center: return "center";
+        case TextAlign::Right:  return "right";
+    }
+    return "center";
+}
+TextAlign textAlign(const std::string& s) {
+    if (s == "left")  return TextAlign::Left;
+    if (s == "right") return TextAlign::Right;
+    return TextAlign::Center;
+}
+
 const char* name(LayerKind k) {
     switch (k) {
         case LayerKind::Footage:    return "footage";
@@ -222,6 +254,21 @@ json write(const Layer& l) {
              {"enabled", l.enabled}, {"audioEnabled", l.audioEnabled},
              {"solo", l.solo}, {"expanded", l.expanded}};
 
+
+    // Only on text layers, for the same reason solids only write their own fields.
+    if (l.kind == LayerKind::Text) {
+        out["text"] = l.text;
+        out["fontFamily"] = l.fontFamily;
+        out["fontSize"] = l.fontSize;
+        out["tracking"] = l.tracking;
+        out["lineHeight"] = l.lineHeight;
+        out["textAlign"] = name(l.textAlign);
+        out["textColor"] = {l.textColor.c[0], l.textColor.c[1], l.textColor.c[2],
+                            l.textColor.c[3]};
+        out["strokeColor"] = {l.strokeColor.c[0], l.strokeColor.c[1], l.strokeColor.c[2],
+                              l.strokeColor.c[3]};
+        out["strokeWidth"] = l.strokeWidth;
+    }
 
     // Only on solids. Writing these on every layer would put four dead numbers on every
     // text, footage and null layer in the file.
@@ -446,14 +493,17 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 // open with their sound audible rather than mysteriously muted.
                 layer.audioEnabled = get<bool>(l, "audioEnabled", true);
 
-                if (l.contains("solidColor") && l["solidColor"].is_array() &&
-                    l["solidColor"].size() == 4) {
-                    for (int i = 0; i < 4; ++i) {
-                        layer.solidColor.c[static_cast<std::size_t>(i)] =
-                            l["solidColor"][static_cast<std::size_t>(i)].get<double>();
-                    }
-                    layer.solidColor.count = 4;
-                }
+                readRgba(l, "solidColor", layer.solidColor);
+                layer.text = get<std::string>(l, "text", std::string());
+                layer.fontFamily = get<std::string>(l, "fontFamily", "Helvetica");
+                layer.fontSize = get<double>(l, "fontSize", 72.0);
+                layer.tracking = get<double>(l, "tracking", 0.0);
+                layer.lineHeight = get<double>(l, "lineHeight", 1.2);
+                layer.textAlign = textAlign(get<std::string>(l, "textAlign", "center"));
+                layer.strokeWidth = get<double>(l, "strokeWidth", 0.0);
+                readRgba(l, "textColor", layer.textColor);
+                readRgba(l, "strokeColor", layer.strokeColor);
+
                 layer.solidWidth = get<int>(l, "solidWidth", 0);
                 layer.solidHeight = get<int>(l, "solidHeight", 0);
                 layer.solo = get<bool>(l, "solo", false);

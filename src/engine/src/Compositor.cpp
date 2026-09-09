@@ -300,7 +300,8 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
 }
 
 void Compositor::render(const core::Project& project, const core::Composition& comp,
-                        double seconds, const gpu::TextureHandle& target) {
+                        double seconds, const gpu::TextureHandle& target,
+                        const ExternalTextures* external) {
     if (target == nullptr || quads_ == nullptr) {
         return;
     }
@@ -355,6 +356,16 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         Content content;
         if (const std::string path = project.pathFor(layer); !path.empty()) {
             content = contentFor(path, seconds - in);
+        } else if (external != nullptr) {
+            // Supplied content, currently only text. Indistinguishable from footage from
+            // here on: it is a texture with a size, and every sizing, effect and blend
+            // path treats it the same way.
+            if (const auto supplied = external->find(layer.id);
+                supplied != external->end()) {
+                content.texture = supplied->second.texture;
+                content.width = supplied->second.width;
+                content.height = supplied->second.height;
+            }
         }
         gpu::TextureHandle texture =
             applyEffects(*commands, layer, content.texture, seconds, ctx, slot);
