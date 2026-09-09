@@ -1020,6 +1020,97 @@ void MainWindow::showLayerContextMenu(const QPoint& globalPos) {
     splitAction_->setEnabled(true);
 }
 
+// --- Effects -----------------------------------------------------------------
+
+void MainWindow::applyEffect(const std::string& effectId) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr) {
+        statusBar()->showMessage(QStringLiteral("Select a layer to apply an effect to"),
+                                 4000);
+        return;
+    }
+    const engine::EffectRegistry& registry = engine::EffectRegistry::instance();
+    const engine::EffectDef* def = registry.find(effectId);
+    if (def == nullptr) {
+        return;
+    }
+
+    recordEdit(QStringLiteral("Apply %1")
+                   .arg(QString::fromStdString(def->schema.display_name)));
+
+    // Effects apply in order, top to bottom, so a new one goes on the END of the stack:
+    // it acts on the result of everything already there, which is what "apply an effect
+    // to this layer" means when the layer already has some.
+    layer->effects.push_back(registry.instantiate(effectId));
+
+    // Twirled open, so what you just added is visible rather than hidden behind an arrow
+    // you have to know to click.
+    layer->expanded = true;
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+    statusBar()->showMessage(
+        QStringLiteral("Applied %1").arg(QString::fromStdString(def->schema.display_name)),
+        4000);
+}
+
+void MainWindow::removeAllEffects() {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || layer->effects.empty()) {
+        return;
+    }
+    recordEdit(QStringLiteral("Remove All Effects"));
+    layer->effects.clear();
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
+void MainWindow::removeEffect(int index) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || index < 0 ||
+        index >= static_cast<int>(layer->effects.size())) {
+        return;
+    }
+    recordEdit(QStringLiteral("Remove %1")
+                   .arg(QString::fromStdString(
+                       layer->effects[static_cast<std::size_t>(index)].displayName)));
+    layer->effects.erase(layer->effects.begin() + index);
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
 void MainWindow::deselectAll() {
     if (timelinePanel_ != nullptr) {
         timelinePanel_->clearSelection();
@@ -1284,6 +1375,18 @@ void MainWindow::refreshCompositionTabs() {
         names << QStringLiteral("No composition");
     }
     timelineTabs_->setTabs(names);
+
+    // The viewer names the composition it is showing, and it was doing so exactly once,
+    // at construction. Open a project and it kept announcing the demo composition that
+    // had been replaced, which is the sort of thing you only notice in a screenshot.
+    if (viewerTabs_ != nullptr) {
+        const core::Composition* active = activeComposition();
+        viewerTabs_->setTabs({QStringLiteral("Composition: %1")
+                                  .arg(active != nullptr
+                                           ? QString::fromStdString(active->name)
+                                           : QStringLiteral("none")),
+                              QStringLiteral("Footage"), QStringLiteral("Layer")});
+    }
 }
 
 void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
@@ -1671,12 +1774,31 @@ void MainWindow::buildMenus() {
                        QString(), QStringLiteral("Time Remap"),
                        QStringLiteral("Retime with Optical Flow...")});
 
+    // Built from the registry, not written out by hand.
+    //
+    // The old menu listed eight categories that were all greyed out and did not
+    // correspond to anything: there was no way to apply an effect at all, so the effect
+    // rows in the timeline and the effect stack in the inspector were both drawing
+    // something you could not create. Generating it means the menu cannot claim an effect
+    // exists that does not, and a new effect appears here the moment it is registered.
     auto* effect = menuBar()->addMenu(QStringLiteral("Effect"));
-    addPending(effect, {QStringLiteral("Blur"), QStringLiteral("Color"),
-                        QStringLiteral("Distort"), QStringLiteral("Generate"),
-                        QStringLiteral("Glow"), QStringLiteral("Sharpen"),
-                        QStringLiteral("Stylize"), QStringLiteral("Time"), QString(),
-                        QStringLiteral("Remove All Effects")});
+    {
+        std::map<QString, QMenu*> categories;
+        for (const engine::EffectDef& def : engine::EffectRegistry::instance().all()) {
+            const QString category =
+                QString::fromStdString(engine::effectCategory(def.schema.id));
+            QMenu*& submenu = categories[category];
+            if (submenu == nullptr) {
+                submenu = effect->addMenu(category);
+            }
+            submenu->addAction(QString::fromStdString(def.schema.display_name), this,
+                               [this, id = def.schema.id] { applyEffect(id); });
+        }
+        effect->addSeparator();
+        effect->addAction(QStringLiteral("Remove All Effects"),
+                          QKeySequence(QStringLiteral("Ctrl+Shift+E")), this,
+                          &MainWindow::removeAllEffects);
+    }
 
     auto* anim = menuBar()->addMenu(QStringLiteral("Animation"));
     anim->addAction(QStringLiteral("Reveal Animated Properties"),
@@ -1779,11 +1901,11 @@ QWidget* MainWindow::buildBody() {
     activeComp_ = comp.id;
     const QString compName = QString::fromStdString(comp.name);
 
-    auto* viewer = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
-                                   QStringLiteral("Footage"), QStringLiteral("Layer")});
-    viewer->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
-    viewer->addPage(makePlaceholder(QStringLiteral("footage viewer")));
-    viewer->addPage(makePlaceholder(QStringLiteral("layer viewer")));
+    viewerTabs_ = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
+                                  QStringLiteral("Footage"), QStringLiteral("Layer")});
+    viewerTabs_->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
+    viewerTabs_->addPage(makePlaceholder(QStringLiteral("footage viewer")));
+    viewerTabs_->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
     // Transform and the effect stack share one inspector rather than letting two
     // panels fight for the same dock.
@@ -1794,7 +1916,7 @@ QWidget* MainWindow::buildBody() {
     inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
 
     bodySplit_->addWidget(project);
-    bodySplit_->addWidget(viewer);
+    bodySplit_->addWidget(viewerTabs_);
     bodySplit_->addWidget(inspector);
     bodySplit_->setStretchFactor(1, 1);
     bodySplit_->setSizes({metrics::kProjectPanelW, 900, metrics::kInspectorPanelW});
@@ -1915,6 +2037,15 @@ QWidget* MainWindow::buildBody() {
             &MainWindow::dropMediaIntoComposition);
     connect(timelinePanel, &TimelinePanel::layerContextMenuRequested, this,
             &MainWindow::showLayerContextMenu);
+    connect(timelinePanel, &TimelinePanel::effectContextMenuRequested, this,
+            [this](int index, const QPoint& at) {
+                QMenu menu(this);
+                menu.addAction(QStringLiteral("Remove Effect"), this,
+                               [this, index] { removeEffect(index); });
+                menu.addAction(QStringLiteral("Remove All Effects"), this,
+                               &MainWindow::removeAllEffects);
+                menu.exec(at);
+            });
 
     if (viewport_ != nullptr && gpu_ != nullptr) {
         viewport_->setDevice(gpu_);

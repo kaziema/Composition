@@ -131,6 +131,10 @@ signals:
     // A speaker switch was toggled, so the mix has to be rebuilt.
     void audioChanged();
 
+    // Right click landed on an effect's header row. The window owns removing it, because
+    // removing it is an undoable document edit and the view does not do those.
+    void effectContextMenuRequested(int effectIndex, const QPoint& globalPos);
+
     // The visible window moved, so the horizontal scrollbar has to follow.
     void viewRangeChanged(double start, double span);
 
@@ -305,6 +309,7 @@ signals:
     void layersChanged();
     void compositionResized(double seconds);
     void audioChanged();
+    void effectContextMenuRequested(int effectIndex, const QPoint& globalPos);
     void layerContextMenuRequested(const QPoint& globalPos);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 

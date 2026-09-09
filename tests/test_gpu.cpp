@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "ruby/engine/EffectRegistry.h"
 #include "ruby/gpu/GpuDevice.h"
 
 using namespace ruby::gpu;
@@ -102,6 +103,24 @@ int main() {
             }
         }
     }
+
+    // Every effect in the library has to compile on the real adapter.
+    //
+    // A shader that fails to compile gives a null pipeline, and the compositor skips a
+    // null pipeline, so the effect silently does nothing: it appears in the menu, it
+    // appears in the stack, its parameters scrub, and the picture never changes. That is
+    // the worst failure mode available to an effect and it produces no error anywhere.
+    for (const ruby::engine::EffectDef& def : ruby::engine::EffectRegistry::instance().all()) {
+        const RenderPipelineHandle pipeline = device->create_render_pipeline(
+            def.shader, "vs", "fs", TextureFormat::RGBA16Float, def.schema.id);
+        if (pipeline == nullptr) {
+            std::fprintf(stderr, "FAIL: effect '%s' does not compile\n",
+                         def.schema.id.c_str());
+            ++failures;
+        }
+    }
+    std::printf("effects compiled: %zu\n",
+                ruby::engine::EffectRegistry::instance().all().size());
 
     // Documented gap, asserted so it cannot be silently "fixed" into a no-op stub.
     check(device->create_compute_pipeline("noop", "main") == nullptr,

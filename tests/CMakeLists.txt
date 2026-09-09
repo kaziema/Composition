@@ -67,7 +67,8 @@ add_test(NAME test_effects COMMAND test_effects)
 
 # The GPU test brings up a real adapter, so it needs the Dawn runtime beside it.
 add_executable(test_gpu test_gpu.cpp)
-target_link_libraries(test_gpu PRIVATE ruby::gpu ruby_warnings)
+# engine brings gpu with it; naming both makes the linker warn about duplicates.
+target_link_libraries(test_gpu PRIVATE ruby::engine ruby_warnings)
 target_copy_webgpu_binaries(test_gpu)
 add_test(NAME test_gpu COMMAND test_gpu)
 
