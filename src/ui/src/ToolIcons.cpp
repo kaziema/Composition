@@ -102,6 +102,25 @@ void drawAnchor(QPainter& p) {
     p.drawLine(QPointF(11.8, 8.0), QPointF(14.2, 8.0));
 }
 
+// A media bin: a folder with two strips of content in it. Reads as "the place your stuff
+// lives" at 16px, which a plain folder does not: a folder alone says "files", and this
+// panel holds compositions and clips rather than a directory.
+void drawProject(QPainter& p) {
+    QPainterPath folder;
+    folder.moveTo(2.4, 4.2);
+    folder.lineTo(6.4, 4.2);
+    folder.lineTo(7.4, 5.6);
+    folder.lineTo(13.6, 5.6);
+    folder.lineTo(13.6, 12.8);
+    folder.lineTo(2.4, 12.8);
+    folder.closeSubpath();
+    p.drawPath(folder);
+
+    // Two rows inside, the way the panel itself lists items.
+    p.drawLine(QPointF(4.4, 8.2), QPointF(11.6, 8.2));
+    p.drawLine(QPointF(4.4, 10.4), QPointF(9.2, 10.4));
+}
+
 void drawEffects(QPainter& p) {
     // Stylised "fx": an f with a crossbar, then a small x.
     p.drawLine(QPointF(6.6, 4.6), QPointF(6.6, 12.4));
@@ -142,6 +161,7 @@ void paintToolIcon(QPainter& p, const QRect& box, ToolIcon icon, const QColor& c
         case ToolIcon::Mask:      drawMask(p);      break;
         case ToolIcon::Hand:      drawHand(p);      break;
         case ToolIcon::Anchor:    drawAnchor(p);    break;
+        case ToolIcon::Project:   drawProject(p);   break;
         case ToolIcon::Effects:   drawEffects(p);   break;
     }
 

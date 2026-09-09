@@ -16,6 +16,8 @@ class QSlider;
 #include "ruby/core/Document.h"
 #include "ruby/media/PeakCache.h"
 
+class QMimeData;
+
 namespace ruby::ui {
 
 // Identifies one keyframe. Positional for now, which is fine while keys cannot be
@@ -146,6 +148,9 @@ signals:
     // stack. The window owns creating the layer; the view only decides where.
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 
+    // An effect was dragged from the Effects panel onto a layer.
+    void effectDropped(core::LayerId layer, const std::string& effectId);
+
 protected:
     bool event(QEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override;
@@ -187,6 +192,8 @@ private:
     [[nodiscard]] int trackLeft() const noexcept;
     [[nodiscard]] int trackWidth() const noexcept;
     [[nodiscard]] QRect trackRect() const noexcept;
+    [[nodiscard]] core::LayerId layerAtDrop(const QPoint& pos) const;
+    [[nodiscard]] static bool carriesEffect(const QMimeData* mime);
     [[nodiscard]] double xForTime(double seconds) const noexcept;
     [[nodiscard]] double timeForX(int x) const noexcept;
     [[nodiscard]] double duration() const noexcept;
@@ -246,6 +253,10 @@ private:
     // be. AE treats it the same way.
     std::set<core::LayerId> revealAnimated_;
     const AudioPeaks* audioPeaks_ = nullptr;
+
+    // The layer an effect drag is currently over, or 0. Highlighted so the drop is not a
+    // guess.
+    core::LayerId dropEffectLayer_ = 0;
 
     // The visible time window. Span of 0 means "not set yet"; setComposition fits it.
     double viewStart_ = 0.0;
@@ -309,6 +320,7 @@ signals:
     void layersChanged();
     void compositionResized(double seconds);
     void audioChanged();
+    void effectDropped(core::LayerId layer, const std::string& effectId);
     void effectContextMenuRequested(int effectIndex, const QPoint& globalPos);
     void layerContextMenuRequested(const QPoint& globalPos);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);

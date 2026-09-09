@@ -20,6 +20,9 @@ public:
 
 signals:
     void toolSelected(int index);
+
+    // Which panel group the left dock should show. 0 is Project, 1 is Effects & Presets.
+    void panelSelected(int index);
     void snappingToggled(bool on);
     void motionBlurToggled(bool on);
 
@@ -43,10 +46,17 @@ private:
     void paintSwitch(QPainter& p, const Switch& sw) const;
 
     QList<QRect> toolRects_;
+    QList<QRect> panelRects_;
     QList<Switch> switches_;
     QRect dividerRect_;
+    QRect panelDividerRect_;
     int activeTool_ = 0;
     int hoverTool_ = -1;
+
+    // Which panel group is showing, and which one the cursor is over. Separate from the
+    // tool state on purpose: picking a panel must not deselect your tool.
+    int activePanel_ = 0;
+    int hoverPanel_ = -1;
 };
 
 }  // namespace ruby::ui

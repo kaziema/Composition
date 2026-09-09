@@ -16,11 +16,13 @@
 #include <QTimer>
 #include <QPainter>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QVBoxLayout>
 
 #include "ruby/ui/DemoProject.h"
 #include "ruby/ui/EditorToolBar.h"
+#include "ruby/ui/EffectsPanel.h"
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/beat/Detector.h"
 #include "ruby/media/AudioDecoder.h"
@@ -1886,8 +1888,7 @@ QWidget* MainWindow::buildBody() {
 
     auto* project = new PanelFrame({QStringLiteral("Project"),
                                     QStringLiteral("Pooled Media"),
-                                    QStringLiteral("Comp Map"),
-                                    QStringLiteral("Media")});
+                                    QStringLiteral("Comp Map")});
     projectPanel_ = new ProjectPanel;
     projectPanel_->setProject(&project_);
     pooledPanel_ = new PooledMediaPanel;
@@ -1895,7 +1896,36 @@ QWidget* MainWindow::buildBody() {
     project->addPage(projectPanel_);
     project->addPage(pooledPanel_);
     project->addPage(makePlaceholder(QStringLiteral("composition map")));
-    project->addPage(makePlaceholder(QStringLiteral("media browser")));
+
+    // Effects and presets, one panel with three tabs. Presets and colour correction have
+    // nothing behind them yet and say so rather than being blank.
+    auto* effects = new PanelFrame({QStringLiteral("Effects"), QStringLiteral("Presets"),
+                                    QStringLiteral("CC")});
+    effectsPanel_ = new EffectsPanel;
+    effects->addPage(effectsPanel_);
+    effects->addPage(makePlaceholder(QStringLiteral("presets")));
+    effects->addPage(makePlaceholder(QStringLiteral("colour correction presets")));
+
+    // A stack, not two docks. The toolbar's Project and fx buttons choose which of these
+    // the left column shows: they are the same reach for the same space, and having both
+    // visible at once would halve a column that is already the narrowest thing on screen.
+    leftDock_ = new QStackedWidget;
+    leftDock_->addWidget(project);
+    leftDock_->addWidget(effects);
+
+    connect(effectsPanel_, &EffectsPanel::effectActivated, this,
+            [this](const std::string& id) { applyEffect(id); });
+
+    // The panel's own tabs drive which list it shows, so the three tabs and the three
+    // pages cannot disagree about which one is up.
+    connect(effects, &PanelFrame::currentChanged, this, [this](int index) {
+        if (effectsPanel_ == nullptr) {
+            return;
+        }
+        effectsPanel_->setTab(index == 1   ? EffectsPanel::Tab::Presets
+                              : index == 2 ? EffectsPanel::Tab::ColorCorrection
+                                           : EffectsPanel::Tab::Effects);
+    });
 
     core::Composition& comp = project_.compositions().front();
     activeComp_ = comp.id;
@@ -1915,7 +1945,7 @@ QWidget* MainWindow::buildBody() {
     inspector->addPage(inspector_);
     inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
 
-    bodySplit_->addWidget(project);
+    bodySplit_->addWidget(leftDock_);
     bodySplit_->addWidget(viewerTabs_);
     bodySplit_->addWidget(inspector);
     bodySplit_->setStretchFactor(1, 1);
@@ -2022,6 +2052,13 @@ QWidget* MainWindow::buildBody() {
     connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,
             &TimelinePanel::setSnapping);
 
+    // The two panel buttons choose what the left column shows.
+    connect(toolBar_, &EditorToolBar::panelSelected, this, [this](int index) {
+        if (leftDock_ != nullptr) {
+            leftDock_->setCurrentIndex(index);
+        }
+    });
+
     connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
     connect(projectPanel_, &ProjectPanel::compositionActivated, this,
             &MainWindow::setActiveComposition);
@@ -2037,6 +2074,18 @@ QWidget* MainWindow::buildBody() {
             &MainWindow::dropMediaIntoComposition);
     connect(timelinePanel, &TimelinePanel::layerContextMenuRequested, this,
             &MainWindow::showLayerContextMenu);
+    // Dropped onto a specific layer, which is not necessarily the selected one, so it
+    // selects that layer first and then applies. Applying to whatever happened to be
+    // selected while the user is pointing at something else is the same mistake the
+    // right-click menu avoids.
+    connect(timelinePanel, &TimelinePanel::effectDropped, this,
+            [this](core::LayerId layer, const std::string& id) {
+                if (timelinePanel_ != nullptr) {
+                    timelinePanel_->selectLayer(layer);
+                }
+                applyEffect(id);
+            });
+
     connect(timelinePanel, &TimelinePanel::effectContextMenuRequested, this,
             [this](int index, const QPoint& at) {
                 QMenu menu(this);

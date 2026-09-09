@@ -23,6 +23,7 @@
 #include "ruby/ui/Format.h"
 #include "ruby/ui/ProjectPanel.h"
 #include "ruby/core/Transform.h"
+#include "ruby/ui/EffectsPanel.h"
 #include "ruby/ui/Theme.h"
 
 namespace ruby::ui {
@@ -990,6 +991,21 @@ void TimelineView::paintEvent(QPaintEvent*) {
         }
     }
 
+    // The layer an effect is hovering over, so you can see where it will land.
+    if (dropEffectLayer_ != 0) {
+        for (const Row& row : rows_) {
+            if (row.kind != RowKind::Layer || row.layer != dropEffectLayer_) {
+                continue;
+            }
+            const QRect band(0, row.top - scrollY_, width(), row.height);
+            p.fillRect(band, QColor(kExpressionText.red(), kExpressionText.green(),
+                                    kExpressionText.blue(), 46));
+            p.setPen(QPen(kExpressionText, 1.0));
+            p.drawRect(band.adjusted(0, 0, -1, -1));
+            break;
+        }
+    }
+
     paintHeader(p);
     paintRhythm(p);
     paintPlayhead(p);
@@ -1426,14 +1442,55 @@ bool carriesMedia(const QMimeData* data) {
 
 }  // namespace
 
+// Which layer a drop at this height would land on, or 0 for none. Effects go onto a
+// specific layer rather than into the composition, so an effect dropped on empty space is
+// refused rather than guessed at.
+core::LayerId TimelineView::layerAtDrop(const QPoint& pos) const {
+    if (comp_ == nullptr || pos.y() < metrics::kColumnHeaderH) {
+        return 0;
+    }
+    const int contentY = pos.y() + scrollY_;
+    for (const Row& row : rows_) {
+        if (row.kind == RowKind::Layer && contentY >= row.top &&
+            contentY < row.top + row.height) {
+            return row.layer;
+        }
+    }
+    return 0;
+}
+
+bool TimelineView::carriesEffect(const QMimeData* mime) {
+    return mime != nullptr && mime->hasFormat(EffectsPanel::effectMimeType());
+}
+
 void TimelineView::dragEnterEvent(QDragEnterEvent* e) {
-    if (comp_ != nullptr && carriesMedia(e->mimeData())) {
+    if (comp_ != nullptr &&
+        (carriesMedia(e->mimeData()) || carriesEffect(e->mimeData()))) {
         e->acceptProposedAction();
     }
 }
 
 void TimelineView::dragMoveEvent(QDragMoveEvent* e) {
-    if (comp_ == nullptr || !carriesMedia(e->mimeData())) {
+    if (comp_ == nullptr) {
+        return;
+    }
+
+    // An effect lands ON a layer, not at a time, so it highlights the row under the
+    // cursor and offers no drop position. Accepting only over a real layer means an
+    // effect dropped on empty space is refused rather than silently going nowhere.
+    if (carriesEffect(e->mimeData())) {
+        const core::LayerId over = layerAtDrop(e->position().toPoint());
+        dropEffectLayer_ = over;
+        dropRow_ = -1;
+        if (over != 0) {
+            e->acceptProposedAction();
+        } else {
+            e->ignore();
+        }
+        update();
+        return;
+    }
+    if (!carriesMedia(e->mimeData())) {
         return;
     }
     const QPoint pos = e->position().toPoint();
@@ -1460,12 +1517,29 @@ void TimelineView::dragMoveEvent(QDragMoveEvent* e) {
 }
 
 void TimelineView::dragLeaveEvent(QDragLeaveEvent*) {
+    dropEffectLayer_ = 0;
     dropRow_ = -1;
     update();
 }
 
 void TimelineView::dropEvent(QDropEvent* e) {
-    if (comp_ == nullptr || !carriesMedia(e->mimeData())) {
+    if (comp_ == nullptr) {
+        return;
+    }
+    if (carriesEffect(e->mimeData())) {
+        const core::LayerId onto = layerAtDrop(e->position().toPoint());
+        dropEffectLayer_ = 0;
+        update();
+        if (onto == 0) {
+            return;
+        }
+        const std::string id =
+            e->mimeData()->data(EffectsPanel::effectMimeType()).toStdString();
+        e->acceptProposedAction();
+        emit effectDropped(onto, id);
+        return;
+    }
+    if (!carriesMedia(e->mimeData())) {
         return;
     }
     const auto id = static_cast<core::MediaId>(
@@ -1695,6 +1769,7 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
             &TimelinePanel::layerContextMenuRequested);
     connect(view_, &TimelineView::effectContextMenuRequested, this,
             &TimelinePanel::effectContextMenuRequested);
+    connect(view_, &TimelineView::effectDropped, this, &TimelinePanel::effectDropped);
 
     // Scrollbar in whole milliseconds: QScrollBar is integer-only, and seconds would
     // make the smallest possible drag a one second jump.

@@ -22,9 +22,21 @@ namespace {
 constexpr ToolIcon kTools[] = {
     ToolIcon::Selection, ToolIcon::Pan,    ToolIcon::Text,
     ToolIcon::Shape,     ToolIcon::Pen,    ToolIcon::Mask,
-    ToolIcon::Hand,      ToolIcon::Anchor, ToolIcon::Effects,
+    ToolIcon::Hand,      ToolIcon::Anchor,
 };
 constexpr int kToolCount = static_cast<int>(std::size(kTools));
+
+// Panel switches. Not tools: they change what the left dock shows rather than what a
+// click in the viewer does, so they get their own run at the end with a divider before
+// them. Putting them in the tool list would mean selecting one deselects your tool, which
+// is exactly the confusion the divider exists to prevent.
+constexpr ToolIcon kPanels[] = {ToolIcon::Project, ToolIcon::Effects};
+constexpr int kPanelCount = static_cast<int>(std::size(kPanels));
+
+constexpr const char* kPanelTips[] = {
+    "Project — compositions, imported media and the pooled media library",
+    "Effects & Presets — search effects and presets, then drag one onto a layer",
+};
 
 // Name plus what it does. A bare name on an abstract glyph tells you what it is called,
 // not what it is for, and "Pan Behind" is the classic example of a name that explains
@@ -38,7 +50,6 @@ constexpr const char* kToolTips[] = {
     "Mask Tool — mask a layer to a shape",
     "Hand Tool — pan the viewer without moving anything",
     "Anchor Point Tool — move a layer's origin without moving the layer",
-    "Effects — browse and apply effects",
 };
 
 constexpr int kEdgePad = 8;
@@ -72,6 +83,18 @@ void EditorToolBar::relayout() {
     int x = kEdgePad;
     for (int i = 0; i < kToolCount; ++i) {
         toolRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
+        x += metrics::kToolButtonW + kToolGap;
+    }
+
+    // Divider, then the panel switches, then the divider that separates all of it from
+    // the switches on the right.
+    x += 7;
+    panelDividerRect_ = QRect(x, 6, 1, metrics::kToolBarH - 12);
+    x += 1 + 7;
+
+    panelRects_.clear();
+    for (int i = 0; i < kPanelCount; ++i) {
+        panelRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
         x += metrics::kToolButtonW + kToolGap;
     }
 
@@ -129,6 +152,19 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
         paintToolIcon(p, r, kTools[i], active ? QColor("#12212e") : kTextTertiary);
     }
 
+    p.fillRect(panelDividerRect_, kDivider);
+
+    for (int i = 0; i < panelRects_.size(); ++i) {
+        const QRect r = panelRects_.at(i);
+        const bool active = (i == activePanel_);
+        if (active) {
+            p.fillRect(r, kAccent);
+        } else if (i == hoverPanel_) {
+            p.fillRect(r, kMenuActive);
+        }
+        paintToolIcon(p, r, kPanels[i], active ? QColor("#12212e") : kTextTertiary);
+    }
+
     p.fillRect(dividerRect_, kDivider);
 
     for (const Switch& sw : switches_) {
@@ -150,6 +186,17 @@ void EditorToolBar::mousePressEvent(QMouseEvent* e) {
                 activeTool_ = i;
                 update();
                 emit toolSelected(i);
+            }
+            return;
+        }
+    }
+
+    for (int i = 0; i < panelRects_.size(); ++i) {
+        if (panelRects_.at(i).contains(pos)) {
+            if (i != activePanel_) {
+                activePanel_ = i;
+                update();
+                emit panelSelected(i);
             }
             return;
         }
@@ -184,6 +231,13 @@ bool EditorToolBar::event(QEvent* e) {
                 return true;
             }
         }
+        for (int i = 0; i < panelRects_.size() && i < kPanelCount; ++i) {
+            if (panelRects_.at(i).contains(pos)) {
+                QToolTip::showText(help->globalPos(),
+                                   QString::fromUtf8(kPanelTips[i]), this);
+                return true;
+            }
+        }
         for (const Switch& sw : switches_) {
             if (!sw.pillRect.contains(pos) && !sw.labelRect.contains(pos)) {
                 continue;
@@ -213,15 +267,24 @@ void EditorToolBar::mouseMoveEvent(QMouseEvent* e) {
             break;
         }
     }
-    if (hit != hoverTool_) {
+    int panelHit = -1;
+    for (int i = 0; i < panelRects_.size(); ++i) {
+        if (panelRects_.at(i).contains(pos)) {
+            panelHit = i;
+            break;
+        }
+    }
+    if (hit != hoverTool_ || panelHit != hoverPanel_) {
         hoverTool_ = hit;
+        hoverPanel_ = panelHit;
         update();
     }
 }
 
 void EditorToolBar::leaveEvent(QEvent*) {
-    if (hoverTool_ != -1) {
+    if (hoverTool_ != -1 || hoverPanel_ != -1) {
         hoverTool_ = -1;
+        hoverPanel_ = -1;
         update();
     }
 }

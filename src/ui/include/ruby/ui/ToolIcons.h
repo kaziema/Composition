@@ -23,6 +23,11 @@ enum class ToolIcon {
     Mask,
     Hand,
     Anchor,
+
+    // Panel switches rather than tools: they change what the left dock shows instead of
+    // changing what a click in the viewer means. Same bar because they are the same kind
+    // of reach, and separated from the tools by a divider so the difference is visible.
+    Project,
     Effects,
 };
 

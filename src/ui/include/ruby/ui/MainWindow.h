@@ -19,6 +19,7 @@ class QCloseEvent;
 
 class QLabel;
 class QSplitter;
+class QStackedWidget;
 
 namespace ruby::ui {
 
@@ -28,6 +29,7 @@ class Playback;
 class PanelFrame;
 class ProjectPanel;
 class PooledMediaPanel;
+class EffectsPanel;
 class StatusReadout;
 class TimelinePanel;
 class InspectorView;
@@ -189,6 +191,8 @@ private:
     Playback* playback_ = nullptr;
     ProjectPanel* projectPanel_ = nullptr;
     PooledMediaPanel* pooledPanel_ = nullptr;
+    EffectsPanel* effectsPanel_ = nullptr;
+    QStackedWidget* leftDock_ = nullptr;
     StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
