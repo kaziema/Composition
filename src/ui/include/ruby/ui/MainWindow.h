@@ -79,6 +79,11 @@ public slots:
     void pasteLayer();
     void deselectAll();
 
+    // Effect menu. Everything here acts on the selected layer.
+    void applyEffect(const std::string& effectId);
+    void removeAllEffects();
+    void removeEffect(int index);
+
     // Layer > New. Both land above the selected layer, as AE does, so a new layer arrives
     // where you were looking rather than at the top of a twenty layer stack.
     void newSolidLayer();

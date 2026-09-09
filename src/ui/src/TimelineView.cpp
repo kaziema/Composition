@@ -1508,6 +1508,22 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e) {
     // the same row.
     if (e->pos().y() >= metrics::kColumnHeaderH) {
         const int contentY = e->pos().y() + scrollY_;
+
+        // An effect's own header row gets its own menu. Right clicking an effect and
+        // being offered "delete layer" is the wrong answer to an obvious question.
+        for (const Row& row : rows_) {
+            if (row.kind == RowKind::EffectHeader && row.effect != kTransformGroup &&
+                contentY >= row.top && contentY < row.top + row.height) {
+                if (!selected_.has_value() || *selected_ != row.layer) {
+                    selectLayer(row.layer);
+                    emit selectionChanged(row.layer);
+                }
+                emit effectContextMenuRequested(row.effect, e->globalPos());
+                e->accept();
+                return;
+            }
+        }
+
         for (const Row& row : rows_) {
             if (row.kind != RowKind::Layer) {
                 continue;
@@ -1677,6 +1693,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
     connect(view_, &TimelineView::layerContextMenuRequested, this,
             &TimelinePanel::layerContextMenuRequested);
+    connect(view_, &TimelineView::effectContextMenuRequested, this,
+            &TimelinePanel::effectContextMenuRequested);
 
     // Scrollbar in whole milliseconds: QScrollBar is integer-only, and seconds would
     // make the smallest possible drag a one second jump.

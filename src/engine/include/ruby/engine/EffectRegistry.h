@@ -21,6 +21,13 @@ struct EffectDef {
     static constexpr int kMaxParams = 8;
 };
 
+// The submenu an effect belongs in, taken from the middle segment of its id:
+// "core.color.grade" is Color, "core.blur.directional" is Blur.
+//
+// Derived rather than stored. The id is already immortal and already says this, and a
+// separate category field would be a second source of truth that could disagree with it.
+[[nodiscard]] std::string effectCategory(std::string_view id);
+
 // The built-in effect library. Every effect ships with the app; that is Pillar 1, and it
 // is why this is a fixed table rather than a plugin loader.
 class EffectRegistry {
