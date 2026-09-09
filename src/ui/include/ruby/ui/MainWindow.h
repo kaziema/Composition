@@ -7,12 +7,14 @@ class QAction;
 class QCloseEvent;
 
 #include "ruby/core/Document.h"
+#include <map>
 #include <optional>
 
 #include "ruby/gpu/GpuDevice.h"
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/io/History.h"
 #include "ruby/io/MediaPool.h"
+#include "ruby/media/PeakCache.h"
 #include "ruby/media/AudioDecoder.h"
 
 class QLabel;
@@ -83,6 +85,11 @@ public slots:
     // Called whenever growToFit actually moved the duration. Growth silently rescales
     // every bar on the timeline, so it has to be announced or it reads as a glitch.
     void noteCompositionGrew();
+
+    // Decode a clip's audio once and write its peak pyramid to the cache. Returns the
+    // state so the caller can say what happened; Failed covers "no audio" as well as
+    // "unreadable", because neither produces a waveform.
+    media::ConformState conformAudio(const QString& path);
     void addMediaToComposition(core::MediaId id);
     void dropMediaIntoComposition(core::MediaId media, double seconds, int layerIndex);
     void setActiveComposition(core::CompId id);
@@ -125,8 +132,15 @@ private:
     io::MediaPool pool_;
     QString poolPath_;
 
+    // Peak caches live beside the pool, one file per clip, keyed on path+size+mtime.
+    QString peaksDir_;
+
     core::Project project_;  // TEMPORARY demo content
-    std::optional<media::AudioBuffer> audio_;
+    // Decoded audio, one entry per media item, keyed so two layers using the same clip
+    // decode it once. Node-based on purpose: the mixer holds raw pointers into these, and
+    // a vector reallocating under the audio thread would be a crash you could not
+    // reproduce. Entries are never erased during a session for the same reason.
+    std::map<core::MediaId, media::AudioBuffer> audio_;
     std::unique_ptr<audio::AudioOutput> audioOut_;
     QString rhythmNote_;
     EditorToolBar* toolBar_ = nullptr;

@@ -18,6 +18,10 @@ add_executable(test_mediapool test_mediapool.cpp)
 target_link_libraries(test_mediapool PRIVATE ruby::io ruby_warnings)
 add_test(NAME test_mediapool COMMAND test_mediapool)
 
+add_executable(test_peakcache test_peakcache.cpp)
+target_link_libraries(test_peakcache PRIVATE ruby::media ruby_warnings)
+add_test(NAME test_peakcache COMMAND test_peakcache)
+
 add_executable(test_history test_history.cpp)
 target_link_libraries(test_history PRIVATE ruby::io ruby_warnings)
 add_test(NAME test_history COMMAND test_history)

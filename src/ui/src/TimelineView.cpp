@@ -656,16 +656,28 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
         const double mid = bar.center().y();
         const double half = bar.height() * 0.5 - 1.0;
 
+        // Buckets are indexed from the START OF THE SOURCE, not from the start of the
+        // composition. Indexing straight off composition time only looked right while
+        // every audio layer began at zero: a clip dropped at 8.6s drew the waveform from
+        // 8.6s into its own audio, so the picture belonged to a different part of the clip
+        // than the sound.
+        const double layerIn = to_seconds(layer.inPoint, ctx);
+
         p.setPen(QPen(colors.topEdge.lighter(135), 1.0));
         const int fromX = static_cast<int>(std::floor(bar.left()));
         const int toX = static_cast<int>(std::ceil(bar.right()));
         for (int x = std::max(fromX, trackLeft()); x <= toX && x < width(); ++x) {
             // One column of pixels covers a span of buckets; take the extremes across it
             // so a transient never disappears just because the view is zoomed out.
-            const double t0 = timeForX(x);
-            const double t1 = timeForX(x + 1);
-            const auto b0 = static_cast<std::size_t>(t0 * wave.bucketsPerSecond);
-            const auto b1 = static_cast<std::size_t>(t1 * wave.bucketsPerSecond);
+            const double t0 = timeForX(x) - layerIn;
+            const double t1 = timeForX(x + 1) - layerIn;
+            if (t1 < 0.0) {
+                continue;  // pixel is before this layer starts
+            }
+            const auto b0 =
+                static_cast<std::size_t>(std::max(0.0, t0) * wave.bucketsPerSecond);
+            const auto b1 =
+                static_cast<std::size_t>(std::max(0.0, t1) * wave.bucketsPerSecond);
             if (b0 >= wave.low.size()) {
                 break;
             }

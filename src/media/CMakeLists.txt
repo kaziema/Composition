@@ -17,6 +17,7 @@ add_library(ruby_media STATIC
     src/VideoDecoder.cpp
     src/AudioDecoder.cpp
     src/Probe.cpp
+    src/PeakCache.cpp
 )
 add_library(ruby::media ALIAS ruby_media)
 

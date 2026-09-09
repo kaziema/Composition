@@ -24,6 +24,7 @@
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/beat/Detector.h"
 #include "ruby/media/AudioDecoder.h"
+#include "ruby/media/PeakCache.h"
 #include "ruby/media/Probe.h"
 #include "ruby/ui/Format.h"
 #include "ruby/ui/GpuViewport.h"
@@ -151,6 +152,9 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
     poolPath_ = dataDir + QStringLiteral("/media-pool.json");
     pool_.load(poolPath_.toStdString());
 
+    peaksDir_ = dataDir + QStringLiteral("/peaks");
+    QDir().mkpath(peaksDir_);
+
     // TEMPORARY: a demo composition so the timeline has something to draw.
     // Goes away once the app can open a project file.
     project_ = demo::sampleProject();
@@ -222,6 +226,7 @@ void MainWindow::importMedia() {
     recordEdit(QStringLiteral("Import Media"));
 
     int added = 0;
+    int conformed = 0;
     bool pooledNew = false;
     QStringList rejected;
     for (const QString& path : paths) {
@@ -251,6 +256,14 @@ void MainWindow::importMedia() {
         if (pool_.add(pooled)) {
             pooledNew = true;
         }
+
+        // Only files that actually carry audio. Asking a silent clip to conform means
+        // decoding the whole thing to discover what probe() already told us.
+        if (info->hasAudio) {
+            if (conformAudio(path) == media::ConformState::Ready) {
+                ++conformed;
+            }
+        }
         ++added;
     }
 
@@ -258,6 +271,9 @@ void MainWindow::importMedia() {
     QString message = QStringLiteral("Imported %1 file%2")
                           .arg(added)
                           .arg(added == 1 ? QString() : QStringLiteral("s"));
+    if (conformed > 0) {
+        message += QStringLiteral("   ·   %1 with audio conformed").arg(conformed);
+    }
     if (!rejected.isEmpty()) {
         message += QStringLiteral("   ·   could not read: %1").arg(rejected.join(", "));
     }
@@ -524,7 +540,13 @@ void MainWindow::newProject() {
     history_.clear();
     projectPath_.clear();
     activeComp_ = 0;
-    audio_.reset();
+    // Silence the mixer BEFORE dropping the buffers it points into. The audio thread is
+    // running right now and does not know the project is going away.
+    if (audioOut_ != nullptr) {
+        audioOut_->stop();
+        audioOut_->setSources({});
+    }
+    audio_.clear();
     rhythmNote_.clear();
 
     // A project with no composition is a legal but useless state, so make one rather
@@ -559,7 +581,11 @@ void MainWindow::openProject() {
     history_.clear();
     projectPath_ = path;
     activeComp_ = 0;
-    audio_.reset();
+    if (audioOut_ != nullptr) {
+        audioOut_->stop();
+        audioOut_->setSources({});
+    }
+    audio_.clear();
     rhythmNote_.clear();
 
     core::Composition* active = activeComposition();
@@ -959,6 +985,39 @@ void MainWindow::deselectAll() {
     }
 }
 
+// Conform: decode once, summarise into a peak pyramid, write it to the cache.
+//
+// This is the same move AE makes with its .cfa files, Olive with its PCM conform, and
+// Kdenlive with its levels file. All three arrived at it for the same reason: decoding on
+// demand cannot keep up with scrubbing a timeline. Doing it at import means paying once,
+// at the moment the user already expects the app to be busy with this file.
+media::ConformState MainWindow::conformAudio(const QString& path) {
+    const std::string local = path.toStdString();
+    const std::string cache = media::peakCachePath(peaksDir_.toStdString(), local);
+
+    // A hit means this exact file, at this exact size and modification time, has already
+    // been summarised. Re-export the clip under the same name and the key changes, so the
+    // stale peaks are never served.
+    media::PeakPyramid pyramid;
+    if (pyramid.load(cache)) {
+        return media::ConformState::Ready;
+    }
+
+    const auto buffer = media::AudioDecoder::decode(local);
+    if (!buffer.has_value() || !buffer->valid()) {
+        return media::ConformState::Failed;  // no audio track, or unreadable
+    }
+
+    pyramid = media::PeakPyramid::build(*buffer);
+    if (pyramid.empty()) {
+        return media::ConformState::Failed;
+    }
+    // A cache that fails to write is not a failure to conform: the peaks are in hand and
+    // usable, we just have to do this again next launch.
+    pyramid.save(cache);
+    return media::ConformState::Ready;
+}
+
 void MainWindow::setActiveComposition(core::CompId id) {
     core::Composition* comp = project_.find(id);
     if (comp == nullptr) {
@@ -968,12 +1027,10 @@ void MainWindow::setActiveComposition(core::CompId id) {
 
     // Everything that shows a composition has to be told, or a panel keeps rendering
     // the old one and looks broken in a way that is very hard to diagnose.
-    audio_.reset();
+    // The decode cache is kept: it is keyed by media, not by composition, and the other
+    // comp's clips are very likely the same clips. loadAudio republishes the mix.
     rhythmNote_.clear();
     loadAudio();
-    if (audioOut_ != nullptr) {
-        audioOut_->setBuffer(audio_.has_value() ? &*audio_ : nullptr);
-    }
 
     if (timelinePanel_ != nullptr) {
         timelinePanel_->setComposition(comp);
@@ -1053,11 +1110,9 @@ void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
         }
     }
 
-    if (item->hasAudio && !item->isVideo()) {
+    // Any clip that carries audio, video included. loadAudio owns publishing the mix.
+    if (item->hasAudio) {
         loadAudio();
-        if (audioOut_ != nullptr) {
-            audioOut_->setBuffer(audio_.has_value() ? &*audio_ : nullptr);
-        }
     }
     if (viewport_ != nullptr) {
         viewport_->update();
@@ -1101,12 +1156,8 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
         item->duration > 0.0 ? item->duration : comp.duration);
     const bool grew = comp.growToFit();
 
-    // A newly added track becomes the one we analyse and play.
-    if (kind == core::LayerKind::Audio) {
+    if (item->hasAudio) {
         loadAudio();
-        if (audio_.has_value() && audioOut_ != nullptr) {
-            audioOut_->setBuffer(&*audio_);
-        }
     }
 
     if (timelinePanel_ != nullptr) {
@@ -1126,40 +1177,85 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
     }
 }
 
+// Rebuilds the mix from the active composition.
+//
+// Every layer whose media carries audio is a source, video included. The old version only
+// looked at LayerKind::Audio, which meant an imported .mov was silent: the normal case for
+// this app, and silent for no better reason than a filter on the wrong field. Whether a
+// layer makes sound is a fact about its media, not about how the layer is classified.
 void MainWindow::loadAudio() {
     core::Composition* active = activeComposition();
     if (active == nullptr) {
         return;
     }
     core::Composition& comp = *active;
+    const core::TimeContext ctx = comp.timeContext();
 
-    // The audio layer's media is the track. Decoded once, kept for playback, and
-    // reduced to peaks for drawing.
+    std::vector<audio::AudioSource> sources;
+    const media::AudioBuffer* rhythmSource = nullptr;
+
     for (core::Layer& layer : comp.layers) {
-        if (layer.kind != core::LayerKind::Audio) {
+        if (!layer.media.has_value()) {
+            continue;
+        }
+        const core::MediaItem* item = project_.findMedia(*layer.media);
+        if (item == nullptr || !item->hasAudio) {
             continue;
         }
         const std::string path = project_.pathFor(layer);
         if (path.empty()) {
             continue;
         }
-        auto decoded = media::AudioDecoder::decode(path);
-        if (!decoded.has_value()) {
+
+        // Decode once per media item, not once per layer. Two layers cutting the same
+        // clip share one buffer.
+        auto found = audio_.find(*layer.media);
+        if (found == audio_.end()) {
+            auto decoded = media::AudioDecoder::decode(path);
+            if (!decoded.has_value() || !decoded->valid()) {
+                continue;
+            }
+            found = audio_.emplace(*layer.media, std::move(*decoded)).first;
+        }
+        const media::AudioBuffer& buffer = found->second;
+
+        if (layer.waveform.empty()) {
+            const media::WaveformPeaks peaks =
+                media::AudioDecoder::peaks(buffer, media::kBasePeaksPerSecond);
+            layer.waveform.bucketsPerSecond = peaks.bucketsPerSecond;
+            layer.waveform.low = peaks.low;
+            layer.waveform.high = peaks.high;
+        }
+
+        if (rhythmSource == nullptr && layer.kind == core::LayerKind::Audio) {
+            rhythmSource = &buffer;
+        }
+
+        // A layer switched off in the timeline makes no sound. It keeps its waveform, so
+        // you can still see what you muted.
+        if (!layer.enabled) {
             continue;
         }
-        const media::WaveformPeaks peaks =
-            media::AudioDecoder::peaks(*decoded, 200.0);
-        layer.waveform.bucketsPerSecond = peaks.bucketsPerSecond;
-        layer.waveform.low = peaks.low;
-        layer.waveform.high = peaks.high;
-        audio_ = std::move(*decoded);
 
-        // Rhythm analysis. Absent in the public build, where this returns nothing and
-        // everything downstream carries on with an empty map.
+        audio::AudioSource source;
+        source.buffer = &buffer;
+        source.startSeconds = to_seconds(layer.inPoint, ctx);
+        source.endSeconds = to_seconds(layer.outPoint, ctx);
+        source.sourceOffset = 0.0;
+        sources.push_back(source);
+    }
+
+    if (audioOut_ != nullptr) {
+        audioOut_->setSources(sources);
+    }
+
+    // Rhythm analysis still runs on a dedicated audio layer rather than the mix. Cutting
+    // to the music means cutting to the music, not to the music plus whatever dialogue
+    // happens to be over it.
+    if (rhythmSource != nullptr) {
         auto detector = beat::createDetector();
         if (detector != nullptr && detector->available()) {
-            const beat::Result vocal =
-                detector->analyze(*audio_, beat::Lane::Vocal);
+            const beat::Result vocal = detector->analyze(*rhythmSource, beat::Lane::Vocal);
             if (!vocal.empty()) {
                 comp.rhythm.setLane(core::MarkerLane::Vocal, vocal.markers);
             }
@@ -1168,7 +1264,6 @@ void MainWindow::loadAudio() {
         } else {
             rhythmNote_ = QStringLiteral("no rhythm analysis in this build");
         }
-        return;
     }
 }
 
@@ -1455,10 +1550,13 @@ QWidget* MainWindow::buildBody() {
     // inspector and the readouts. One path in, everything follows.
     playback_ = new Playback(this);
     playback_->configure(comp.duration, comp.fps);
-    if (audio_.has_value()) {
+    {
+        // The device is opened unconditionally now. It used to wait until something had
+        // decoded, which meant importing audio into a session that started silent left
+        // you with no device at all.
         audioOut_ = audio::AudioOutput::create();
         if (audioOut_ != nullptr) {
-            audioOut_->setBuffer(&*audio_);
+            loadAudio();
             playback_->setAudio(audioOut_.get());
         }
     }

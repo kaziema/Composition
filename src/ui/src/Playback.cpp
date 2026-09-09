@@ -68,23 +68,27 @@ void Playback::tick() {
     // app whose whole premise is landing cuts on the beat.
     const bool audioDriving = audio_ != nullptr && audio_->playing();
     if (audioDriving) {
-        transport_.setTime(audio_->position());
+        // The device no longer stops itself at the end of a clip, because with several
+        // layers there is silence between them and halting at the first gap would end
+        // playback in the middle of a composition. So the end of the COMPOSITION is
+        // detected here instead, and the device is re-cued to match the transport.
+        const double position = audio_->position();
+        if (transport_.duration() > 0.0 && position >= transport_.duration()) {
+            if (transport_.looping()) {
+                transport_.setTime(0.0);
+                audio_->play(0.0);
+            } else {
+                transport_.stop();
+                audio_->stop();
+            }
+        } else {
+            transport_.setTime(position);
+        }
     } else {
         const double elapsed = static_cast<double>(nowNs - lastElapsedNs_) / 1e9;
-        transport_.advance(elapsed);
+        transport_.advance(elapsed);  // wraps by remainder on its own
     }
     lastElapsedNs_ = nowNs;
-
-    // The audio device stops itself at the end of the track; the transport owns what
-    // happens next, so ask it to wrap or halt and re-cue the device to match.
-    if (audio_ != nullptr && transport_.playing() && !audio_->playing()) {
-        if (transport_.looping()) {
-            transport_.setTime(0.0);
-            audio_->play(0.0);
-        } else {
-            transport_.stop();
-        }
-    }
 
     if (transport_.frame() == before && transport_.playing()) {
         return;  // still inside the same frame; nothing to redraw
