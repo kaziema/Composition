@@ -436,7 +436,9 @@ void MainWindow::nudgeLayerEdge(bool inPoint, bool trim) {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
-    rebuildMix();
+    // Nudging and trimming never marked the project dirty, so the title never showed a
+    // change and closing would not have warned about unsaved work.
+    markDirty();
     if (grew) {
         noteCompositionGrew();
     }
@@ -484,7 +486,6 @@ void MainWindow::splitLayerAtPlayhead() {
         viewport_->update();
     }
     // Two layers now where there was one, each with new in and out points.
-    rebuildMix();
     markDirty();
 }
 
@@ -676,6 +677,18 @@ void MainWindow::markDirty() {
         dirty_ = true;
         updateTitle();
     }
+
+    // Republishing the mix hangs off here rather than being remembered at each edit site.
+    //
+    // Nine places were calling rebuildMix by hand and I still could not account for a
+    // report of audio outliving a deleted clip. When you cannot enumerate the writers,
+    // the answer is to stop enumerating them: every edit already marks the document
+    // dirty, so every edit now also refreshes what is audible. It is cheap, it runs once
+    // per edit rather than per frame, and it cannot be forgotten by the next feature.
+    //
+    // Note this is outside the `if`: the dirty flag only flips once, but the mix has to
+    // follow every edit after that one too.
+    rebuildMix();
 }
 
 void MainWindow::markClean() {
@@ -774,7 +787,6 @@ void MainWindow::compositionSettings() {
     refreshCompositionTabs();
     projectPanel_->refresh();
     // A frame rate change retimes any layer whose points are stored in beats or frames.
-    rebuildMix();
     updateStatus();
     markDirty();
 
@@ -852,7 +864,6 @@ void MainWindow::removeSelectedLayer(const QString& undoLabel) {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
-    rebuildMix();
     updateStatus();
     markDirty();
 }
@@ -913,7 +924,6 @@ void MainWindow::pasteLayer() {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
-    rebuildMix();
     updateStatus();
     markDirty();
     statusBar()->showMessage(
@@ -956,7 +966,6 @@ void MainWindow::duplicateLayer() {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
-    rebuildMix();
     updateStatus();
     markDirty();
 }
@@ -1659,7 +1668,6 @@ QWidget* MainWindow::buildBody() {
     // Flipping a speaker changes what is audible, so the mix is republished. It is an
     // undoable edit, which is why the view brackets it with editBegan/editEnded.
     connect(timelinePanel, &TimelinePanel::audioChanged, this, [this] {
-        rebuildMix();
         markDirty();
     });
 
