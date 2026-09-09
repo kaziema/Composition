@@ -491,14 +491,16 @@ void MainWindow::splitLayerAtPlayhead() {
     markDirty();
 }
 
+// U: reveal only the animated properties. Not the same as the twirl arrow, which shows
+// everything. This used to just toggle `expanded`, which made the two identical and meant
+// the twirl could never show an unanimated property.
 void MainWindow::toggleSelectedLayerProperties() {
-    core::Composition* comp = activeComposition();
     core::Layer* layer = selectedLayer();
-    if (comp == nullptr || layer == nullptr) {
+    if (layer == nullptr || timelinePanel_ == nullptr) {
         return;
     }
-    layer->expanded = !layer->expanded;
-    timelinePanel_->setComposition(comp);
+    timelinePanel_->revealAnimated(layer->id);
+    markDirty();
 }
 
 // J and K walk the keyframes of the selected layer, including the ones on its effects.

@@ -89,3 +89,8 @@ add_executable(test_menus test_menus.cpp)
 target_link_libraries(test_menus PRIVATE ruby::ui ruby_warnings)
 add_test(NAME test_menus COMMAND test_menus)
 set_tests_properties(test_menus PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(test_timelinerows test_timelinerows.cpp)
+target_link_libraries(test_timelinerows PRIVATE ruby::ui ruby_warnings)
+add_test(NAME test_timelinerows COMMAND test_timelinerows)
+set_tests_properties(test_timelinerows PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

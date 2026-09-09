@@ -123,6 +123,43 @@ void TimelineView::selectLayer(core::LayerId layer) {
     update();
 }
 
+void TimelineView::revealAnimated(core::LayerId layer) {
+    if (comp_ == nullptr) {
+        return;
+    }
+    core::Layer* target = comp_->find(layer);
+    if (target == nullptr) {
+        return;
+    }
+    // Already showing only animated properties: close it. Otherwise open it in that mode,
+    // whether it was closed or showing everything.
+    if (target->expanded && revealAnimated_.count(layer) != 0) {
+        target->expanded = false;
+        revealAnimated_.erase(layer);
+    } else {
+        target->expanded = true;
+        revealAnimated_.insert(layer);
+    }
+    rebuildRows();
+    update();
+}
+
+void TimelineView::toggleExpanded(core::LayerId layer) {
+    if (comp_ == nullptr) {
+        return;
+    }
+    core::Layer* target = comp_->find(layer);
+    if (target == nullptr) {
+        return;
+    }
+    target->expanded = !target->expanded;
+    // The arrow always means "show me everything", so opening this way clears the filter
+    // U may have left behind.
+    revealAnimated_.erase(layer);
+    rebuildRows();
+    update();
+}
+
 void TimelineView::setAudioPeaks(const AudioPeaks* peaks) {
     audioPeaks_ = peaks;
     update();
@@ -342,9 +379,27 @@ void TimelineView::rebuildRows() {
             y += metrics::kPropertyRowH;
         };
 
-        // Only animated properties get a sub-row, matching AE's twirl-down.
+        // A Transform group with ALL of its properties, not just the animated ones.
+        //
+        // This was the bug: the twirl showed only properties that already had keyframes,
+        // so opening a fresh layer showed nothing at all and there was no way to reach
+        // Position or Scale from the timeline. The comment here used to claim this
+        // matched AE and it did not. AE's twirl shows the Transform group whatever state
+        // it is in; showing only the animated ones is what U does, and U is a separate
+        // thing that now lives in `revealAnimated_`.
+        const bool animatedOnly = revealAnimated_.count(layer.id) != 0;
+
+        Row transform;
+        transform.kind = RowKind::EffectHeader;
+        transform.layer = layer.id;
+        transform.effect = kTransformGroup;
+        transform.top = y;
+        transform.height = metrics::kPropertyRowH;
+        rows_.push_back(transform);
+        y += metrics::kPropertyRowH;
+
         for (std::size_t i = 0; i < layer.properties.size(); ++i) {
-            if (layer.properties[i].animated()) {
+            if (!animatedOnly || layer.properties[i].animated()) {
                 pushProperty(-1, i);
             }
         }
@@ -365,7 +420,7 @@ void TimelineView::rebuildRows() {
             y += metrics::kPropertyRowH;
 
             for (std::size_t i = 0; i < effect.params.size(); ++i) {
-                if (effect.params[i].animated()) {
+                if (!animatedOnly || effect.params[i].animated()) {
                     pushProperty(static_cast<int>(e), i);
                 }
             }
@@ -379,13 +434,25 @@ void TimelineView::rebuildRows() {
 void TimelineView::paintEffectHeader(QPainter& p, const Row& row,
                                      const Layer& layer) const {
     p.fillRect(QRect(0, row.top, width(), row.height), kRowProperty);
+    const int cy = row.top + row.height / 2;
+
+    // The Transform group reuses this row kind with a sentinel index rather than getting
+    // a kind of its own: it looks the same, sits in the same place, and the only thing
+    // that differs is the label and the marker colour.
+    if (row.effect == kTransformGroup) {
+        p.fillRect(QRect(kPropIndent - 26, cy - 4, 8, 8), kTextDim);
+        p.setFont(font());
+        p.setPen(kTextBody);
+        p.drawText(QRect(kPropIndent - 14, row.top, 200, row.height),
+                   Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Transform"));
+        return;
+    }
 
     const auto e = static_cast<std::size_t>(row.effect);
     if (e >= layer.effects.size()) {
         return;
     }
     const core::EffectInstance& effect = layer.effects[e];
-    const int cy = row.top + row.height / 2;
 
     // Same green fx marker the inspector uses, so the two panels agree about what an
     // effect looks like.
@@ -1251,9 +1318,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // The twirl triangle expands in place. Never navigates anywhere.
         const int twirlX = kAvW + kIndexW;
         if (pos.x() >= twirlX && pos.x() < twirlX + 13) {
-            layer->expanded = !layer->expanded;
-            rebuildRows();
-            update();
+            toggleExpanded(layer->id);
             return;
         }
 
@@ -1692,6 +1757,9 @@ std::optional<core::LayerId> TimelinePanel::selectedLayer() const {
 void TimelinePanel::selectLayer(core::LayerId layer) { view_->selectLayer(layer); }
 
 void TimelinePanel::clearSelection() { view_->clearSelection(); }
+
+void TimelinePanel::revealAnimated(core::LayerId layer) { view_->revealAnimated(layer); }
+void TimelinePanel::toggleExpanded(core::LayerId layer) { view_->toggleExpanded(layer); }
 
 void TimelinePanel::setAudioPeaks(const TimelineView::AudioPeaks* peaks) {
     view_->setAudioPeaks(peaks);

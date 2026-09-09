@@ -11,6 +11,7 @@ class QScrollBar;
 class QSlider;
 
 #include <map>
+#include <set>
 
 #include "ruby/core/Document.h"
 #include "ruby/media/PeakCache.h"
@@ -74,6 +75,14 @@ public:
     // condition under which the speaker switch should be there at all.
     using AudioPeaks = std::map<core::MediaId, media::PeakPyramid>;
     void setAudioPeaks(const AudioPeaks* peaks);
+
+    // U: twirl the layer open showing only what is animated. Distinct from the twirl
+    // arrow, which shows everything. Pressing it on a layer already in this state closes
+    // it again, the way AE's U does.
+    void revealAnimated(core::LayerId layer);
+
+    // Clicking the twirl arrow. Always shows everything.
+    void toggleExpanded(core::LayerId layer);
 
 
     // --- Horizontal zoom -----------------------------------------------------
@@ -156,6 +165,11 @@ private:
         Property,
     };
 
+    // An EffectHeader row with this index is the layer's Transform group rather than one
+    // of its effects. A sentinel rather than a new RowKind because everything about the
+    // row is the same except its label.
+    static constexpr int kTransformGroup = -1;
+
     struct Row {
         RowKind kind = RowKind::Layer;
         core::LayerId layer = 0;
@@ -222,6 +236,11 @@ private:
     std::vector<Row> rows_;
 
     bool snapping_ = true;
+
+    // Layers where U was pressed: twirled open, but showing only properties that are
+    // animated. View state, not document state, so it is not saved and does not need to
+    // be. AE treats it the same way.
+    std::set<core::LayerId> revealAnimated_;
     const AudioPeaks* audioPeaks_ = nullptr;
 
     // The visible time window. Span of 0 means "not set yet"; setComposition fits it.
@@ -274,6 +293,8 @@ public:
     [[nodiscard]] std::optional<core::LayerId> selectedLayer() const;
     void selectLayer(core::LayerId layer);
     void clearSelection();
+    void revealAnimated(core::LayerId layer);
+    void toggleExpanded(core::LayerId layer);
     void setAudioPeaks(const TimelineView::AudioPeaks* peaks);
 
 signals:
