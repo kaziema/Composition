@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 
 #include "ruby/core/Document.h"
 
@@ -26,8 +27,8 @@ struct Transform2D {
     [[nodiscard]] static Transform2D scale(double x, double y) noexcept;
     [[nodiscard]] static Transform2D rotate(double degrees) noexcept;
 
-    // this applied AFTER inner. Reads left to right the way the parent chain does:
-    // parent.then(child) puts the child inside the parent's space.
+    // `a.then(b)` applies a first, then b: it maps p to b(a(p)). Reads left to right in
+    // the order things actually happen, which is the order the parent chain walks.
     [[nodiscard]] Transform2D then(const Transform2D& outer) const noexcept;
 
     [[nodiscard]] double applyX(double x, double y) const noexcept;
@@ -42,25 +43,37 @@ struct Transform2D {
 // which is a hung window with no error and nothing in the log.
 inline constexpr int kMaxParentDepth = 32;
 
+// How big a layer is, in composition pixels, before scale.
+//
+// Core cannot work this out: a footage layer's size comes from its decoded frames and a
+// text layer's from a rasteriser, both of which live outside this module. So the caller
+// supplies it, and every layer in a parent chain gets asked about itself rather than
+// inheriting its child's dimensions.
+struct LayerSize {
+    double width = 0.0;
+    double height = 0.0;
+};
+using SizeOf = std::function<LayerSize(const Layer&)>;
+
 // A layer's own transform, in composition units (a fraction of the frame for position,
 // percent for scale, degrees for rotation), before any parent is applied.
-//
-// `frameWidth`/`frameHeight` are the layer's own size in composition pixels, needed
-// because the anchor point is expressed relative to the layer, not to the frame.
 [[nodiscard]] Transform2D layerTransform(const Layer& layer, double seconds,
                                          const TimeContext& ctx, double compWidth,
-                                         double compHeight, double layerWidth,
-                                         double layerHeight);
+                                         double compHeight, const LayerSize& size);
 
 // The same, with every parent applied up the chain.
 //
 // Stops at kMaxParentDepth and stops on a repeat, so a cycle costs a bounded walk and the
 // layer renders unparented rather than the app locking up. Silently: a broken parent link
 // is a document problem, and the render path is the wrong place to complain about it.
+//
+// Each parent's anchor is computed against ITS OWN size, which is what `sizeOf` is for.
+// Reusing the child's dimensions all the way up put every parent's pivot in the wrong
+// place, and only visibly so once a parent had a non-centred anchor.
 [[nodiscard]] Transform2D resolvedTransform(const Composition& comp, const Layer& layer,
                                             double seconds, const TimeContext& ctx,
                                             double compWidth, double compHeight,
-                                            double layerWidth, double layerHeight);
+                                            const SizeOf& sizeOf);
 
 // Whether following this layer's parents leads back to itself, or runs deeper than the
 // cap. The UI wants this to refuse a bad parenting BEFORE it is stored, which is the only

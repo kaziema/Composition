@@ -53,6 +53,10 @@ void set1(Layer& layer, std::string_view key, double v) {
     }
 }
 
+// Every layer is 100x100 unless a test says otherwise. Enough to exercise the anchor
+// without making the arithmetic in these tests hard to check by hand.
+const SizeOf sizes = [](const Layer&) { return LayerSize{100.0, 100.0}; };
+
 void composition_multiplies_in_the_right_order() {
     // Scale then translate is not translate then scale, and getting it backwards is the
     // classic way a layer ends up ten times further from the origin than intended.
@@ -91,7 +95,7 @@ void the_anchor_point_is_the_pivot() {
     set1(*layer, "rotation", 90.0);
 
     const TimeContext ctx = comp.timeContext();
-    const Transform2D centred = layerTransform(*layer, 0.0, ctx, 1000, 1000, 200, 100);
+    const Transform2D centred = layerTransform(*layer, 0.0, ctx, 1000, 1000, LayerSize{200, 100});
 
     // With a centred anchor, the layer's own origin lands exactly on Position.
     checkNear(centred.applyX(0.0, 0.0), 500.0, "origin lands on position in x");
@@ -99,7 +103,7 @@ void the_anchor_point_is_the_pivot() {
 
     // Move the anchor off centre and the same point swings away from Position.
     set(*layer, "anchor_point", 50.0, 0.0);
-    const Transform2D offset = layerTransform(*layer, 0.0, ctx, 1000, 1000, 200, 100);
+    const Transform2D offset = layerTransform(*layer, 0.0, ctx, 1000, 1000, LayerSize{200, 100});
     const double dx = offset.applyX(0.0, 0.0) - 500.0;
     const double dy = offset.applyY(0.0, 0.0) - 500.0;
     check(std::fabs(dx) > 1.0 || std::fabs(dy) > 1.0,
@@ -122,11 +126,11 @@ void a_parent_moves_its_child() {
     const Layer& child = *comp.find(childId);
 
     const Transform2D alone =
-        resolvedTransform(comp, child, 0.0, ctx, 1000, 1000, 100, 100);
+        resolvedTransform(comp, child, 0.0, ctx, 1000, 1000, sizes);
 
     comp.find(childId)->parent = parentId;
     const Transform2D parented =
-        resolvedTransform(comp, *comp.find(childId), 0.0, ctx, 1000, 1000, 100, 100);
+        resolvedTransform(comp, *comp.find(childId), 0.0, ctx, 1000, 1000, sizes);
 
     check(std::fabs(parented.applyX(0.0, 0.0) - alone.applyX(0.0, 0.0)) > 1.0,
           "parenting to a layer at the centre displaces the child");
@@ -134,7 +138,7 @@ void a_parent_moves_its_child() {
     // A parent at the origin should leave the child where it was.
     set(*comp.find(parentId), "position", 0.0, 0.0);
     const Transform2D neutral =
-        resolvedTransform(comp, *comp.find(childId), 0.0, ctx, 1000, 1000, 100, 100);
+        resolvedTransform(comp, *comp.find(childId), 0.0, ctx, 1000, 1000, sizes);
     checkNear(neutral.applyX(0.0, 0.0), alone.applyX(0.0, 0.0),
               "a parent at the origin leaves the child alone in x", 1e-9);
 }
@@ -154,7 +158,7 @@ void parent_cycles_terminate() {
     comp.find(a)->parent = a;
     check(hasParentCycle(comp, a), "a self-parent is a cycle");
     const TimeContext ctx = comp.timeContext();
-    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, 100, 100),
+    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, sizes),
                 "resolving a self-parent returns instead of spinning");
 
     // A two-layer loop.
@@ -162,7 +166,7 @@ void parent_cycles_terminate() {
     comp.find(b)->parent = a;
     check(hasParentCycle(comp, a), "a two layer loop is a cycle");
     check(hasParentCycle(comp, b), "from either end");
-    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, 100, 100),
+    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, sizes),
                 "a two layer loop terminates");
 
     // A three-layer loop.
@@ -170,7 +174,7 @@ void parent_cycles_terminate() {
     comp.find(b)->parent = c;
     comp.find(c)->parent = a;
     check(hasParentCycle(comp, a), "a three layer loop is a cycle");
-    checkFinite(resolvedTransform(comp, *comp.find(b), 0.0, ctx, 1000, 1000, 100, 100),
+    checkFinite(resolvedTransform(comp, *comp.find(b), 0.0, ctx, 1000, 1000, sizes),
                 "a three layer loop terminates");
 
     // A parent id pointing at nothing, which is what a hand-edited file can produce.
@@ -178,7 +182,7 @@ void parent_cycles_terminate() {
     comp.find(b)->parent.reset();
     comp.find(c)->parent.reset();
     check(!hasParentCycle(comp, a), "a dangling parent is not a cycle");
-    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, 100, 100),
+    checkFinite(resolvedTransform(comp, *comp.find(a), 0.0, ctx, 1000, 1000, sizes),
                 "a dangling parent renders unparented rather than failing");
 }
 
@@ -220,7 +224,7 @@ void a_long_chain_is_bounded() {
         previous = id;
     }
     const TimeContext ctx = comp.timeContext();
-    checkFinite(resolvedTransform(comp, *comp.find(first), 0.0, ctx, 1000, 1000, 100, 100),
+    checkFinite(resolvedTransform(comp, *comp.find(first), 0.0, ctx, 1000, 1000, sizes),
                 "a chain longer than the cap resolves without spinning");
 }
 

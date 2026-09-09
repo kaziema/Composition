@@ -60,8 +60,7 @@ double Transform2D::applyX(double x, double y) const noexcept { return a * x + c
 double Transform2D::applyY(double x, double y) const noexcept { return b * x + d * y + ty; }
 
 Transform2D layerTransform(const Layer& layer, double seconds, const TimeContext& ctx,
-                           double compWidth, double compHeight, double layerWidth,
-                           double layerHeight) {
+                           double compWidth, double compHeight, const LayerSize& size) {
     // Position and anchor point are percentages, which is what makes a preset built on a
     // vertical composition land correctly on a landscape one.
     const double px = componentOr(layer, "position", 0, 50.0, seconds, ctx);
@@ -76,8 +75,8 @@ Transform2D layerTransform(const Layer& layer, double seconds, const TimeContext
     // layer that sits at Position and that rotation and scale pivot around. 0,0 is the
     // centre so an untouched layer rotates about itself, which is what people expect and
     // what the default transform already stores.
-    const double anchorX = ax / 100.0 * layerWidth;
-    const double anchorY = ay / 100.0 * layerHeight;
+    const double anchorX = ax / 100.0 * size.width;
+    const double anchorY = ay / 100.0 * size.height;
 
     // Order matters and this is the order: move the anchor to the origin, scale, rotate,
     // then move to the position. Rotating before centring on the anchor makes a layer
@@ -90,14 +89,15 @@ Transform2D layerTransform(const Layer& layer, double seconds, const TimeContext
 
 Transform2D resolvedTransform(const Composition& comp, const Layer& layer, double seconds,
                               const TimeContext& ctx, double compWidth, double compHeight,
-                              double layerWidth, double layerHeight) {
-    Transform2D out = layerTransform(layer, seconds, ctx, compWidth, compHeight,
-                                     layerWidth, layerHeight);
+                              const SizeOf& sizeOf) {
+    const auto sizeFor = [&sizeOf](const Layer& l) {
+        return sizeOf ? sizeOf(l) : LayerSize{};
+    };
+    Transform2D out =
+        layerTransform(layer, seconds, ctx, compWidth, compHeight, sizeFor(layer));
 
-    // Parents contribute their own transform, but NOT their size: a child is positioned in
-    // its parent's space, not scaled to its parent's dimensions. So the parent's transform
-    // is computed with the parent's own size for its anchor and the composition's size for
-    // its position, which is what layerTransform already does.
+    // A child is positioned in its parent's space. It inherits the parent's transform,
+    // never the parent's dimensions.
     LayerId seen[kMaxParentDepth];
     int depth = 0;
     const Layer* current = &layer;
@@ -125,8 +125,10 @@ Transform2D resolvedTransform(const Composition& comp, const Layer& layer, doubl
         }
         seen[depth++] = parentId;
 
+        // The parent's own size, not the child's. A parent with an off-centre anchor
+        // pivots around a point on ITSELF.
         out = out.then(layerTransform(*parent, seconds, ctx, compWidth, compHeight,
-                                      layerWidth, layerHeight));
+                                      sizeFor(*parent)));
         current = parent;
     }
     return out;
