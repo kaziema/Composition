@@ -22,11 +22,18 @@ int main(int argc, char** argv) {
     QApplication::setStyle(QApplication::style());
     qApp->setEffectEnabled(Qt::UI_AnimateTooltip, false);
 
-    // TEMPORARY: any file paths on the command line become the demo's footage layers,
-    // until the app can import media itself.
+    // A .rbypr on the command line is a project to open; anything else is media for the
+    // demo composition. Sorting them by extension rather than by a flag is what
+    // double-clicking a project in the Finder will hand us anyway.
+    std::string projectPath;
     std::vector<std::string> mediaPaths;
     for (int i = 1; i < argc; ++i) {
-        mediaPaths.emplace_back(argv[i]);
+        const std::string arg = argv[i];
+        if (arg.size() > 6 && arg.compare(arg.size() - 6, 6, ".rbypr") == 0) {
+            projectPath = arg;
+        } else {
+            mediaPaths.push_back(arg);
+        }
     }
     ruby::ui::demo::setMediaPaths(std::move(mediaPaths));
 
@@ -43,6 +50,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<ruby::gpu::GpuDevice> gpu = ruby::gpu::create_dawn_device();
 
     ruby::ui::MainWindow window(gpu.get());
+    if (!projectPath.empty()) {
+        window.openProject(QString::fromStdString(projectPath));
+    }
     window.show();
 
     return QApplication::exec();

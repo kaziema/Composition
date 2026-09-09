@@ -578,7 +578,12 @@ void MainWindow::openProject() {
     if (path.isEmpty()) {
         return;
     }
+    openProject(path);
+}
 
+// The same open, with the file already chosen. Needed by the command line, and it is what
+// double-clicking a .rbypr in the Finder will want too.
+void MainWindow::openProject(const QString& path) {
     core::Project loaded;
     const io::LoadReport report = io::load(loaded, path.toStdString());
     if (!report.ok) {
@@ -1575,7 +1580,7 @@ void MainWindow::buildMenus() {
                     QKeySequence(QStringLiteral("Ctrl+Shift+N")), this,
                     &MainWindow::newProject);
     file->addAction(QStringLiteral("Open Project..."), QKeySequence::Open, this,
-                    &MainWindow::openProject);
+                    [this] { openProject(); });
     file->addAction(QStringLiteral("Save Project"), QKeySequence::Save, this,
                     [this] { saveProject(false); });
     file->addAction(QStringLiteral("Save Project As..."), QKeySequence::SaveAs, this,
