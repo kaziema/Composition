@@ -1375,6 +1375,18 @@ void MainWindow::refreshCompositionTabs() {
         names << QStringLiteral("No composition");
     }
     timelineTabs_->setTabs(names);
+
+    // The viewer names the composition it is showing, and it was doing so exactly once,
+    // at construction. Open a project and it kept announcing the demo composition that
+    // had been replaced, which is the sort of thing you only notice in a screenshot.
+    if (viewerTabs_ != nullptr) {
+        const core::Composition* active = activeComposition();
+        viewerTabs_->setTabs({QStringLiteral("Composition: %1")
+                                  .arg(active != nullptr
+                                           ? QString::fromStdString(active->name)
+                                           : QStringLiteral("none")),
+                              QStringLiteral("Footage"), QStringLiteral("Layer")});
+    }
 }
 
 void MainWindow::dropMediaIntoComposition(core::MediaId id, double seconds,
@@ -1889,11 +1901,11 @@ QWidget* MainWindow::buildBody() {
     activeComp_ = comp.id;
     const QString compName = QString::fromStdString(comp.name);
 
-    auto* viewer = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
-                                   QStringLiteral("Footage"), QStringLiteral("Layer")});
-    viewer->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
-    viewer->addPage(makePlaceholder(QStringLiteral("footage viewer")));
-    viewer->addPage(makePlaceholder(QStringLiteral("layer viewer")));
+    viewerTabs_ = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
+                                  QStringLiteral("Footage"), QStringLiteral("Layer")});
+    viewerTabs_->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
+    viewerTabs_->addPage(makePlaceholder(QStringLiteral("footage viewer")));
+    viewerTabs_->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
     // Transform and the effect stack share one inspector rather than letting two
     // panels fight for the same dock.
@@ -1904,7 +1916,7 @@ QWidget* MainWindow::buildBody() {
     inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
 
     bodySplit_->addWidget(project);
-    bodySplit_->addWidget(viewer);
+    bodySplit_->addWidget(viewerTabs_);
     bodySplit_->addWidget(inspector);
     bodySplit_->setStretchFactor(1, 1);
     bodySplit_->setSizes({metrics::kProjectPanelW, 900, metrics::kInspectorPanelW});

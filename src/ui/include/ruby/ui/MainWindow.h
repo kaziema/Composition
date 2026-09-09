@@ -192,6 +192,7 @@ private:
     StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
+    PanelFrame* viewerTabs_ = nullptr;
     core::CompId activeComp_ = 0;
     QString projectPath_;
     bool dirty_ = false;
