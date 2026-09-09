@@ -9,6 +9,10 @@ ruby_add_test(test_identity)
 ruby_add_test(test_animation)
 ruby_add_test(test_document)
 ruby_add_test(test_transform)
+
+add_executable(test_sandbox test_sandbox.cpp)
+target_link_libraries(test_sandbox PRIVATE ruby::script ruby_warnings)
+add_test(NAME test_sandbox COMMAND test_sandbox)
 ruby_add_test(test_project)
 
 add_executable(test_projectio test_projectio.cpp)
