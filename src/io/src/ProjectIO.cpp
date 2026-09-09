@@ -1,5 +1,7 @@
 #include "ruby/io/ProjectIO.h"
 
+#include "ruby/core/Transform.h"
+
 #include <nlohmann/json.hpp>
 
 #include <fstream>
@@ -550,6 +552,24 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 comp.layers.push_back(std::move(layer));
                 loaded.noteUsedId(comp.layers.back().id);
             }
+        }
+    }
+
+    // Break any parent loop the file contains, and say so.
+    //
+    // The render path already survives a cycle, but surviving one is not the same as
+    // keeping it: the document would stay broken, the Parent column would show a link
+    // that goes nowhere sensible, and every later read of it inherits the problem. A file
+    // can arrive this way from a hand edit, a merge, or a version of Ruby with a bug in
+    // it, and the loader is the one place that sees the whole thing at once.
+    for (Composition& comp : loaded.compositions()) {
+        for (Layer& layer : comp.layers) {
+            if (!layer.parent.has_value() || !hasParentCycle(comp, layer.id)) {
+                continue;
+            }
+            report.notes.push_back("layer \"" + layer.name +
+                                   "\" was part of a parent loop; its parent was cleared");
+            layer.parent.reset();
         }
     }
 

@@ -145,6 +145,21 @@ int main() {
     check(true, "a parent cycle renders instead of hanging");
     comp.find(nullId)->parent.reset();
 
+    // Solo. Nothing soloed means everything draws; one soloed layer means only it does.
+    // Both directions rendered, because the second is a whole-composition rule and easy
+    // to get inverted.
+    comp.find(solidId)->solo = true;
+    compositor.render(project, comp, 1.0, target, &external);
+    comp.find(textId)->solo = true;
+    compositor.render(project, comp, 1.0, target, &external);
+
+    // Soloed and hidden at once, which is the case where two switches disagree.
+    comp.find(solidId)->enabled = false;
+    compositor.render(project, comp, 1.0, target, &external);
+    comp.find(solidId)->enabled = true;
+    comp.find(solidId)->solo = false;
+    comp.find(textId)->solo = false;
+
     // Times outside every layer's span, and exactly on the boundaries.
     for (const double t : {0.0, 5.0, 9.999, 10.0, 25.0}) {
         compositor.render(project, comp, t, target, &external);

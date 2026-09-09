@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <string>
 
+#include "ruby/core/Transform.h"
 #include "ruby/io/ProjectIO.h"
 
 using namespace ruby;
@@ -84,9 +85,54 @@ core::Project makeProject() {
     return p;
 }
 
+// A file can contain a parent loop from a hand edit, a merge, or a buggy writer. The
+// render path tolerates one, but the loader is the place that sees the whole document and
+// can actually repair it.
+void a_parent_loop_in_a_file_is_broken_on_load() {
+    core::Project source;
+    core::Composition& comp =
+        source.addComposition("c", 1080, 1920, 30.0, 10.0);
+    const core::LayerId a = source.addLayer(comp, "a", core::LayerKind::Null).id;
+    const core::LayerId b = source.addLayer(comp, "b", core::LayerKind::Null).id;
+    comp.find(a)->parent = b;
+    comp.find(b)->parent = a;
+
+    core::Project loaded;
+    const io::LoadReport report = io::fromJson(loaded, io::toJson(source));
+    check(report.ok, "a project with a parent loop still loads");
+    check(!report.clean(), "but it is not reported as clean");
+    check(!report.notes.empty(), "and says what it had to repair");
+
+    const core::Composition& out = loaded.compositions().front();
+    for (const core::Layer& layer : out.layers) {
+        check(!core::hasParentCycle(out, layer.id), "no loop survives the load");
+    }
+}
+
+// The ordinary case has to keep working: a valid parent must survive a round trip.
+void a_valid_parent_survives_a_round_trip() {
+    core::Project source;
+    core::Composition& comp = source.addComposition("c", 1080, 1920, 30.0, 10.0);
+    const core::LayerId parent = source.addLayer(comp, "null", core::LayerKind::Null).id;
+    const core::LayerId child = source.addLayer(comp, "child", core::LayerKind::Solid).id;
+    comp.find(child)->parent = parent;
+
+    core::Project loaded;
+    const io::LoadReport report = io::fromJson(loaded, io::toJson(source));
+    check(report.clean(), "a project with ordinary parenting loads clean");
+
+    const core::Composition& out = loaded.compositions().front();
+    const auto at = std::find_if(out.layers.begin(), out.layers.end(),
+                                 [](const core::Layer& l) { return l.name == "child"; });
+    check(at != out.layers.end() && at->parent.has_value(), "the child kept its parent");
+}
+
 }  // namespace
 
 int main() {
+    a_parent_loop_in_a_file_is_broken_on_load();
+    a_valid_parent_survives_a_round_trip();
+
     const core::Project original = makeProject();
 
     core::Project loaded;

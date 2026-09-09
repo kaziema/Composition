@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 #include "ruby/core/Transform.h"
 
@@ -228,6 +229,89 @@ void a_long_chain_is_bounded() {
                 "a chain longer than the cap resolves without spinning");
 }
 
+// canParentTo is what the Parent menu greys out with. If it says yes to something that
+// closes a loop, the loop gets created and only the render path's cycle guard saves us.
+void the_parent_menu_refuses_exactly_the_loops() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1000, 1000, 30.0, 10.0);
+
+    const LayerId a = project.addLayer(comp, "a", LayerKind::Null).id;
+    const LayerId b = project.addLayer(comp, "b", LayerKind::Null).id;
+    const LayerId c = project.addLayer(comp, "c", LayerKind::Null).id;
+    const LayerId d = project.addLayer(comp, "d", LayerKind::Null).id;
+
+    // Chain: c -> b -> a. Everything below a is forbidden as a parent OF a.
+    comp.find(b)->parent = a;
+    comp.find(c)->parent = b;
+
+    check(!canParentTo(comp, a, a), "self");
+    check(!canParentTo(comp, a, b), "child");
+    check(!canParentTo(comp, a, c), "grandchild");
+    check(canParentTo(comp, a, d), "an unrelated layer is fine");
+
+    // The other direction is always fine: a deeper layer may parent to a shallower one.
+    check(canParentTo(comp, d, c), "parenting down the existing chain is fine");
+
+    // And having accepted it, the result must genuinely have no cycle.
+    comp.find(d)->parent = c;
+    check(!hasParentCycle(comp, d), "an accepted parenting does not create a cycle");
+    check(!hasParentCycle(comp, a), "nor anywhere else in the chain");
+}
+
+// A non-finite property value would poison the whole matrix, and a NaN matrix reaching
+// the GPU makes a layer vanish with nothing to diagnose. It can come from a corrupt file
+// today and from an expression the moment scripting lands.
+void non_finite_values_do_not_poison_the_matrix() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1000, 1000, 30.0, 10.0);
+    const LayerId id = project.addLayer(comp, "l", LayerKind::Solid).id;
+    const TimeContext ctx = comp.timeContext();
+
+    const auto finite = [](const Transform2D& t) {
+        return std::isfinite(t.a) && std::isfinite(t.b) && std::isfinite(t.c) &&
+               std::isfinite(t.d) && std::isfinite(t.tx) && std::isfinite(t.ty);
+    };
+
+    set1(*comp.find(id), "rotation", std::nan(""));
+    check(finite(layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100})),
+          "a NaN rotation falls back instead of producing a NaN matrix");
+
+    set1(*comp.find(id), "rotation", 0.0);
+    set(*comp.find(id), "position", std::nan(""), 50.0);
+    check(finite(layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100})),
+          "and so does a NaN position");
+
+    set(*comp.find(id), "position", std::numeric_limits<double>::infinity(), 50.0);
+    check(finite(layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100})),
+          "and an infinite one");
+
+    set(*comp.find(id), "position", 50.0, 50.0);
+    set(*comp.find(id), "scale", std::nan(""), 100.0);
+    check(finite(layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100})),
+          "and a NaN scale");
+}
+
+// Degenerate but legitimate. These must survive rather than be guarded away: a zero scale
+// is how you hide something by animating it, and a negative one is how you flip it.
+void degenerate_but_legal_scales_are_left_alone() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1000, 1000, 30.0, 10.0);
+    const LayerId id = project.addLayer(comp, "l", LayerKind::Solid).id;
+    const TimeContext ctx = comp.timeContext();
+
+    set(*comp.find(id), "scale", 0.0, 0.0);
+    const Transform2D collapsed =
+        layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100});
+    checkNear(collapsed.a * collapsed.d - collapsed.b * collapsed.c, 0.0,
+              "a zero scale collapses the layer, which is what it should do");
+
+    set(*comp.find(id), "scale", -100.0, 100.0);
+    const Transform2D flipped =
+        layerTransform(*comp.find(id), 0.0, ctx, 1000, 1000, LayerSize{100, 100});
+    check(flipped.a * flipped.d - flipped.b * flipped.c < 0.0,
+          "a negative scale mirrors rather than being clamped away");
+}
+
 }  // namespace
 
 int main() {
@@ -238,6 +322,9 @@ int main() {
     parent_cycles_terminate();
     bad_parenting_is_refused_up_front();
     a_long_chain_is_bounded();
+    the_parent_menu_refuses_exactly_the_loops();
+    non_finite_values_do_not_poison_the_matrix();
+    degenerate_but_legal_scales_are_left_alone();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

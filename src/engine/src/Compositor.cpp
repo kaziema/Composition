@@ -339,9 +339,27 @@ void Compositor::render(const core::Project& project, const core::Composition& c
     std::vector<Prepared> prepared;
     prepared.reserve(comp.layers.size());
 
+    // Solo is a whole-composition question, so it has to be answered before any single
+    // layer can be judged: one soloed layer changes what every other layer does. Asking
+    // per layer would need this same scan each time.
+    bool anySolo = false;
+    for (const core::Layer& layer : comp.layers) {
+        if (layer.solo && layer.kind != core::LayerKind::Audio) {
+            anySolo = true;
+            break;
+        }
+    }
+
     // Bottom layer first, so index 0 (the topmost) is drawn last.
     for (auto it = comp.layers.rbegin(); it != comp.layers.rend(); ++it) {
         const core::Layer& layer = *it;
+
+        // With anything soloed, only soloed layers are candidates. The eye still applies
+        // to those, below: solo narrows the set, visibility decides within it. Two
+        // independent switches, which is easier to predict than one overriding the other.
+        if (anySolo && !layer.solo) {
+            continue;
+        }
         // Nulls are never drawn. A null exists to be parented to: it is a transform with
         // a handle, and rendering it would put a coloured rectangle in the middle of
         // every shot that used one.

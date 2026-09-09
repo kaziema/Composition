@@ -14,7 +14,13 @@ double componentOr(const Layer& layer, std::string_view key, int index, double f
         return fallback;
     }
     const Value v = prop->evaluate(seconds, ctx);
-    return (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
+    const double got = (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
+
+    // A non-finite value here would poison the whole matrix, and a NaN matrix reaching the
+    // GPU makes a layer silently vanish with nothing to diagnose. It can arrive from a
+    // corrupt file today and from an expression the moment scripting lands, so it is
+    // caught at the one point every transform value passes through.
+    return std::isfinite(got) ? got : fallback;
 }
 
 }  // namespace
