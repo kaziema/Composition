@@ -8,6 +8,7 @@ ruby_add_test(test_units)
 ruby_add_test(test_identity)
 ruby_add_test(test_animation)
 ruby_add_test(test_document)
+ruby_add_test(test_transform)
 ruby_add_test(test_project)
 
 add_executable(test_projectio test_projectio.cpp)
