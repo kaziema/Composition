@@ -63,6 +63,10 @@ public:
     [[nodiscard]] double position() const noexcept;
 
     // Called from the audio thread only.
+    //
+    // Writes only the samples it actually has, so `out` must already be zeroed: with no
+    // sources it writes nothing at all. It always advances the clock, though, because
+    // this device is what the transport follows and silence is still time passing.
     void mix(float* out, std::uint32_t frames);
 
     // More layers than anyone mixes by hand in a short-form edit, and a fixed ceiling is

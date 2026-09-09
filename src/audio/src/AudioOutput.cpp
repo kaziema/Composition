@@ -128,11 +128,19 @@ void AudioOutput::mix(float* out, std::uint32_t frames) {
         // half a source list is not.
     }
 
+    // The cursor advances whether or not there is anything to mix, because this device is
+    // the transport's clock and silence is still time passing.
+    //
+    // Returning early here froze it: delete the only audio layer and the source list goes
+    // empty, so position() stopped moving, so the transport it drives stopped moving, and
+    // the spacebar did nothing. A composition with no audio at all had the same problem.
+    const std::uint64_t start = cursor_.load();
+    cursor_.store(start + frames);
+
     if (snapshotCount_ == 0) {
-        return;
+        return;  // nothing audible, but time still moved
     }
 
-    const std::uint64_t start = cursor_.load();
     for (std::uint32_t i = 0; i < frames; ++i) {
         const double t = static_cast<double>(start + i) / kDeviceRate;
 
@@ -172,7 +180,6 @@ void AudioOutput::mix(float* out, std::uint32_t frames) {
     // Runs on past the last source rather than stopping. With several layers there can be
     // silence between them, and stopping at the first gap would end playback in the
     // middle of a composition. The transport decides when playing is over.
-    cursor_.store(start + frames);
 }
 
 }  // namespace ruby::audio
