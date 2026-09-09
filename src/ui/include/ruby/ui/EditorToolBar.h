@@ -50,6 +50,8 @@ private:
     QList<Switch> switches_;
     QRect dividerRect_;
     QRect panelDividerRect_;
+    QRect homeRect_;
+    QRect homeDividerRect_;
     int activeTool_ = 0;
     int hoverTool_ = -1;
 

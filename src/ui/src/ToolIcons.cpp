@@ -105,6 +105,26 @@ void drawAnchor(QPainter& p) {
 // A media bin: a folder with two strips of content in it. Reads as "the place your stuff
 // lives" at 16px, which a plain folder does not: a folder alone says "files", and this
 // panel holds compositions and clips rather than a directory.
+// A house. Deliberately the most literal icon in the bar: it is the way back out to the
+// project selector, and the one control that should need no learning.
+void drawHome(QPainter& p) {
+    QPainterPath roof;
+    roof.moveTo(2.6, 7.8);
+    roof.lineTo(8.0, 3.0);
+    roof.lineTo(13.4, 7.8);
+    p.drawPath(roof);
+
+    QPainterPath walls;
+    walls.moveTo(4.4, 7.0);
+    walls.lineTo(4.4, 13.0);
+    walls.lineTo(11.6, 13.0);
+    walls.lineTo(11.6, 7.0);
+    p.drawPath(walls);
+
+    // A door, so it reads as a house rather than an arrow over a box.
+    p.drawRect(QRectF(6.9, 9.4, 2.2, 3.6));
+}
+
 void drawProject(QPainter& p) {
     QPainterPath folder;
     folder.moveTo(2.4, 4.2);
@@ -161,6 +181,7 @@ void paintToolIcon(QPainter& p, const QRect& box, ToolIcon icon, const QColor& c
         case ToolIcon::Mask:      drawMask(p);      break;
         case ToolIcon::Hand:      drawHand(p);      break;
         case ToolIcon::Anchor:    drawAnchor(p);    break;
+        case ToolIcon::Home:      drawHome(p);      break;
         case ToolIcon::Project:   drawProject(p);   break;
         case ToolIcon::Effects:   drawEffects(p);   break;
     }

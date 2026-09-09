@@ -15,6 +15,10 @@ namespace ruby::ui {
 // construction, correct at any DPI.
 
 enum class ToolIcon {
+    // Reserved for the project selector window. Drawn but inert for now, and dimmed so
+    // that reads as "not yet" rather than as a button that ignores you.
+    Home,
+
     Selection,
     Pan,
     Text,

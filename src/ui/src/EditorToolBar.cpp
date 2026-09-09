@@ -79,22 +79,33 @@ EditorToolBar::EditorToolBar(QWidget* parent) : QWidget(parent) {
 void EditorToolBar::relayout() {
     const int cy = (metrics::kToolBarH - metrics::kToolButtonH) / 2;
 
-    toolRects_.clear();
+    // Home, then the panel switches, then the tools, then the switches on the right, each
+    // run separated by a divider.
+    //
+    // The panel buttons sit at the far left so they are directly above the panel they
+    // control. A control that changes a thing should be next to the thing, and they were
+    // previously at the other end of the bar from it.
     int x = kEdgePad;
-    for (int i = 0; i < kToolCount; ++i) {
-        toolRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
-        x += metrics::kToolButtonW + kToolGap;
-    }
+    homeRect_ = QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH);
+    x += metrics::kToolButtonW;
 
-    // Divider, then the panel switches, then the divider that separates all of it from
-    // the switches on the right.
     x += 7;
-    panelDividerRect_ = QRect(x, 6, 1, metrics::kToolBarH - 12);
+    homeDividerRect_ = QRect(x, 6, 1, metrics::kToolBarH - 12);
     x += 1 + 7;
 
     panelRects_.clear();
     for (int i = 0; i < kPanelCount; ++i) {
         panelRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
+        x += metrics::kToolButtonW + kToolGap;
+    }
+
+    x += 7;
+    panelDividerRect_ = QRect(x, 6, 1, metrics::kToolBarH - 12);
+    x += 1 + 7;
+
+    toolRects_.clear();
+    for (int i = 0; i < kToolCount; ++i) {
+        toolRects_.append(QRect(x, cy, metrics::kToolButtonW, metrics::kToolButtonH));
         x += metrics::kToolButtonW + kToolGap;
     }
 
@@ -139,6 +150,24 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), kToolBar);
 
+    // Home. Dimmed, because it does nothing yet: a button drawn like every other one that
+    // ignores every click reads as broken, and a dimmed one reads as not ready.
+    paintToolIcon(p, homeRect_, ToolIcon::Home, kTextFaint);
+    p.fillRect(homeDividerRect_, kDivider);
+
+    for (int i = 0; i < panelRects_.size(); ++i) {
+        const QRect r = panelRects_.at(i);
+        const bool active = (i == activePanel_);
+        if (active) {
+            p.fillRect(r, kAccent);
+        } else if (i == hoverPanel_) {
+            p.fillRect(r, kMenuActive);
+        }
+        paintToolIcon(p, r, kPanels[i], active ? QColor("#12212e") : kTextTertiary);
+    }
+
+    p.fillRect(panelDividerRect_, kDivider);
+
     for (int i = 0; i < toolRects_.size(); ++i) {
         const QRect r = toolRects_.at(i);
         const bool active = (i == activeTool_);
@@ -150,19 +179,6 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
         }
 
         paintToolIcon(p, r, kTools[i], active ? QColor("#12212e") : kTextTertiary);
-    }
-
-    p.fillRect(panelDividerRect_, kDivider);
-
-    for (int i = 0; i < panelRects_.size(); ++i) {
-        const QRect r = panelRects_.at(i);
-        const bool active = (i == activePanel_);
-        if (active) {
-            p.fillRect(r, kAccent);
-        } else if (i == hoverPanel_) {
-            p.fillRect(r, kMenuActive);
-        }
-        paintToolIcon(p, r, kPanels[i], active ? QColor("#12212e") : kTextTertiary);
     }
 
     p.fillRect(dividerRect_, kDivider);
@@ -179,6 +195,12 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
 
 void EditorToolBar::mousePressEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();
+
+    // Deliberately inert until the project selector exists. It still swallows the click
+    // rather than falling through to whatever is behind it.
+    if (homeRect_.contains(pos)) {
+        return;
+    }
 
     for (int i = 0; i < toolRects_.size(); ++i) {
         if (toolRects_.at(i).contains(pos)) {
@@ -230,6 +252,13 @@ bool EditorToolBar::event(QEvent* e) {
                                    QString::fromUtf8(kToolTips[i]), this);
                 return true;
             }
+        }
+        if (homeRect_.contains(pos)) {
+            QToolTip::showText(help->globalPos(),
+                               QStringLiteral("Home — the project selector, once it "
+                                              "exists. Does nothing yet."),
+                               this);
+            return true;
         }
         for (int i = 0; i < panelRects_.size() && i < kPanelCount; ++i) {
             if (panelRects_.at(i).contains(pos)) {
