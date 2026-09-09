@@ -298,7 +298,11 @@ void Compositor::render(const core::Project& project, const core::Composition& c
     // Bottom layer first, so index 0 (the topmost) is drawn last.
     for (auto it = comp.layers.rbegin(); it != comp.layers.rend(); ++it) {
         const core::Layer& layer = *it;
-        if (!layer.enabled || layer.kind == core::LayerKind::Audio) {
+        // Nulls are never drawn. A null exists to be parented to: it is a transform with
+        // a handle, and rendering it would put a coloured rectangle in the middle of
+        // every shot that used one.
+        if (!layer.enabled || layer.kind == core::LayerKind::Audio ||
+            layer.kind == core::LayerKind::Null) {
             continue;
         }
         const double in = to_seconds(layer.inPoint, ctx);
@@ -380,6 +384,14 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         Rgb tint = (content.texture != nullptr) ? Rgb{1.0f, 1.0f, 1.0f}
                                                : colorFor(layer.label);
 
+        // A solid is its own colour, not its label colour. The label is organisational;
+        // the colour is the picture.
+        if (layer.kind == core::LayerKind::Solid) {
+            tint = Rgb{static_cast<float>(layer.solidColor.c[0]),
+                       static_cast<float>(layer.solidColor.c[1]),
+                       static_cast<float>(layer.solidColor.c[2])};
+        }
+
         // A layer is the size of its source, not the size of the frame. A 1920x1080
         // clip in a 1080x1920 composition comes in wider than the frame and gets
         // cropped at the sides; squashing it to fit would distort the picture and make
@@ -397,6 +409,17 @@ void Compositor::render(const core::Project& project, const core::Composition& c
             // footage has no better guess available.
             baseW = frameW;
             baseH = frameH;
+        } else if (layer.kind == core::LayerKind::Solid) {
+            // Its own size, or the composition's when it was made comp-sized. Zero means
+            // "match the composition", so a solid follows a comp that gets resized rather
+            // than staying frozen at whatever it was created at.
+            const float pxPerUnit = frameW / compW;
+            baseW = layer.solidWidth > 0
+                        ? static_cast<float>(layer.solidWidth) * pxPerUnit
+                        : frameW;
+            baseH = layer.solidHeight > 0
+                        ? static_cast<float>(layer.solidHeight) * pxPerUnit
+                        : frameH;
         }
 
         const float w = baseW * (sxPct / 100.0f);

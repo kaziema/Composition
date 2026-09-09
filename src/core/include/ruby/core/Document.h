@@ -195,6 +195,16 @@ struct Layer {
     bool enabled = true;       // the eye: whether the layer is drawn
     bool audioEnabled = true;  // the speaker: whether it is heard
     bool solo = false;
+
+    // Solid layers only.
+    //
+    // A solid carries its own size rather than always filling the frame, because half of
+    // what solids are for is being a bar, a card or a letterbox band. Zero means "match
+    // the composition", so a solid made today still fills a composition that is resized
+    // tomorrow instead of being frozen at the size it happened to be created at.
+    Value solidColor = Value::rgba(0.5, 0.5, 0.5, 1.0);
+    int solidWidth = 0;
+    int solidHeight = 0;
     bool expanded = false;  // twirled open in the timeline
 
     std::vector<Property> properties;

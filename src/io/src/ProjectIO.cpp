@@ -221,6 +221,17 @@ json write(const Layer& l) {
              {"out", write(l.outPoint)}, {"blend", name(l.blend)},
              {"enabled", l.enabled}, {"audioEnabled", l.audioEnabled},
              {"solo", l.solo}, {"expanded", l.expanded}};
+
+
+    // Only on solids. Writing these on every layer would put four dead numbers on every
+    // text, footage and null layer in the file.
+    if (l.kind == LayerKind::Solid) {
+        out["solidColor"] = {l.solidColor.c[0], l.solidColor.c[1], l.solidColor.c[2],
+                             l.solidColor.c[3]};
+        out["solidWidth"] = l.solidWidth;
+        out["solidHeight"] = l.solidHeight;
+    }
+
     if (l.parent.has_value()) out["parent"] = *l.parent;
     if (l.source.has_value()) out["source"] = *l.source;
     if (l.media.has_value())  out["media"] = *l.media;
@@ -434,6 +445,17 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 // Defaults to on, so projects written before there was an audio switch
                 // open with their sound audible rather than mysteriously muted.
                 layer.audioEnabled = get<bool>(l, "audioEnabled", true);
+
+                if (l.contains("solidColor") && l["solidColor"].is_array() &&
+                    l["solidColor"].size() == 4) {
+                    for (int i = 0; i < 4; ++i) {
+                        layer.solidColor.c[static_cast<std::size_t>(i)] =
+                            l["solidColor"][static_cast<std::size_t>(i)].get<double>();
+                    }
+                    layer.solidColor.count = 4;
+                }
+                layer.solidWidth = get<int>(l, "solidWidth", 0);
+                layer.solidHeight = get<int>(l, "solidHeight", 0);
                 layer.solo = get<bool>(l, "solo", false);
                 layer.expanded = get<bool>(l, "expanded", false);
                 if (l.contains("parent") && l.at("parent").is_number()) {

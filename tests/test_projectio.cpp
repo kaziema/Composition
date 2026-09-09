@@ -3,6 +3,7 @@
 // go wrong: hand-edited, truncated, written by a different version, referencing media
 // that has since been removed.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +35,16 @@ core::Project makeProject() {
                         {{2.167, core::MarkerLane::Vocal, 0.84f, 0},
                          {3.083, core::MarkerLane::Vocal, 0.61f, 1}});
     comp.rhythm.addUserMarker(5.5);
+
+    // The solid is created FIRST, and that ordering is load-bearing: addLayer inserts at
+    // the front, so any Layer& taken before another addLayer call is left dangling. Adding
+    // it after the footage layer below hung this test on a write through a dead reference.
+    {
+        core::Layer& solid = p.addLayer(comp, "Backdrop", core::LayerKind::Solid);
+        solid.solidColor = core::Value::rgba(0.25, 0.5, 0.75, 1.0);
+        solid.solidWidth = 640;
+        solid.solidHeight = 0;  // 0 = follow the composition
+    }
 
     core::Layer& layer = p.addLayer(comp, "a.mp4", core::LayerKind::Footage);
     layer.media = clip.id;
@@ -93,8 +104,29 @@ int main() {
     check(comp.width == 1080 && comp.height == 1920, "size survives");
     check(std::fabs(comp.fps - 29.97) < 1e-9, "29.97 survives exactly");
 
-    check(comp.layers.size() == 1, "the layer survives");
-    const core::Layer& layer = comp.layers.front();
+    check(comp.layers.size() == 2, "both layers survive");
+
+    {
+        const auto at = std::find_if(comp.layers.begin(), comp.layers.end(),
+                                     [](const core::Layer& l) {
+                                         return l.kind == core::LayerKind::Solid;
+                                     });
+        check(at != comp.layers.end(), "the solid survives as a solid");
+        if (at != comp.layers.end()) {
+            check(std::fabs(at->solidColor.c[0] - 0.25) < 1e-9 &&
+                      std::fabs(at->solidColor.c[2] - 0.75) < 1e-9,
+                  "its colour survives");
+            check(at->solidColor.count == 4, "as four components");
+            check(at->solidWidth == 640, "an explicit width survives");
+            check(at->solidHeight == 0,
+                  "and 0 stays 0, so it keeps following the composition");
+        }
+    }
+
+    check(comp.layers.size() == 2, "the layer survives");
+    const core::Layer& layer = *std::find_if(
+        comp.layers.begin(), comp.layers.end(),
+        [](const core::Layer& l) { return l.kind == core::LayerKind::Footage; });
     check(layer.blend == core::BlendMode::Add, "blend mode survives");
     check(layer.expanded, "twirl state survives");
     check(layer.enabled, "the eye survives");

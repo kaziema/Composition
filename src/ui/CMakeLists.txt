@@ -16,6 +16,7 @@ qt_add_library(ruby_ui STATIC
     src/PooledMediaPanel.cpp
     src/StatusReadout.cpp
     src/NewCompositionDialog.cpp
+    src/NewSolidDialog.cpp
     src/GpuViewport.cpp
     src/Playback.cpp
     src/DemoProject.cpp
@@ -31,6 +32,7 @@ qt_add_library(ruby_ui STATIC
     include/ruby/ui/PooledMediaPanel.h
     include/ruby/ui/StatusReadout.h
     include/ruby/ui/NewCompositionDialog.h
+    include/ruby/ui/NewSolidDialog.h
     include/ruby/ui/GpuViewport.h
     include/ruby/ui/Playback.h
     include/ruby/ui/DemoProject.h

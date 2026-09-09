@@ -331,6 +331,47 @@ void removing_a_layer_orphans_its_children() {
           "and its parent link was cleared rather than left dangling");
 }
 
+
+// Created layers: what a solid and a null are before anyone touches them.
+void created_layers_have_sane_defaults() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    const LayerId solidId = project.addLayer(comp, "Backdrop", LayerKind::Solid).id;
+    const Layer* solid = comp.find(solidId);
+    check(solid != nullptr, "the solid was created");
+    check(solid->kind == LayerKind::Solid, "as a solid");
+    check(solid->solidWidth == 0 && solid->solidHeight == 0,
+          "sized 0 by default, meaning it follows the composition rather than freezing "
+          "at today's size");
+    check(solid->solidColor.count == 4, "its colour is four components");
+    check(!solid->properties.empty(),
+          "and it gets the standard transform, so it can be moved and scaled");
+
+    const LayerId nullId = project.addLayer(comp, "Null", LayerKind::Null).id;
+    const Layer* nul = comp.find(nullId);
+    check(nul != nullptr, "the null was created");
+    check(!nul->properties.empty(),
+          "a null is a transform with a handle, so it needs the transform most of all");
+}
+
+// A null exists to be parented to, so deleting one has to release its children. Same
+// guarantee as any other layer, but this is the case that will actually happen.
+void deleting_a_null_releases_what_it_drove() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    const LayerId nullId = project.addLayer(comp, "Null", LayerKind::Null).id;
+    project.addLayer(comp, "Backdrop", LayerKind::Solid).parent = nullId;
+    project.addLayer(comp, "clip", LayerKind::Footage).parent = nullId;
+
+    check(comp.removeLayer(nullId), "the null is removed");
+    check(comp.layers.size() == 2, "its children are not");
+    for (const Layer& l : comp.layers) {
+        check(!l.parent.has_value(), "and none of them still point at it");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -351,6 +392,8 @@ int main() {
     a_manual_shrink_leaves_layers_overhanging();
     growth_resolves_layers_timed_in_beats();
     removing_a_layer_orphans_its_children();
+    created_layers_have_sane_defaults();
+    deleting_a_null_releases_what_it_drove();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);
