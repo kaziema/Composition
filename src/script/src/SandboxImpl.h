@@ -14,6 +14,7 @@ extern "C" {
 #include <map>
 #include <string>
 
+#include "ruby/core/Document.h"
 #include "ruby/script/Sandbox.h"
 
 namespace ruby::script {
@@ -27,6 +28,11 @@ struct Inputs {
     // wiggle deterministic: the same layer wiggles the same way every render, on every
     // machine, while two layers with identical expressions wiggle differently.
     std::uint64_t seed = 0;
+
+    // Borrowed, valid only for the duration of one evaluate() call. loopOut and friends
+    // read the keyframes through these; nothing holds on to them.
+    const core::Property* property = nullptr;
+    const core::TimeContext* ctx = nullptr;
 };
 
 class Sandbox::Impl {
@@ -34,6 +40,13 @@ public:
     lua_State* L = nullptr;
     int budget = 200000;
     bool exhausted = false;
+
+    // Bytes Lua may hold. The instruction budget bounds TIME and does nothing about
+    // memory: `('x'):rep(1000):gsub('x', ('y'):rep(1000))` builds a megabyte in a handful
+    // of instructions, and the same line with bigger numbers builds a gigabyte.
+    std::size_t memoryBudget = 64ULL * 1024 * 1024;
+    std::size_t memoryUsed = 0;
+    bool outOfMemory = false;
     Inputs inputs;
     std::map<std::string, int> chunks;  // source -> registry reference
 

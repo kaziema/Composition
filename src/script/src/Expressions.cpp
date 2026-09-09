@@ -331,6 +331,137 @@ int length(lua_State* L) {
     return 1;
 }
 
+// --- loopOut / loopIn --------------------------------------------------------
+//
+// These read the animation they are attached to, which is why the whole property is
+// handed in rather than just the expression's text. They are also the single most pasted
+// AE expression after wiggle: `loopOut()` on a two-keyframe move is how most looping
+// motion in a short-form edit is made.
+
+enum class LoopKind { Cycle, PingPong, Offset, Continue };
+
+LoopKind loopKindFrom(const char* name) {
+    if (name == nullptr) return LoopKind::Cycle;
+    if (std::strcmp(name, "pingpong") == 0) return LoopKind::PingPong;
+    if (std::strcmp(name, "offset") == 0) return LoopKind::Offset;
+    if (std::strcmp(name, "continue") == 0) return LoopKind::Continue;
+    return LoopKind::Cycle;
+}
+
+core::Value scaled(const core::Value& v, double by) {
+    core::Value out = v;
+    for (int i = 0; i < out.count; ++i) {
+        out.c[static_cast<std::size_t>(i)] *= by;
+    }
+    return out;
+}
+
+core::Value added(const core::Value& a, const core::Value& b) {
+    core::Value out = a;
+    for (int i = 0; i < out.count && i < b.count; ++i) {
+        out.c[static_cast<std::size_t>(i)] += b.c[static_cast<std::size_t>(i)];
+    }
+    return out;
+}
+
+core::Value subtracted(const core::Value& a, const core::Value& b) {
+    core::Value out = a;
+    for (int i = 0; i < out.count && i < b.count; ++i) {
+        out.c[static_cast<std::size_t>(i)] -= b.c[static_cast<std::size_t>(i)];
+    }
+    return out;
+}
+
+// Shared by loopOut and loopIn. `outward` picks which end of the animation loops.
+int loop(lua_State* L, bool outward) {
+    Inputs* in = inputsOf(L);
+    if (in == nullptr || in->property == nullptr || in->ctx == nullptr) {
+        return luaL_error(L, "loop is not available here");
+    }
+    const core::Property& prop = *in->property;
+    const core::TimeContext& ctx = *in->ctx;
+
+    // Fewer than two keyframes is not an error, it just cannot loop. Returning the value
+    // unchanged is what AE does and means `loopOut()` can sit on a property while you are
+    // still keyframing it, rather than erroring until you finish.
+    if (prop.keys.size() < 2) {
+        pushValue(L, in->value);
+        return 1;
+    }
+
+    const LoopKind kind = loopKindFrom(luaL_optstring(L, 1, "cycle"));
+    const int requested = static_cast<int>(luaL_optinteger(L, 2, 0));
+
+    const double firstKey = to_seconds(prop.keys.front().time, ctx);
+    const double lastKey = to_seconds(prop.keys.back().time, ctx);
+
+    // numKeyframes limits how much of the animation participates, counted from the end
+    // for loopOut and from the start for loopIn. Zero means all of it.
+    double from = firstKey;
+    double to = lastKey;
+    if (requested > 0 && requested < static_cast<int>(prop.keys.size())) {
+        const std::size_t span = static_cast<std::size_t>(requested);
+        if (outward) {
+            from = to_seconds(prop.keys[prop.keys.size() - 1 - span].time, ctx);
+        } else {
+            to = to_seconds(prop.keys[span].time, ctx);
+        }
+    }
+
+    const double t = in->time;
+    const double period = to - from;
+
+    // Inside the keyframed range there is nothing to loop: the keyframes speak for
+    // themselves and the expression must not second-guess them.
+    if (period <= 0.0 || (outward && t <= lastKey) || (!outward && t >= firstKey)) {
+        pushValue(L, in->value);
+        return 1;
+    }
+
+    const double edge = outward ? to : from;
+    const double delta = outward ? t - edge : edge - t;
+
+    if (kind == LoopKind::Continue) {
+        // Carry on at the speed of the last segment rather than looping at all. Sampled
+        // over a small step because the property already knows how to interpolate, and
+        // duplicating its easing here would drift from it.
+        const double step = 1.0 / 60.0;
+        const core::Value a = prop.evaluate(outward ? edge - step : edge + step, ctx);
+        const core::Value b = prop.evaluate(edge, ctx);
+        pushValue(L, added(b, scaled(subtracted(b, a), delta / step)));
+        return 1;
+    }
+
+    const double cycles = std::floor(delta / period);
+    double phase = delta - cycles * period;
+
+    // The FIRST pass past the end is the one that runs backwards: the animation reaches
+    // its last keyframe and comes straight back. So the reflected passes are the even
+    // ones, counting the first as zero. Getting this the wrong way round still looks like
+    // a ping-pong at the midpoint, which is exactly why it needs a test that samples
+    // somewhere else.
+    if (kind == LoopKind::PingPong && std::fmod(cycles, 2.0) < 1.0) {
+        phase = period - phase;
+    }
+
+    const double sampleAt = outward ? from + phase : to - phase;
+    core::Value value = prop.evaluate(sampleAt, ctx);
+
+    if (kind == LoopKind::Offset) {
+        // Each pass starts where the last one ended, so a move that travels keeps
+        // travelling instead of snapping back.
+        const core::Value start = prop.evaluate(from, ctx);
+        const core::Value end = prop.evaluate(to, ctx);
+        const core::Value stride = outward ? subtracted(end, start) : subtracted(start, end);
+        value = added(value, scaled(stride, cycles + 1.0));
+    }
+    pushValue(L, value);
+    return 1;
+}
+
+int loopOut(lua_State* L) { return loop(L, true); }
+int loopIn(lua_State* L) { return loop(L, false); }
+
 }  // namespace
 
 void pushValue(lua_State* L, const core::Value& value) {
@@ -406,6 +537,8 @@ void installExpressionLibrary(lua_State* L) {
         {"degreesToRadians", degreesToRadians},
         {"radiansToDegrees", radiansToDegrees},
         {"length", length},
+        {"loopOut", loopOut},
+        {"loopIn", loopIn},
         {nullptr, nullptr},
     };
     for (const luaL_Reg* fn = kGlobals; fn->func != nullptr; ++fn) {

@@ -46,6 +46,6 @@ add_library(ruby::ui ALIAS ruby_ui)
 target_include_directories(ruby_ui PUBLIC include)
 # core is PUBLIC: ruby_ui's own headers expose core::Project and core::Composition.
 target_link_libraries(ruby_ui
-    PUBLIC Qt6::Widgets ruby::core ruby::gpu ruby::engine ruby::media ruby::audio ruby::beat ruby::io
+    PUBLIC Qt6::Widgets ruby::core ruby::gpu ruby::engine ruby::media ruby::audio ruby::beat ruby::io ruby::script
     PRIVATE ruby_warnings
 )

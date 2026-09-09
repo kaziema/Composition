@@ -1,9 +1,36 @@
 #include "SandboxImpl.h"
 
+#include <cmath>
+#include <cstdlib>
 #include <string>
 
 namespace ruby::script {
 namespace {
+
+// Lua's allocator, with a ceiling.
+//
+// Refusing an allocation is how you say no to memory the way the count hook says no to
+// time. Lua handles a null return from here properly: it raises a normal "not enough
+// memory" error, which pcall catches like anything else.
+void* cappedAlloc(void* ud, void* ptr, std::size_t osize, std::size_t nsize) {
+    auto* impl = static_cast<Sandbox::Impl*>(ud);
+    const std::size_t had = (ptr != nullptr) ? osize : 0;
+
+    if (nsize == 0) {
+        impl->memoryUsed -= had;
+        std::free(ptr);
+        return nullptr;
+    }
+    if (nsize > had && impl->memoryUsed + (nsize - had) > impl->memoryBudget) {
+        impl->outOfMemory = true;
+        return nullptr;
+    }
+    void* made = std::realloc(ptr, nsize);
+    if (made != nullptr) {
+        impl->memoryUsed = impl->memoryUsed - had + nsize;
+    }
+    return made;
+}
 
 Sandbox::Impl* implOf(lua_State* L) {
     lua_getfield(L, LUA_REGISTRYINDEX, "ruby.impl");
@@ -44,8 +71,14 @@ void openSafeLibraries(lua_State* L) {
     // which makes every guarantee above conditional on what that code turns out to be.
     // `collectgarbage` lets a script stall the process without executing many
     // instructions, which walks around the budget rather than through it.
+    //
+    // `_G` goes too, and that one is subtle. Every run gets a fresh environment whose
+    // reads fall through to the real globals, so a bare `wiggle = f` lands harmlessly in
+    // the throwaway table. But `_G.wiggle = f` names the real table explicitly and walks
+    // straight past that, clobbering wiggle for every other expression in the project.
     for (const char* name : {"dofile", "loadfile", "load", "loadstring", "require",
-                             "collectgarbage", "print", "rawequal", "rawlen"}) {
+                             "collectgarbage", "print", "rawequal", "rawlen",
+                             "rawget", "rawset", "_G"}) {
         lua_pushnil(L);
         lua_setglobal(L, name);
     }
@@ -102,7 +135,7 @@ Sandbox::~Sandbox() = default;
 
 std::unique_ptr<Sandbox> Sandbox::create() {
     std::unique_ptr<Sandbox> self(new Sandbox());
-    self->impl_->L = luaL_newstate();
+    self->impl_->L = lua_newstate(cappedAlloc, self->impl_.get());
     if (self->impl_->L == nullptr) {
         return nullptr;
     }
@@ -133,6 +166,11 @@ void Sandbox::setInputs(double time, const core::Value& value, std::uint64_t see
     lua_setglobal(impl_->L, "time");
     pushValue(impl_->L, value);
     lua_setglobal(impl_->L, "value");
+}
+
+void Sandbox::setProperty(const core::Property* prop, const core::TimeContext* ctx) {
+    impl_->inputs.property = prop;
+    impl_->inputs.ctx = ctx;
 }
 
 std::size_t Sandbox::cachedChunks() const noexcept { return impl_->chunks.size(); }
@@ -169,9 +207,34 @@ Sandbox::Outcome Sandbox::evaluate(const std::string& source) {
     }
 
     impl_->exhausted = false;
+    impl_->outOfMemory = false;
     lua_sethook(L, countHook, LUA_MASKCOUNT, impl_->budget);
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+
+    // Every run gets a FRESH environment, and this is the most important line in the file.
+    //
+    // Without it, an expression that writes a global writes it for the whole sandbox:
+    // `wiggle = function() return 999 end` in one preset silently replaces wiggle for
+    // every other expression in the project. That is not a way out of the process, it is
+    // a way to corrupt everybody else's output, which is worse.
+    //
+    // The fresh table falls through to the real globals for reads, so time, value, wiggle
+    // and the rest are all visible. Writes land in the throwaway table and go with it.
+    lua_newtable(L);                       // env
+    lua_newtable(L);                       // metatable
+    lua_pushglobaltable(L);
+    lua_setfield(L, -2, "__index");
+
+    // And hide this metatable, or `getmetatable(_ENV).__index` hands back the real global
+    // table and everything above is undone by one line. Same fix as the vector type: the
+    // pattern is that anything holding a reference to something shared needs it.
+    lua_pushliteral(L, "environment");
+    lua_setfield(L, -2, "__metatable");
+
+    lua_setmetatable(L, -2);
+    lua_setupvalue(L, -2, 1);              // _ENV is a main chunk's first upvalue
+
     const int status = lua_pcall(L, 0, 1, 0);
 
     // Always cleared, including on the error path. A hook left installed would fire during
@@ -180,14 +243,28 @@ Sandbox::Outcome Sandbox::evaluate(const std::string& source) {
     lua_sethook(L, nullptr, 0, 0);
 
     if (status != LUA_OK) {
-        out.exhausted = impl_->exhausted;
+        out.exhausted = impl_->exhausted || impl_->outOfMemory;
         out.error = lua_tostring(L, -1) != nullptr ? lua_tostring(L, -1) : "failed";
         lua_pop(L, 1);
         return out;
     }
 
     if (readValue(L, -1, out.value)) {
-        out.ok = true;
+        // A non-finite result is refused rather than handed on. `0/0` is a NaN that
+        // spreads through every calculation it touches and ends up as a layer that
+        // silently does not draw, with nothing anywhere saying why. Falling back to the
+        // keyframed value is both recoverable and visible.
+        bool finite = true;
+        for (int i = 0; i < out.value.count; ++i) {
+            if (!std::isfinite(out.value.c[static_cast<std::size_t>(i)])) {
+                finite = false;
+            }
+        }
+        if (finite) {
+            out.ok = true;
+        } else {
+            out.error = "expression produced a value that is not a finite number";
+        }
     } else {
         out.error = "expression did not return a number or a vector";
     }

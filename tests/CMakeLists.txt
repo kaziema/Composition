@@ -13,6 +13,14 @@ ruby_add_test(test_transform)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE ruby::script ruby_warnings)
 add_test(NAME test_sandbox COMMAND test_sandbox)
+
+add_executable(test_expressions test_expressions.cpp)
+target_link_libraries(test_expressions PRIVATE ruby::script ruby::core ruby_warnings)
+add_test(NAME test_expressions COMMAND test_expressions)
+
+add_executable(test_aeimport test_aeimport.cpp)
+target_link_libraries(test_aeimport PRIVATE ruby::script ruby::core ruby_warnings)
+add_test(NAME test_aeimport COMMAND test_aeimport)
 ruby_add_test(test_project)
 
 add_executable(test_projectio test_projectio.cpp)

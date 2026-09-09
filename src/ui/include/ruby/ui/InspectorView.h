@@ -48,6 +48,11 @@ protected:
     void mouseReleaseEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
 
+    // Right click on a property opens the expression menu. There is nowhere else in the
+    // app to type one, and a property that can carry an expression but gives you no way
+    // to write it is the same lie the Mode column used to tell.
+    void contextMenuEvent(QContextMenuEvent* e) override;
+
 private:
     // Points at a property that may live on the layer itself or on one of its effects.
     // `effect` is -1 for the layer's own transform properties.
@@ -87,6 +92,7 @@ private:
     [[nodiscard]] double componentValue(const ValueField& field) const;
     void applyValue(const ValueField& field, double value);
     void commitEditor();
+    void editExpression(const PropRef& ref);
 
     core::Composition* comp_ = nullptr;
     std::optional<core::LayerId> selected_;

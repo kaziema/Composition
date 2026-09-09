@@ -1,5 +1,7 @@
 #include "ruby/core/Transform.h"
 
+#include "ruby/core/Expressions.h"
+
 #include <cmath>
 
 namespace ruby::core {
@@ -13,7 +15,10 @@ double componentOr(const Layer& layer, std::string_view key, int index, double f
     if (prop == nullptr) {
         return fallback;
     }
-    const Value v = prop->evaluate(seconds, ctx);
+    // Through core::evaluate, not Property::evaluate, so an expression on Position or
+    // Rotation actually runs. Falls straight back to keyframes when no interpreter is
+    // installed, which is every test that does not care.
+    const Value v = evaluate(layer, *prop, seconds, ctx);
     const double got = (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
 
     // A non-finite value here would poison the whole matrix, and a NaN matrix reaching the

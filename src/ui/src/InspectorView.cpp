@@ -4,6 +4,15 @@
 #include <QHelpEvent>
 #include <QMouseEvent>
 #include <QToolTip>
+#include <QContextMenuEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QMenu>
+#include <QPlainTextEdit>
+#include <QVBoxLayout>
+#include <QPushButton>
+#include "ruby/script/AeImport.h"
 #include <QPainter>
 #include <QPainterPath>
 #include <algorithm>
@@ -284,9 +293,18 @@ void InspectorView::paintEvent(QPaintEvent*) {
                 const int w = fm.horizontalAdvance(parts.at(c));
                 const QRect field(x, y, w, metrics::kInspectorRowH);
 
-                p.setPen(kValueScrubbable);
+                // A property driven by an expression is drawn in the expression colour
+                // and underlined solid rather than dotted. Without a mark, a value that
+                // ignores what you type into it looks like a broken field: the number is
+                // not editable because something else is deciding it, and that has to be
+                // visible before you try.
+                const bool expressed =
+                    prop.expression.has_value() && !prop.expression->empty();
+
+                p.setPen(expressed ? kExpressionText : kValueScrubbable);
                 p.drawText(field, Qt::AlignVCenter | Qt::AlignRight, parts.at(c));
-                p.setPen(QPen(kValueUnderline, 1.0, Qt::DotLine));
+                p.setPen(QPen(expressed ? kExpressionText : kValueUnderline, 1.0,
+                              expressed ? Qt::SolidLine : Qt::DotLine));
                 p.drawLine(field.left(), cy + 7, field.right(), cy + 7);
 
                 fields_.push_back({ref, c, field, true});
@@ -311,6 +329,132 @@ void InspectorView::paintEvent(QPaintEvent*) {
             y += metrics::kInspectorRowH;
         }
     }
+}
+
+void InspectorView::contextMenuEvent(QContextMenuEvent* e) {
+    const ValueField* field = fieldAt(e->pos());
+    if (field == nullptr) {
+        return;
+    }
+    const core::Property* prop = resolve(field->property);
+    if (prop == nullptr) {
+        return;
+    }
+    const bool has = prop->expression.has_value() && !prop->expression->empty();
+
+    QMenu menu(this);
+    QAction* edit = menu.addAction(has ? QStringLiteral("Edit Expression...")
+                                       : QStringLiteral("Add Expression..."));
+    QAction* remove = menu.addAction(QStringLiteral("Remove Expression"));
+    remove->setEnabled(has);
+
+    const PropRef ref = field->property;
+    connect(edit, &QAction::triggered, this, [this, ref] { editExpression(ref); });
+    connect(remove, &QAction::triggered, this, [this, ref] {
+        core::Property* target = resolveMutable(ref);
+        if (target == nullptr) {
+            return;
+        }
+        emit editBegan(QStringLiteral("Remove Expression"));
+        target->expression.reset();
+        emit editEnded();
+        emit propertyEdited();
+        update();
+    });
+    menu.exec(e->globalPos());
+}
+
+void InspectorView::editExpression(const PropRef& ref) {
+    core::Property* prop = resolveMutable(ref);
+    if (prop == nullptr) {
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Expression — %1")
+                              .arg(QString::fromStdString(prop->label)));
+    dialog.setModal(true);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* editor = new QPlainTextEdit(&dialog);
+    editor->setPlainText(prop->expression.has_value()
+                             ? QString::fromStdString(*prop->expression)
+                             : QString());
+    editor->setMinimumSize(420, 120);
+    editor->setFont(monoFont(12));
+    layout->addWidget(editor);
+
+    // The whole vocabulary, in the dialog. Nobody remembers an expression language they
+    // use twice a month, and sending people to documentation that does not exist yet is
+    // worse than a crowded dialog.
+    auto* help = new QLabel(
+        QStringLiteral("time · value · wiggle(freq, amp) · loopOut('cycle'|'pingpong'|"
+                       "'offset') · linear(t, tMin, tMax, a, b) · ease(...) · "
+                       "clamp(v, lo, hi) · vec(x, y)\n"
+                       "Vectors index from 1: value[1], value.x. Empty removes the "
+                       "expression."),
+        &dialog);
+    help->setWordWrap(true);
+    help->setStyleSheet(QStringLiteral("color: %1;").arg(theme::kTextDim.name()));
+    layout->addWidget(help);
+
+    // Offered, never automatic. Running the converter over something already written in
+    // Lua would be a fine way to break a working expression, so the button appears only
+    // when the text actually looks like After Effects, and pressing it is the user
+    // deciding rather than the app assuming.
+    auto* convert = new QPushButton(QStringLiteral("Convert from After Effects"), &dialog);
+    auto* report = new QLabel(&dialog);
+    report->setWordWrap(true);
+    layout->addWidget(convert);
+    layout->addWidget(report);
+
+    const auto refreshOffer = [convert, editor] {
+        convert->setVisible(
+            script::looksLikeAfterEffects(editor->toPlainText().toStdString()));
+    };
+    refreshOffer();
+    connect(editor, &QPlainTextEdit::textChanged, &dialog, refreshOffer);
+
+    connect(convert, &QPushButton::clicked, &dialog, [editor, report] {
+        const script::Conversion c =
+            script::convertFromAfterEffects(editor->toPlainText().toStdString());
+        editor->setPlainText(QString::fromStdString(c.lua));
+
+        // What it did and what it could not do, both. A converter that stays silent about
+        // the half it skipped is a converter you trust once.
+        QStringList lines;
+        for (const std::string& note : c.notes) {
+            lines << QStringLiteral("· %1").arg(QString::fromStdString(note));
+        }
+        for (const std::string& warning : c.warnings) {
+            lines << QStringLiteral("! %1").arg(QString::fromStdString(warning));
+        }
+        report->setText(lines.join(QLatin1Char('\n')));
+        report->setStyleSheet(
+            QStringLiteral("color: %1;")
+                .arg(c.clean() ? theme::kTextDim.name() : theme::kValueScrubbable.name()));
+    });
+
+    auto* buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString text = editor->toPlainText().trimmed();
+
+    emit editBegan(QStringLiteral("Expression"));
+    if (text.isEmpty()) {
+        prop->expression.reset();
+    } else {
+        prop->expression = text.toStdString();
+    }
+    emit editEnded();
+    emit propertyEdited();
+    update();
 }
 
 const InspectorView::ValueField* InspectorView::fieldAt(const QPoint& pos) const {

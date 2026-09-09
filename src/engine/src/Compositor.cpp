@@ -1,5 +1,6 @@
 #include "ruby/engine/Compositor.h"
 
+#include "ruby/core/Expressions.h"
 #include "ruby/core/Transform.h"
 
 #include <algorithm>
@@ -88,14 +89,6 @@ Rgb colorFor(core::LabelColor label) noexcept {
     return linearFrom8Bit(0x4a, 0x4a, 0x4a);
 }
 
-double componentOr(const core::Property* prop, int index, double fallback,
-                   double seconds, const core::TimeContext& ctx) {
-    if (prop == nullptr) {
-        return fallback;
-    }
-    const core::Value v = prop->evaluate(seconds, ctx);
-    return (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
-}
 
 }  // namespace
 
@@ -492,8 +485,14 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         const core::Layer& layer = *item.layer;
         const Content& content = item.content;
 
+        // Through core::evaluate, like every other transform property. Reading it with
+        // Property::evaluate meant an expression on Opacity was silently ignored while the
+        // identical expression on Position worked, which is the worst kind of
+        // inconsistency: it looks like the expression is wrong.
         const core::Property* opacity = layer.find("opacity");
-        const auto alpha = static_cast<float>(componentOr(opacity, 0, 100.0, seconds, ctx));
+        const double alphaPct =
+            opacity != nullptr ? core::evaluate(layer, *opacity, seconds, ctx).c[0] : 100.0;
+        const auto alpha = static_cast<float>(std::isfinite(alphaPct) ? alphaPct : 100.0);
 
         // Media fills the quad; without it the label colour stands in.
         Rgb tint = (content.texture != nullptr) ? Rgb{1.0f, 1.0f, 1.0f}

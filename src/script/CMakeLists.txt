@@ -1,6 +1,8 @@
 add_library(ruby_script STATIC
     src/Sandbox.cpp
     src/Expressions.cpp
+    src/LuaHost.cpp
+    src/AeImport.cpp
 )
 add_library(ruby::script ALIAS ruby_script)
 

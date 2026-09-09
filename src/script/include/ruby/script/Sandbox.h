@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "ruby/core/Animation.h"
+#include "ruby/core/Document.h"
 
 namespace ruby::script {
 
@@ -65,6 +65,10 @@ public:
     // wiggle differently because their seeds differ; the same layer wiggles identically
     // on every render, on every machine, because its seed does not.
     void setInputs(double time, const core::Value& value, std::uint64_t seed);
+
+    // The property being evaluated, for the expression functions that read the animation
+    // they are attached to. Borrowed for the duration of the next evaluate() only.
+    void setProperty(const core::Property* prop, const core::TimeContext* ctx);
 
     // Any other global a script can read.
     void set(const char* name, double value);

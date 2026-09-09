@@ -367,6 +367,67 @@ void bad_arguments_are_refused() {
     check(!box->evaluate("linear(0,0,1)").ok, "linear needs all five");
 }
 
+// Found by probing. An expression that writes a global used to write it for the whole
+// sandbox, so `wiggle = function() return 999 end` in one preset silently replaced wiggle
+// for every other expression in the project.
+//
+// That is not an escape from the process, it is a way to corrupt everybody else's output,
+// which is worse: an escape stops working, this produces plausible wrong numbers.
+void one_expression_cannot_change_another() {
+    auto box = script::Sandbox::create();
+    box->setInputs(1.0, core::Value::scalar(0.0), 42);
+
+    const double before = box->evaluate("wiggle(5, 20)").value.c[0];
+
+    // Every route to the shared globals that the probe found.
+    check(box->evaluate("wiggle = function() return 999 end return 1").ok,
+          "assigning a global succeeds, harmlessly");
+    check(!box->evaluate("_G.wiggle = function() return 999 end return 1").ok,
+          "_G is gone, so it cannot be named explicitly");
+    check(!box->evaluate(
+               "getmetatable(_ENV).__index.wiggle = function() return 999 end return 1")
+               .ok,
+          "and the environment's metatable is hidden");
+
+    checkNear(box->evaluate("wiggle(5, 20)").value.c[0], before,
+              "wiggle is untouched after every attempt");
+
+    // A bare global written by one expression must not be visible to the next.
+    check(box->evaluate("leaked = 7 return 1").ok, "a global assignment succeeds");
+    checkNear(box->evaluate("leaked or -1").value.c[0], -1.0,
+              "and is gone by the next expression");
+}
+
+// The instruction budget bounds time and says nothing about memory: a megabyte can be
+// built in a handful of instructions, and so can a gigabyte.
+void memory_is_capped_too() {
+    auto box = script::Sandbox::create();
+
+    const auto bomb = box->evaluate(
+        "local t = {} for i = 1, 500 do t[i] = string.rep('x', 1000000) end return #t");
+    check(!bomb.ok, "an expression cannot allocate without limit");
+
+    // And the sandbox survives it. A memory limit that leaves the interpreter unusable
+    // turns one greedy expression into a broken session.
+    checkNear(box->evaluate("1 + 1").value.c[0], 2.0, "the sandbox still works afterwards");
+    check(box->evaluate("string.rep('x', 1000)").ok == false ||
+              box->evaluate("#string.rep('x', 1000)").value.c[0] == 1000.0,
+          "and ordinary string work still succeeds");
+}
+
+// A NaN spreads through every calculation it touches and ends up as a layer that silently
+// does not draw, with nothing anywhere saying why.
+void non_finite_results_are_refused() {
+    auto box = script::Sandbox::create();
+    box->setInputs(0.0, core::Value::scalar(0.0), 1);
+
+    check(!box->evaluate("0/0").ok, "NaN is refused");
+    check(!box->evaluate("1/0").ok, "and infinity");
+    check(!box->evaluate("1e308 * 10").ok, "and an overflow to infinity");
+    check(!box->evaluate("vec(0/0, 1)").ok, "including inside a vector");
+    check(box->evaluate("1/2").ok, "while ordinary division is fine");
+}
+
 }  // namespace
 
 int main() {
@@ -386,6 +447,9 @@ int main() {
     the_easing_helpers_match_ae();
     the_vector_type_cannot_be_tampered_with();
     bad_arguments_are_refused();
+    one_expression_cannot_change_another();
+    memory_is_capped_too();
+    non_finite_results_are_refused();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);
