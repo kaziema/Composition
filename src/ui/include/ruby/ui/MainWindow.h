@@ -75,6 +75,19 @@ public slots:
     void pasteLayer();
     void deselectAll();
 
+    // Layer > New. Both land above the selected layer, as AE does, so a new layer arrives
+    // where you were looking rather than at the top of a twenty layer stack.
+    void newSolidLayer();
+    void newNullLayer();
+
+    // Also the editor: double-clicking a text layer's name reopens it seeded.
+    void newTextLayer();
+    void editTextLayer();
+
+    // Shared by both: place the layer, span the composition, select it, refresh.
+    core::Layer* createLayer(const QString& undoLabel, const std::string& name,
+                             core::LayerKind kind);
+
     // Right click on a layer. Pops the same QActions the Edit and Layer menus use, so
     // the two can never drift apart or show different shortcuts for the same thing.
     void showLayerContextMenu(const QPoint& globalPos);

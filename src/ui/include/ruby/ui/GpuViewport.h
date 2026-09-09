@@ -2,6 +2,7 @@
 
 #include <QWidget>
 
+#include <map>
 #include <memory>
 
 #include "ruby/core/Document.h"
@@ -43,12 +44,25 @@ private:
     void ensureSurface();
     void configureSurface();
 
+    // Rasterises every text layer that needs it and uploads the results. Cached on the
+    // layer's own text and style, so a comp full of captions costs one raster each rather
+    // than one per frame; scrubbing a static caption re-uploads nothing.
+    void refreshTextTextures();
+
+    struct TextTexture {
+        gpu::TextureHandle texture;
+        int width = 0;
+        int height = 0;
+        std::size_t key = 0;  // hash of everything that changes the picture
+    };
+
     gpu::GpuDevice* device_ = nullptr;
     gpu::SurfaceHandle surface_;
     std::unique_ptr<engine::Compositor> compositor_;
     const core::Project* project_ = nullptr;
     const core::Composition* comp_ = nullptr;
     double currentTime_ = 0.0;
+    std::map<core::LayerId, TextTexture> textTextures_;
 };
 
 }  // namespace ruby::ui

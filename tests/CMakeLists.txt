@@ -28,6 +28,18 @@ target_link_libraries(test_audiooutput PRIVATE ruby::audio ruby_warnings)
 add_test(NAME test_audiooutput COMMAND test_audiooutput)
 set_tests_properties(test_audiooutput PROPERTIES SKIP_RETURN_CODE 77)
 
+# Needs Qt's font stack and a platform plugin; offscreen is enough.
+add_executable(test_textraster test_textraster.cpp)
+target_link_libraries(test_textraster PRIVATE ruby::ui ruby_warnings)
+add_test(NAME test_textraster COMMAND test_textraster -platform offscreen)
+set_tests_properties(test_textraster PROPERTIES SKIP_RETURN_CODE 77)
+
+# Needs a GPU adapter; reports 77 and is recorded as SKIPPED without one.
+add_executable(test_compositor test_compositor.cpp)
+target_link_libraries(test_compositor PRIVATE ruby::engine ruby::gpu ruby_warnings)
+add_test(NAME test_compositor COMMAND test_compositor)
+set_tests_properties(test_compositor PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(test_history test_history.cpp)
 target_link_libraries(test_history PRIVATE ruby::io ruby_warnings)
 add_test(NAME test_history COMMAND test_history)

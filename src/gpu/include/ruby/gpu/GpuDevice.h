@@ -82,6 +82,25 @@ public:
 
 // A draw pipeline. The engine's own passes (composite, blit) are a handful of these;
 // the effect library is compute.
+// How a draw combines with what is already in the target.
+//
+// These are the blend modes expressible as fixed-function GPU state, which is why they
+// are a closed enum here rather than something richer. Overlay, Soft Light, Hard Light
+// and Difference cannot be written as a blend equation at all: they need the shader to
+// read the destination, which is a different mechanism and a separate piece of work.
+//
+// Everything assumes PREMULTIPLIED source colour. That is what makes the factors below
+// compose correctly; with straight alpha, Screen and Add both blow out wherever a layer
+// is partly transparent.
+enum class BlendPreset {
+    AlphaOver,  // Normal
+    Add,
+    Screen,
+    Multiply,
+    Lighten,
+    Darken,
+};
+
 class RenderPipeline {
 public:
     virtual ~RenderPipeline() = default;
@@ -137,7 +156,7 @@ public:
     [[nodiscard]] virtual RenderPipelineHandle create_render_pipeline(
         std::string_view wgsl, std::string_view vertex_entry,
         std::string_view fragment_entry, TextureFormat target_format,
-        std::string_view label) = 0;
+        std::string_view label, BlendPreset blend = BlendPreset::AlphaOver) = 0;
 
     // Presentation. `native_window` is an NSView* on macOS, an HWND on Windows.
     [[nodiscard]] virtual SurfaceHandle create_surface(void* native_window) = 0;

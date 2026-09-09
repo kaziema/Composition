@@ -9,6 +9,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QToolTip>
+#include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
 #include <QHBoxLayout>
@@ -1103,6 +1104,48 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         }
         Layer* layer = comp_->find(row.layer);
         if (layer == nullptr) {
+            return;
+        }
+
+        // The Mode cell opens the blend menu. Until now this column displayed a value
+        // with no way to change it, which is the same lie as a mode the compositor
+        // ignored, just from the other end.
+        const int modeX = trackLeft() - kModeW - kParentW;
+        if (pos.x() >= modeX && pos.x() < modeX + kModeW) {
+            QMenu menu(this);
+            const core::BlendMode modes[] = {
+                core::BlendMode::Normal,    core::BlendMode::Add,
+                core::BlendMode::Screen,    core::BlendMode::Multiply,
+                core::BlendMode::Lighten,   core::BlendMode::Darken,
+                core::BlendMode::Overlay,   core::BlendMode::SoftLight,
+                core::BlendMode::HardLight, core::BlendMode::Difference};
+            for (const core::BlendMode mode : modes) {
+                // Six of these are real; the other four are not implemented yet and say
+                // so rather than being silently offered and silently ignored.
+                const bool supported = mode == core::BlendMode::Normal ||
+                                       mode == core::BlendMode::Add ||
+                                       mode == core::BlendMode::Screen ||
+                                       mode == core::BlendMode::Multiply ||
+                                       mode == core::BlendMode::Lighten ||
+                                       mode == core::BlendMode::Darken;
+                QAction* action = menu.addAction(
+                    supported ? blendName(mode)
+                              : QStringLiteral("%1  (not yet)").arg(blendName(mode)));
+                action->setCheckable(true);
+                action->setChecked(layer->blend == mode);
+                action->setEnabled(supported || layer->blend == mode);
+                connect(action, &QAction::triggered, this, [this, layer, mode] {
+                    if (layer->blend == mode) {
+                        return;
+                    }
+                    emit editBegan(QStringLiteral("Blend Mode"));
+                    layer->blend = mode;
+                    emit editEnded();
+                    emit layersChanged();
+                    update();
+                });
+            }
+            menu.exec(e->globalPosition().toPoint());
             return;
         }
 

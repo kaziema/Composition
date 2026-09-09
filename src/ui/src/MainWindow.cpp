@@ -31,6 +31,8 @@
 #include "ruby/ui/InspectorView.h"
 #include "ruby/io/ProjectIO.h"
 #include "ruby/ui/NewCompositionDialog.h"
+#include "ruby/ui/NewSolidDialog.h"
+#include "ruby/ui/NewTextDialog.h"
 #include "ruby/ui/Playback.h"
 #include "ruby/ui/PooledMediaPanel.h"
 #include "ruby/ui/ProjectPanel.h"
@@ -1043,6 +1045,188 @@ media::ConformState MainWindow::conformAudio(const QString& path) {
     return media::ConformState::Ready;
 }
 
+// --- Layer > New -------------------------------------------------------------
+
+// Everything a newly created layer has in common, so solid and null cannot drift apart in
+// where they land, how long they are, or whether they are undoable.
+core::Layer* MainWindow::createLayer(const QString& undoLabel, const std::string& name,
+                                     core::LayerKind kind) {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        statusBar()->showMessage(
+            QStringLiteral("No composition open. Composition > New Composition first."),
+            5000);
+        return nullptr;
+    }
+    recordEdit(undoLabel);
+
+    core::Layer& layer = project_.addLayer(*comp, name, kind);
+    // A created layer spans the whole composition. It has no source to take a length
+    // from, and a new layer you have to trim open before you can see it is a new layer
+    // that looks broken.
+    layer.inPoint = core::TimeValue::seconds(0.0);
+    layer.outPoint = core::TimeValue::seconds(comp->duration);
+
+    // addLayer puts it on top; move it above whatever was selected instead. In a stack of
+    // twenty, "on top" means "somewhere you now have to go and find".
+    const core::LayerId made = layer.id;
+    if (const auto selected = timelinePanel_ != nullptr ? timelinePanel_->selectedLayer()
+                                                        : std::nullopt;
+        selected.has_value() && *selected != made) {
+        const auto from = std::find_if(comp->layers.begin(), comp->layers.end(),
+                                       [made](const core::Layer& l) { return l.id == made; });
+        if (from != comp->layers.end()) {
+            core::Layer moved = std::move(*from);
+            comp->layers.erase(from);
+            const auto at = std::find_if(
+                comp->layers.begin(), comp->layers.end(),
+                [id = *selected](const core::Layer& l) { return l.id == id; });
+            comp->layers.insert(at, std::move(moved));
+        }
+    }
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+        timelinePanel_->selectLayer(made);
+    }
+    if (inspector_ != nullptr) {
+        inspector_->setComposition(comp);
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+    return comp->find(made);
+}
+
+void MainWindow::newSolidLayer() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        statusBar()->showMessage(
+            QStringLiteral("No composition open. Composition > New Composition first."),
+            5000);
+        return;
+    }
+    NewSolidDialog dialog(comp->width, comp->height, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const NewSolidDialog::Settings s = dialog.settings();
+
+    core::Layer* layer =
+        createLayer(QStringLiteral("New Solid"), s.name.toStdString(),
+                    core::LayerKind::Solid);
+    if (layer == nullptr) {
+        return;
+    }
+    // Straight through as 0-1, no gamma conversion: the compositor works in linear light
+    // and a colour picked on screen is what the user meant to see.
+    layer->solidColor = core::Value::rgba(
+        static_cast<double>(s.color.redF()), static_cast<double>(s.color.greenF()),
+        static_cast<double>(s.color.blueF()), 1.0);
+    layer->solidWidth = s.width;
+    layer->solidHeight = s.height;
+
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    statusBar()->showMessage(QStringLiteral("Created solid %1").arg(s.name), 4000);
+}
+
+namespace {
+
+void applyTextSettings(core::Layer& layer, const NewTextDialog::Settings& s) {
+    layer.text = s.text.toStdString();
+    layer.fontFamily = s.fontFamily.toStdString();
+    layer.fontSize = s.fontSize;
+    layer.tracking = s.tracking;
+    layer.lineHeight = s.lineHeight;
+    layer.strokeWidth = s.strokeWidth;
+    layer.textAlign = s.align;
+    layer.textColor = core::Value::rgba(
+        static_cast<double>(s.color.redF()), static_cast<double>(s.color.greenF()),
+        static_cast<double>(s.color.blueF()), static_cast<double>(s.color.alphaF()));
+    layer.strokeColor = core::Value::rgba(static_cast<double>(s.strokeColor.redF()),
+                                          static_cast<double>(s.strokeColor.greenF()),
+                                          static_cast<double>(s.strokeColor.blueF()), 1.0);
+}
+
+NewTextDialog::Settings settingsFrom(const core::Layer& layer) {
+    NewTextDialog::Settings s;
+    s.text = QString::fromStdString(layer.text);
+    s.fontFamily = QString::fromStdString(layer.fontFamily);
+    s.fontSize = layer.fontSize;
+    s.tracking = layer.tracking;
+    s.lineHeight = layer.lineHeight;
+    s.strokeWidth = layer.strokeWidth;
+    s.align = layer.textAlign;
+    s.color = QColor::fromRgbF(layer.textColor.c[0], layer.textColor.c[1],
+                               layer.textColor.c[2], layer.textColor.c[3]);
+    s.strokeColor = QColor::fromRgbF(layer.strokeColor.c[0], layer.strokeColor.c[1],
+                                     layer.strokeColor.c[2], 1.0);
+    return s;
+}
+
+}  // namespace
+
+void MainWindow::newTextLayer() {
+    NewTextDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const NewTextDialog::Settings s = dialog.settings();
+
+    // The layer is named after what it says. A timeline of layers called "Text 1" through
+    // "Text 9" tells you nothing; one called "DROP 09.12" tells you everything.
+    QString name = s.text.split(QLatin1Char('\n')).first().trimmed();
+    if (name.isEmpty()) {
+        name = QStringLiteral("Text");
+    }
+
+    core::Layer* layer =
+        createLayer(QStringLiteral("New Text Layer"), name.toStdString(),
+                    core::LayerKind::Text);
+    if (layer == nullptr) {
+        return;
+    }
+    applyTextSettings(*layer, s);
+    layer->label = core::LabelColor::Lavender;  // the design's colour for text and shape
+
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    statusBar()->showMessage(QStringLiteral("Created text layer"), 4000);
+}
+
+// There is no text field in the inspector yet, so the dialog is also the editor.
+void MainWindow::editTextLayer() {
+    core::Layer* layer = selectedLayer();
+    if (layer == nullptr || layer->kind != core::LayerKind::Text) {
+        return;
+    }
+    NewTextDialog dialog(settingsFrom(*layer), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    recordEdit(QStringLiteral("Edit Text"));
+    applyTextSettings(*layer, dialog.settings());
+
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(activeComposition());
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
+}
+
+void MainWindow::newNullLayer() {
+    if (createLayer(QStringLiteral("New Null"), "Null", core::LayerKind::Null) != nullptr) {
+        statusBar()->showMessage(QStringLiteral("Created null"), 4000);
+    }
+}
+
 void MainWindow::setActiveComposition(core::CompId id) {
     core::Composition* comp = project_.find(id);
     if (comp == nullptr) {
@@ -1438,9 +1622,21 @@ void MainWindow::buildMenus() {
                      QKeySequence(Qt::ALT | Qt::Key_BracketRight), this,
                      [this] { nudgeLayerEdge(false, true); });
     layer->addSeparator();
-    addPending(layer, {QStringLiteral("New Text Layer"), QStringLiteral("New Shape Layer"),
-                       QStringLiteral("New Solid"), QStringLiteral("New Adjustment Layer"),
-                       QStringLiteral("New Null"), QString(),
+    // AE's shortcuts, because muscle memory is the whole reason to match them.
+    layer->addAction(QStringLiteral("New Solid..."),
+                     QKeySequence(QStringLiteral("Ctrl+Y")), this,
+                     &MainWindow::newSolidLayer);
+    layer->addAction(QStringLiteral("New Null"),
+                     QKeySequence(QStringLiteral("Ctrl+Alt+Shift+Y")), this,
+                     &MainWindow::newNullLayer);
+    layer->addAction(QStringLiteral("New Text Layer..."),
+                     QKeySequence(QStringLiteral("Ctrl+Alt+Shift+T")), this,
+                     &MainWindow::newTextLayer);
+    layer->addAction(QStringLiteral("Text Settings..."),
+                     QKeySequence(QStringLiteral("Ctrl+Shift+T")), this,
+                     &MainWindow::editTextLayer);
+    addPending(layer, {QStringLiteral("New Shape Layer"),
+                       QStringLiteral("New Adjustment Layer"), QString(),
                        QStringLiteral("Pre-compose..."), QString(),
                        QStringLiteral("Add Mask"), QStringLiteral("Auto-Roto Subject..."),
                        QString(), QStringLiteral("Time Remap"),

@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "ruby/core/Document.h"
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -30,8 +31,22 @@ public:
 
     // Takes the project because resolving a layer's source means going through the
     // media pool. The composition alone cannot answer "what file is this layer".
+    // Content a layer has that the engine cannot produce itself.
+    //
+    // Text is the reason this exists. Laying out and rasterising type needs a font stack,
+    // and the only one in the tree is Qt's, which lives in the UI module. Rather than drag
+    // Qt into the engine or write a second font stack, the caller hands over a ready
+    // texture and the compositor treats it exactly like decoded footage.
+    struct External {
+        gpu::TextureHandle texture;
+        int width = 0;
+        int height = 0;
+    };
+    using ExternalTextures = std::map<core::LayerId, External>;
+
     void render(const core::Project& project, const core::Composition& comp,
-                double seconds, const gpu::TextureHandle& target);
+                double seconds, const gpu::TextureHandle& target,
+                const ExternalTextures* external = nullptr);
 
 private:
     struct QuadUniforms {
@@ -87,7 +102,14 @@ private:
     [[nodiscard]] Content contentFor(const std::string& path, double seconds);
 
     gpu::GpuDevice& device_;
+    // One quad pipeline per blend mode, built on first use. The blend equation is baked
+    // into a pipeline, so "which blend mode" is a choice of pipeline rather than state we
+    // can set per draw. Every quad is already its own draw call, so this costs nothing.
+    [[nodiscard]] gpu::RenderPipelineHandle quadPipelineFor(core::BlendMode mode);
+
     gpu::RenderPipelineHandle quads_;
+    std::map<core::BlendMode, gpu::RenderPipelineHandle> quadPipelines_;
+    gpu::TextureFormat targetFormat_ = gpu::TextureFormat::BGRA8UnormSrgb;
     std::vector<gpu::BufferHandle> uniforms_;
     gpu::TextureHandle white_;  // stand-in so layers without media use one pipeline
     std::unordered_map<std::string, Source> sources_;
