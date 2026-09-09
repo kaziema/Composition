@@ -436,6 +436,7 @@ void MainWindow::nudgeLayerEdge(bool inPoint, bool trim) {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
+    rebuildMix();
     if (grew) {
         noteCompositionGrew();
     }
@@ -482,6 +483,8 @@ void MainWindow::splitLayerAtPlayhead() {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
+    // Two layers now where there was one, each with new in and out points.
+    rebuildMix();
     markDirty();
 }
 
@@ -770,6 +773,8 @@ void MainWindow::compositionSettings() {
     }
     refreshCompositionTabs();
     projectPanel_->refresh();
+    // A frame rate change retimes any layer whose points are stored in beats or frames.
+    rebuildMix();
     updateStatus();
     markDirty();
 
@@ -847,6 +852,7 @@ void MainWindow::removeSelectedLayer(const QString& undoLabel) {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
+    rebuildMix();
     updateStatus();
     markDirty();
 }
@@ -907,6 +913,7 @@ void MainWindow::pasteLayer() {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
+    rebuildMix();
     updateStatus();
     markDirty();
     statusBar()->showMessage(
@@ -949,6 +956,7 @@ void MainWindow::duplicateLayer() {
     if (viewport_ != nullptr) {
         viewport_->update();
     }
+    rebuildMix();
     updateStatus();
     markDirty();
 }
@@ -1185,6 +1193,45 @@ void MainWindow::addMediaToComposition(core::MediaId id) {
     }
 }
 
+// Republishes the mix from the layers exactly as they stand.
+//
+// This is the fix for audio staying where a clip used to be. Dragging a bar mutates the
+// layer's in and out points and repaints, but the mixer holds its own copy of those times
+// and nothing was telling it they had moved. The clip slid across the timeline and its
+// sound stayed behind, which looks like a sync bug and is really a stale-copy bug.
+//
+// Cheap on purpose: it runs on every mouse move of a drag, so it only reads buffers that
+// are already decoded and never analyses anything.
+void MainWindow::rebuildMix() {
+    if (audioOut_ == nullptr) {
+        return;
+    }
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        audioOut_->setSources({});
+        return;
+    }
+    const core::TimeContext ctx = comp->timeContext();
+
+    std::vector<audio::AudioSource> sources;
+    for (const core::Layer& layer : comp->layers) {
+        if (!layer.media.has_value() || !layer.audioEnabled) {
+            continue;
+        }
+        const auto found = audio_.find(*layer.media);
+        if (found == audio_.end()) {
+            continue;  // not decoded yet; loadAudio will pick it up
+        }
+        audio::AudioSource source;
+        source.buffer = &found->second;
+        source.startSeconds = to_seconds(layer.inPoint, ctx);
+        source.endSeconds = to_seconds(layer.outPoint, ctx);
+        source.sourceOffset = 0.0;
+        sources.push_back(source);
+    }
+    audioOut_->setSources(sources);
+}
+
 // Rebuilds the mix from the active composition.
 //
 // Every layer whose media carries audio is a source, video included. The old version only
@@ -1197,10 +1244,9 @@ void MainWindow::loadAudio() {
         return;
     }
     core::Composition& comp = *active;
-    const core::TimeContext ctx = comp.timeContext();
 
-    std::vector<audio::AudioSource> sources;
     const media::AudioBuffer* rhythmSource = nullptr;
+    std::optional<core::MediaId> rhythmMedia;
 
     for (core::Layer& layer : comp.layers) {
         if (!layer.media.has_value()) {
@@ -1242,34 +1288,23 @@ void MainWindow::loadAudio() {
 
         if (rhythmSource == nullptr && layer.kind == core::LayerKind::Audio) {
             rhythmSource = &buffer;
+            rhythmMedia = *layer.media;
         }
-
-        // The SPEAKER, not the eye. Hiding a layer's picture is not the same as muting
-        // it, and AE keeps them separate for good reason: you turn the picture off to see
-        // what is underneath while still cutting to the sound.
-        if (!layer.audioEnabled) {
-            continue;
-        }
-
-        audio::AudioSource source;
-        source.buffer = &buffer;
-        source.startSeconds = to_seconds(layer.inPoint, ctx);
-        source.endSeconds = to_seconds(layer.outPoint, ctx);
-        source.sourceOffset = 0.0;
-        sources.push_back(source);
     }
 
-    if (audioOut_ != nullptr) {
-        audioOut_->setSources(sources);
-    }
     if (timelinePanel_ != nullptr) {
         timelinePanel_->setAudioPeaks(&peaks_);
     }
+    rebuildMix();
 
     // Rhythm analysis still runs on a dedicated audio layer rather than the mix. Cutting
     // to the music means cutting to the music, not to the music plus whatever dialogue
     // happens to be over it.
-    if (rhythmSource != nullptr) {
+    // Only when the track it would analyse has actually changed. This used to run on
+    // every call, which was survivable while loadAudio ran on composition switches and
+    // would not be now that layer edits reach it.
+    if (rhythmSource != nullptr && analyzedRhythmFor_ != rhythmMedia) {
+        analyzedRhythmFor_ = rhythmMedia;
         auto detector = beat::createDetector();
         if (detector != nullptr && detector->available()) {
             const beat::Result vocal = detector->analyze(*rhythmSource, beat::Lane::Vocal);
@@ -1611,6 +1646,10 @@ QWidget* MainWindow::buildBody() {
         if (viewport_ != nullptr) {
             viewport_->update();
         }
+        // Moving or trimming a bar changes when its sound plays. The mixer holds its own
+        // copy of those times, so it has to be told on every step of the drag, not at the
+        // end: a drag you are listening to should stay in sync while you do it.
+        rebuildMix();
     });
     // The view grows the composition itself on mouse release, since it is the thing that
     // knows a drag ended. The window still has to hear about it: the transport loops on
@@ -1620,7 +1659,7 @@ QWidget* MainWindow::buildBody() {
     // Flipping a speaker changes what is audible, so the mix is republished. It is an
     // undoable edit, which is why the view brackets it with editBegan/editEnded.
     connect(timelinePanel, &TimelinePanel::audioChanged, this, [this] {
-        loadAudio();
+        rebuildMix();
         markDirty();
     });
 
