@@ -29,17 +29,6 @@ void drawArrowhead(QPainterPath& path, qreal cx, qreal cy, qreal dx, qreal dy) {
     path.closeSubpath();
 }
 
-void drawPan(QPainter& p) {
-    p.drawLine(QPointF(8.0, 3.6), QPointF(8.0, 12.4));
-    p.drawLine(QPointF(3.6, 8.0), QPointF(12.4, 8.0));
-
-    QPainterPath heads;
-    drawArrowhead(heads, 8.0, 3.4, 0.0, -1.0);
-    drawArrowhead(heads, 8.0, 12.6, 0.0, 1.0);
-    drawArrowhead(heads, 3.4, 8.0, -1.0, 0.0);
-    drawArrowhead(heads, 12.6, 8.0, 1.0, 0.0);
-    p.fillPath(heads, p.pen().color());
-}
 
 void drawText(QPainter& p) {
     p.drawLine(QPointF(3.8, 3.6), QPointF(12.2, 3.6));
@@ -65,14 +54,27 @@ void drawPen(QPainter& p) {
     p.fillPath(hole, p.pen().color());
 }
 
-void drawMask(QPainter& p) {
-    p.drawRect(QRectF(3.4, 3.4, 9.2, 9.2));
-    QPainterPath fill;
-    fill.moveTo(3.4, 12.6);
-    fill.lineTo(12.6, 12.6);
-    fill.lineTo(3.4, 3.4);
-    fill.closeSubpath();
-    p.fillPath(fill, p.pen().color());
+
+// A magnifier. The plus inside is what separates it from a search field at 16px, and
+// zoom is the only tool in the bar whose icon is also a very common non-tool.
+void drawZoom(QPainter& p) {
+    p.drawEllipse(QPointF(7.0, 7.0), 3.9, 3.9);
+    p.drawLine(QPointF(9.9, 9.9), QPointF(13.2, 13.2));
+    p.drawLine(QPointF(5.2, 7.0), QPointF(8.8, 7.0));
+    p.drawLine(QPointF(7.0, 5.2), QPointF(7.0, 8.8));
+}
+
+// An arc with an arrowhead: rotation as a motion rather than as a circle, because a plain
+// circle reads as a radio button or a record light.
+void drawRotation(QPainter& p) {
+    QPainterPath arc;
+    arc.arcMoveTo(QRectF(3.4, 3.4, 9.2, 9.2), 60.0);
+    arc.arcTo(QRectF(3.4, 3.4, 9.2, 9.2), 60.0, 280.0);
+    p.drawPath(arc);
+
+    QPainterPath head;
+    drawArrowhead(head, 10.7, 4.6, 0.72, -0.69);
+    p.fillPath(head, p.pen().color());
 }
 
 void drawHand(QPainter& p) {
@@ -174,11 +176,11 @@ void paintToolIcon(QPainter& p, const QRect& box, ToolIcon icon, const QColor& c
 
     switch (icon) {
         case ToolIcon::Selection: drawSelection(p); break;
-        case ToolIcon::Pan:       drawPan(p);       break;
         case ToolIcon::Text:      drawText(p);      break;
         case ToolIcon::Shape:     drawShape(p);     break;
         case ToolIcon::Pen:       drawPen(p);       break;
-        case ToolIcon::Mask:      drawMask(p);      break;
+        case ToolIcon::Zoom:      drawZoom(p);      break;
+        case ToolIcon::Rotation:  drawRotation(p);  break;
         case ToolIcon::Hand:      drawHand(p);      break;
         case ToolIcon::Anchor:    drawAnchor(p);    break;
         case ToolIcon::Home:      drawHome(p);      break;

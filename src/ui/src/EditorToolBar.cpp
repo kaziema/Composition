@@ -19,10 +19,18 @@ namespace {
 // The nine tools, drawn as vector paths rather than text glyphs. Several of those
 // glyphs carry Unicode emoji presentation, so the hand rendered in full colour and
 // broke the tool bar's monochrome run.
+// AE's order, minus everything Ruby does not do. Selection first because it is the one
+// you return to; navigation next; then the transform tools; then the creation tools.
+//
+// Two that used to be here are gone. A separate Move tool did what Selection does, and
+// AE has never had one: Selection drags. A separate Mask tool did what Shape and Pen do,
+// because in AE drawing with a layer selected produces a mask rather than a shape layer.
+// Both were inherited from the original design handoff rather than from how the app
+// actually works, and both would have ended up duplicating a neighbour.
 constexpr ToolIcon kTools[] = {
-    ToolIcon::Selection, ToolIcon::Pan,    ToolIcon::Text,
-    ToolIcon::Shape,     ToolIcon::Pen,    ToolIcon::Mask,
-    ToolIcon::Hand,      ToolIcon::Anchor,
+    ToolIcon::Selection, ToolIcon::Hand,   ToolIcon::Zoom,
+    ToolIcon::Rotation,  ToolIcon::Anchor, ToolIcon::Text,
+    ToolIcon::Shape,     ToolIcon::Pen,
 };
 constexpr int kToolCount = static_cast<int>(std::size(kTools));
 
@@ -42,15 +50,20 @@ constexpr const char* kPanelTips[] = {
 // not what it is for, and "Pan Behind" is the classic example of a name that explains
 // nothing to someone who has not already been taught it.
 constexpr const char* kToolTips[] = {
-    "Selection Tool — pick and transform layers in the viewer",
-    "Move Tool — reposition the selected layer",
-    "Type Tool — create and edit text layers",
-    "Shape Tool — draw rectangles, ellipses and polygons",
-    "Pen Tool — draw bezier paths and masks by hand",
-    "Mask Tool — mask a layer to a shape",
+    "Selection Tool — pick, move, scale and rotate layers in the viewer",
     "Hand Tool — pan the viewer without moving anything",
+    "Zoom Tool — zoom the viewer. Alt-click zooms out",
+    "Rotation Tool — rotate the selected layer around its anchor point",
     "Anchor Point Tool — move a layer's origin without moving the layer",
+    "Type Tool — click in the viewer to create a text layer",
+    "Shape Tool — draw rectangles and ellipses. Needs shape layers, which do not exist yet",
+    "Pen Tool — draw bezier paths and masks. Needs masks, which do not exist yet",
 };
+
+// Tools that are in the bar but have nothing to act on. Drawn dimmed and inert, the same
+// way Home is: present because they are coming, visibly unavailable because they are not
+// here. Leaving them looking live would be the lie the whole toolbar used to tell.
+constexpr bool kToolReady[] = {true, true, true, true, true, true, false, false};
 
 constexpr int kEdgePad = 8;
 constexpr int kToolGap = 1;
@@ -171,14 +184,16 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
     for (int i = 0; i < toolRects_.size(); ++i) {
         const QRect r = toolRects_.at(i);
         const bool active = (i == activeTool_);
+        const bool ready = kToolReady[i];
 
         if (active) {
             p.fillRect(r, kAccent);
-        } else if (i == hoverTool_) {
+        } else if (i == hoverTool_ && ready) {
             p.fillRect(r, kMenuActive);
         }
 
-        paintToolIcon(p, r, kTools[i], active ? QColor("#12212e") : kTextTertiary);
+        paintToolIcon(p, r, kTools[i],
+                      active ? QColor("#12212e") : (ready ? kTextTertiary : kTextFaint));
     }
 
     p.fillRect(dividerRect_, kDivider);
@@ -204,6 +219,12 @@ void EditorToolBar::mousePressEvent(QMouseEvent* e) {
 
     for (int i = 0; i < toolRects_.size(); ++i) {
         if (toolRects_.at(i).contains(pos)) {
+            // A tool with nothing to act on swallows the click rather than becoming the
+            // active tool. Selecting Pen and then having every viewer click do nothing is
+            // worse than the button simply not taking.
+            if (!kToolReady[i]) {
+                return;
+            }
             if (i != activeTool_) {
                 activeTool_ = i;
                 update();

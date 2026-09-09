@@ -20,13 +20,13 @@ enum class ToolIcon {
     Home,
 
     Selection,
-    Pan,
+    Hand,
+    Zoom,
+    Rotation,
+    Anchor,
     Text,
     Shape,
     Pen,
-    Mask,
-    Hand,
-    Anchor,
 
     // Panel switches rather than tools: they change what the left dock shows instead of
     // changing what a click in the viewer means. Same bar because they are the same kind
