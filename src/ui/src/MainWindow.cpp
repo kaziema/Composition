@@ -578,7 +578,12 @@ void MainWindow::openProject() {
     if (path.isEmpty()) {
         return;
     }
+    openProject(path);
+}
 
+// The same open, with the file already chosen. Needed by the command line, and it is what
+// double-clicking a .rbypr in the Finder will want too.
+void MainWindow::openProject(const QString& path) {
     core::Project loaded;
     const io::LoadReport report = io::load(loaded, path.toStdString());
     if (!report.ok) {
@@ -908,9 +913,14 @@ void MainWindow::pasteLayer() {
 
     core::Layer copy = *clipboard_;
     copy.id = comp->nextLayerId();
+
     // Parenting is by layer id, which only means anything inside one composition. Paste
-    // into a different comp and that id is either nothing or, worse, somebody else.
-    copy.parent.reset();
+    // into the SAME comp and the link is still good, so it is kept; paste into a
+    // different one and that id is either nothing or, worse, somebody else's layer.
+    // Clearing it unconditionally used to throw away a valid link on every paste.
+    if (copy.parent.has_value() && comp->find(*copy.parent) == nullptr) {
+        copy.parent.reset();
+    }
 
     comp->layers.insert(comp->layers.begin(), std::move(copy));
     const core::LayerId pasted = comp->layers.front().id;
@@ -947,7 +957,9 @@ void MainWindow::duplicateLayer() {
 
     core::Layer copy = *layer;
     copy.id = comp->nextLayerId();
-    copy.parent.reset();
+    // The parent is KEPT. A duplicate is always in the same composition, so the link is
+    // still valid, and a copy of a parented layer that quietly loses its parent is a copy
+    // that behaves differently from the thing it copied.
 
     // Directly above the original, not on top of the stack. A duplicate that jumps to
     // the top of a twenty layer comp is a duplicate you then have to go and find.
@@ -1406,9 +1418,24 @@ void MainWindow::rebuildMix() {
     }
     const core::TimeContext ctx = comp->timeContext();
 
+    // Solo applies to sound too, and separately from the picture: soloing a music track
+    // should let you hear it alone without also blanking the frame. So this asks whether
+    // any AUDIBLE layer is soloed, not whether any layer is.
+    bool anySolo = false;
+    for (const core::Layer& layer : comp->layers) {
+        if (layer.solo && layer.media.has_value() &&
+            audio_.find(*layer.media) != audio_.end()) {
+            anySolo = true;
+            break;
+        }
+    }
+
     std::vector<audio::AudioSource> sources;
     for (const core::Layer& layer : comp->layers) {
         if (!layer.media.has_value() || !layer.audioEnabled) {
+            continue;
+        }
+        if (anySolo && !layer.solo) {
             continue;
         }
         const auto found = audio_.find(*layer.media);
@@ -1553,7 +1580,7 @@ void MainWindow::buildMenus() {
                     QKeySequence(QStringLiteral("Ctrl+Shift+N")), this,
                     &MainWindow::newProject);
     file->addAction(QStringLiteral("Open Project..."), QKeySequence::Open, this,
-                    &MainWindow::openProject);
+                    [this] { openProject(); });
     file->addAction(QStringLiteral("Save Project"), QKeySequence::Save, this,
                     [this] { saveProject(false); });
     file->addAction(QStringLiteral("Save Project As..."), QKeySequence::SaveAs, this,

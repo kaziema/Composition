@@ -125,6 +125,41 @@ int main() {
     stale.emplace(9999, engine::Compositor::External{textTexture, 64, 32});
     compositor.render(project, comp, 1.0, target, &stale);
 
+    // Rotation and a non-centred anchor, which had no effect at all until the transform
+    // work and so had never been through the render path.
+    if (core::Property* rot = comp.find(solidId)->find("rotation"); rot != nullptr) {
+        rot->staticValue = core::Value::scalar(37.0);
+    }
+    if (core::Property* anchor = comp.find(solidId)->find("anchor_point");
+        anchor != nullptr) {
+        anchor->staticValue = core::Value::vec2(50.0, -25.0);
+    }
+    compositor.render(project, comp, 1.0, target, &external);
+
+    // A parent cycle reaching the renderer. Nothing in the UI can produce this yet, which
+    // is exactly why it is worth proving the render path survives it: unbounded, this is a
+    // frozen window rather than a wrong picture.
+    comp.find(nullId)->parent = solidId;  // solid -> null -> solid
+    compositor.render(project, comp, 1.0, target, &external);
+    device->wait_idle();
+    check(true, "a parent cycle renders instead of hanging");
+    comp.find(nullId)->parent.reset();
+
+    // Solo. Nothing soloed means everything draws; one soloed layer means only it does.
+    // Both directions rendered, because the second is a whole-composition rule and easy
+    // to get inverted.
+    comp.find(solidId)->solo = true;
+    compositor.render(project, comp, 1.0, target, &external);
+    comp.find(textId)->solo = true;
+    compositor.render(project, comp, 1.0, target, &external);
+
+    // Soloed and hidden at once, which is the case where two switches disagree.
+    comp.find(solidId)->enabled = false;
+    compositor.render(project, comp, 1.0, target, &external);
+    comp.find(solidId)->enabled = true;
+    comp.find(solidId)->solo = false;
+    comp.find(textId)->solo = false;
+
     // Times outside every layer's span, and exactly on the boundaries.
     for (const double t : {0.0, 5.0, 9.999, 10.0, 25.0}) {
         compositor.render(project, comp, t, target, &external);

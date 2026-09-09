@@ -62,6 +62,10 @@ public slots:
     void endEdit();
     void newProject();
     void openProject();
+
+    // Opens a specific file, skipping the dialog. Public because the application opens a
+    // project named on the command line before the window is shown.
+    void openProject(const QString& path);
     bool saveProject(bool forcePrompt);
     void importMedia();
     void newComposition();

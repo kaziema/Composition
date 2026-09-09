@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.24)
 project(Ruby
     VERSION 0.0.1
     DESCRIPTION "Layer-based compositor for editors"
-    LANGUAGES CXX
+    # C is here for Lua, which is the only C in the tree. Everything of ours is C++.
+    LANGUAGES CXX C
 )
 
 set(CMAKE_CXX_STANDARD 20)
@@ -28,8 +29,10 @@ include(cmake/CompilerWarnings.cmake)
 include(cmake/FetchWebGPU.cmake)
 include(cmake/FetchMiniaudio.cmake)
 include(cmake/FetchJson.cmake)
+include(cmake/FetchLua.cmake)
 
 add_subdirectory(src/core)
+add_subdirectory(src/script)
 add_subdirectory(src/gpu)
 add_subdirectory(src/media)
 add_subdirectory(src/io)

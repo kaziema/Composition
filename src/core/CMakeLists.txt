@@ -3,6 +3,8 @@ add_library(ruby_core STATIC
     src/Identity.cpp
     src/Animation.cpp
     src/Document.cpp
+    src/Transform.cpp
+    src/Expressions.cpp
 )
 add_library(ruby::core ALIAS ruby_core)
 

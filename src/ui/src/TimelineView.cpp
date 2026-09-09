@@ -22,6 +22,7 @@
 
 #include "ruby/ui/Format.h"
 #include "ruby/ui/ProjectPanel.h"
+#include "ruby/core/Transform.h"
 #include "ruby/ui/Theme.h"
 
 namespace ruby::ui {
@@ -649,8 +650,20 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
                Qt::AlignVCenter | Qt::AlignLeft,
                layer.kind == core::LayerKind::Audio ? QStringLiteral("—")
                                                     : blendName(layer.blend));
+    // The real parent, not a hardcoded "None". This column has said None on every row
+    // since it was drawn, including on layers that were parented.
+    QString parentName = QStringLiteral("None");
+    if (layer.parent.has_value()) {
+        const Layer* owner = comp_->find(*layer.parent);
+        parentName = owner != nullptr ? QString::fromStdString(owner->name)
+                                      // A parent id with no layer behind it. Say so
+                                      // rather than showing None, which would look like
+                                      // the link had been cleanly removed.
+                                      : QStringLiteral("(missing)");
+    }
     p.drawText(QRect(trackLeft() - kParentW, row.top, kParentW, row.height),
-               Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("None"));
+               Qt::AlignVCenter | Qt::AlignLeft,
+               QFontMetrics(p.font()).elidedText(parentName, Qt::ElideRight, kParentW - 4));
 
     // The bar, on the track side.
     const core::TimeContext ctx = comp_->timeContext();
@@ -1104,6 +1117,80 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         }
         Layer* layer = comp_->find(row.layer);
         if (layer == nullptr) {
+            return;
+        }
+
+        // The eye. The compositor has always honoured `enabled`; nothing could set it.
+        if (pos.x() < 24) {
+            emit editBegan(QStringLiteral("Hide Layer"));
+            layer->enabled = !layer->enabled;
+            emit editEnded();
+            emit layersChanged();
+            update();
+            return;
+        }
+
+        // Solo. Same story, except the compositor did not honour it either.
+        if (pos.x() >= 40 && pos.x() < 56) {
+            emit editBegan(QStringLiteral("Solo Layer"));
+            layer->solo = !layer->solo;
+            emit editEnded();
+            emit layersChanged();
+            update();
+            return;
+        }
+
+        // The Parent cell. Parenting has worked in the compositor since the transform
+        // work and there has been no way to reach it.
+        const int parentX = trackLeft() - kParentW;
+        if (pos.x() >= parentX && pos.x() < trackLeft()) {
+            QMenu menu(this);
+            QAction* none = menu.addAction(QStringLiteral("None"));
+            none->setCheckable(true);
+            none->setChecked(!layer->parent.has_value());
+            connect(none, &QAction::triggered, this, [this, layer] {
+                if (!layer->parent.has_value()) {
+                    return;
+                }
+                emit editBegan(QStringLiteral("Unparent Layer"));
+                layer->parent.reset();
+                emit editEnded();
+                emit layersChanged();
+                update();
+            });
+            menu.addSeparator();
+
+            for (const Layer& candidate : comp_->layers) {
+                if (candidate.id == layer->id) {
+                    continue;
+                }
+                QAction* action =
+                    menu.addAction(QString::fromStdString(candidate.name));
+                action->setCheckable(true);
+                action->setChecked(layer->parent.has_value() &&
+                                   *layer->parent == candidate.id);
+
+                // Refused here, at the moment it is attempted, which is the only point
+                // where it can be explained to whoever is doing it. The render path
+                // tolerates cycles, but tolerating one is not the same as allowing it to
+                // be created.
+                const bool allowed =
+                    core::canParentTo(*comp_, layer->id, candidate.id);
+                action->setEnabled(allowed);
+                if (!allowed) {
+                    action->setText(QStringLiteral("%1  (would loop)")
+                                        .arg(QString::fromStdString(candidate.name)));
+                }
+                connect(action, &QAction::triggered, this,
+                        [this, layer, id = candidate.id] {
+                            emit editBegan(QStringLiteral("Parent Layer"));
+                            layer->parent = id;
+                            emit editEnded();
+                            emit layersChanged();
+                            update();
+                        });
+            }
+            menu.exec(e->globalPosition().toPoint());
             return;
         }
 

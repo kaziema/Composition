@@ -1,5 +1,8 @@
 #include "ruby/engine/Compositor.h"
 
+#include "ruby/core/Expressions.h"
+#include "ruby/core/Transform.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -86,14 +89,6 @@ Rgb colorFor(core::LabelColor label) noexcept {
     return linearFrom8Bit(0x4a, 0x4a, 0x4a);
 }
 
-double componentOr(const core::Property* prop, int index, double fallback,
-                   double seconds, const core::TimeContext& ctx) {
-    if (prop == nullptr) {
-        return fallback;
-    }
-    const core::Value v = prop->evaluate(seconds, ctx);
-    return (index < v.count) ? v.c[static_cast<std::size_t>(index)] : fallback;
-}
 
 }  // namespace
 
@@ -337,9 +332,27 @@ void Compositor::render(const core::Project& project, const core::Composition& c
     std::vector<Prepared> prepared;
     prepared.reserve(comp.layers.size());
 
+    // Solo is a whole-composition question, so it has to be answered before any single
+    // layer can be judged: one soloed layer changes what every other layer does. Asking
+    // per layer would need this same scan each time.
+    bool anySolo = false;
+    for (const core::Layer& layer : comp.layers) {
+        if (layer.solo && layer.kind != core::LayerKind::Audio) {
+            anySolo = true;
+            break;
+        }
+    }
+
     // Bottom layer first, so index 0 (the topmost) is drawn last.
     for (auto it = comp.layers.rbegin(); it != comp.layers.rend(); ++it) {
         const core::Layer& layer = *it;
+
+        // With anything soloed, only soloed layers are candidates. The eye still applies
+        // to those, below: solo narrows the set, visibility decides within it. Two
+        // independent switches, which is easier to predict than one overriding the other.
+        if (anySolo && !layer.solo) {
+            continue;
+        }
         // Nulls are never drawn. A null exists to be parented to: it is a transform with
         // a handle, and rendering it would put a coloured rectangle in the middle of
         // every shot that used one.
@@ -387,23 +400,26 @@ void Compositor::render(const core::Project& project, const core::Composition& c
                           clampToTarget(frameH, viewH - frameY));
 
     // Draw the frame itself, so an empty composition still shows where it is.
-    const auto pushQuad = [&](float x, float y, float w, float h, Rgb color, float alpha,
+    // Takes a transform from the unit quad straight to screen pixels, rather than a
+    // rectangle. A rectangle cannot express rotation, which is why Rotation and Anchor
+    // Point sat in the inspector doing nothing until now.
+    const auto pushQuad = [&](const core::Transform2D& unitToScreen, Rgb color, float alpha,
                               const gpu::TextureHandle& texture,
                               const gpu::RenderPipelineHandle& pipeline) {
-        // Pixel rect -> normalised device coordinates. Y flips because NDC is up-positive
-        // and our layout is top-down.
-        const float sx = 2.0f * w / viewW;
-        const float sy = -2.0f * h / viewH;
-        const float tx = 2.0f * x / viewW - 1.0f;
-        const float ty = 1.0f - 2.0f * y / viewH;
+        // Screen pixels -> normalised device coordinates, folded into the same matrix.
+        // Y flips because NDC is up-positive and our layout is top-down.
+        const double ndcX = 2.0 / static_cast<double>(viewW);
+        const double ndcY = -2.0 / static_cast<double>(viewH);
 
         QuadUniforms u{};
-        // Column-major, matching WGSL's mat4x4 layout.
-        u.transform[0] = sx;
-        u.transform[5] = sy;
+        // Column-major, matching WGSL's mat4x4 layout: column 0 is elements 0..3.
+        u.transform[0] = static_cast<float>(unitToScreen.a * ndcX);
+        u.transform[1] = static_cast<float>(unitToScreen.b * ndcY);
+        u.transform[4] = static_cast<float>(unitToScreen.c * ndcX);
+        u.transform[5] = static_cast<float>(unitToScreen.d * ndcY);
         u.transform[10] = 1.0f;
-        u.transform[12] = tx;
-        u.transform[13] = ty;
+        u.transform[12] = static_cast<float>(unitToScreen.tx * ndcX - 1.0);
+        u.transform[13] = static_cast<float>(unitToScreen.ty * ndcY + 1.0);
         u.transform[15] = 1.0f;
         u.color[0] = color.r;
         u.color[1] = color.g;
@@ -415,23 +431,68 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         commands->draw(pipeline, buffer, texture != nullptr ? texture : white_, 6);
     };
 
-    pushQuad(frameX, frameY, frameW, frameH, linearFrom8Bit(0x14, 0x14, 0x14), 1.0f,
-             nullptr, quads_);
+    // How big a layer is in COMPOSITION units, before scale.
+    //
+    // Everything here used to be computed in screen pixels, which quietly baked the frame
+    // fit into the layer's size. Keeping it in composition units means the transform can
+    // do the placing and the screen conversion happens exactly once, at the end.
+    const auto sizeOf = [&](const core::Layer& layer,
+                            const Content& content) -> core::LayerSize {
+        if (content.width > 0 && content.height > 0) {
+            // A layer is the size of its source, not the size of the frame. A 1920x1080
+            // clip in a 1080x1920 composition comes in wider than the frame and gets
+            // cropped at the sides; squashing it to fit would distort the picture and make
+            // every framing decision on top of it wrong.
+            return {static_cast<double>(content.width),
+                    static_cast<double>(content.height)};
+        }
+        switch (layer.kind) {
+            case core::LayerKind::Footage:
+            case core::LayerKind::Precomp:
+                // No source resolved. A precomp is comp-sized by definition, and
+                // unresolved footage has no better guess available.
+                return {static_cast<double>(compW), static_cast<double>(compH)};
+            case core::LayerKind::Solid:
+                // Zero means "match the composition", so a solid follows a comp that gets
+                // resized rather than staying frozen at whatever it was created at.
+                return {layer.solidWidth > 0 ? static_cast<double>(layer.solidWidth)
+                                             : static_cast<double>(compW),
+                        layer.solidHeight > 0 ? static_cast<double>(layer.solidHeight)
+                                              : static_cast<double>(compH)};
+            default:
+                return {static_cast<double>(compW) * 0.6, static_cast<double>(compH) * 0.6};
+        }
+    };
+
+    // The same thing as a plain SizeOf, for parents up the chain. A parent has no Content
+    // here: it may not even be drawn this frame, and a null never is. Its size still
+    // matters, because its anchor is measured against it.
+    const core::SizeOf sizeOf2 = [&](const core::Layer& layer) {
+        const Content none;
+        return sizeOf(layer, none);
+    };
+
+    // A plain rectangle expressed as a transform: scale the unit quad to the frame, then
+    // move it there.
+    const auto rectToScreen = [](double x, double y, double w, double h) {
+        return core::Transform2D::scale(w, h).then(core::Transform2D::translate(x, y));
+    };
+    pushQuad(rectToScreen(static_cast<double>(frameX), static_cast<double>(frameY),
+                          static_cast<double>(frameW), static_cast<double>(frameH)),
+             linearFrom8Bit(0x14, 0x14, 0x14), 1.0f, nullptr, quads_);
 
     for (const Prepared& item : prepared) {
         const core::Layer& layer = *item.layer;
         const Content& content = item.content;
 
-        const core::Property* position = layer.find("position");
-        const core::Property* scale = layer.find("scale");
+        // Through core::evaluate, like every other transform property. Reading it with
+        // Property::evaluate meant an expression on Opacity was silently ignored while the
+        // identical expression on Position worked, which is the worst kind of
+        // inconsistency: it looks like the expression is wrong.
         const core::Property* opacity = layer.find("opacity");
-
-        // Position is a percentage of the frame, so it survives a reshape.
-        const auto px = static_cast<float>(componentOr(position, 0, 50.0, seconds, ctx));
-        const auto py = static_cast<float>(componentOr(position, 1, 50.0, seconds, ctx));
-        const auto sxPct = static_cast<float>(componentOr(scale, 0, 100.0, seconds, ctx));
-        const auto syPct = static_cast<float>(componentOr(scale, 1, 100.0, seconds, ctx));
-        const auto alpha = static_cast<float>(componentOr(opacity, 0, 100.0, seconds, ctx));
+        const double alphaPct =
+            opacity != nullptr ? core::evaluate(layer, *opacity, seconds, ctx).c[0] : 100.0;
+        const auto alpha = static_cast<float>(std::isfinite(alphaPct) ? alphaPct : 100.0);
 
         // Media fills the quad; without it the label colour stands in.
         Rgb tint = (content.texture != nullptr) ? Rgb{1.0f, 1.0f, 1.0f}
@@ -445,44 +506,33 @@ void Compositor::render(const core::Project& project, const core::Composition& c
                        static_cast<float>(layer.solidColor.c[2])};
         }
 
-        // A layer is the size of its source, not the size of the frame. A 1920x1080
-        // clip in a 1080x1920 composition comes in wider than the frame and gets
-        // cropped at the sides; squashing it to fit would distort the picture and make
-        // every framing decision on top of it wrong.
-        float baseW = frameW * 0.6f;
-        float baseH = frameH * 0.6f;
-        if (content.width > 0 && content.height > 0) {
-            // One composition pixel in screen pixels. Uniform, because the frame fit is.
-            const float pxPerUnit = frameW / compW;
-            baseW = static_cast<float>(content.width) * pxPerUnit;
-            baseH = static_cast<float>(content.height) * pxPerUnit;
-        } else if (layer.kind == core::LayerKind::Footage ||
-                   layer.kind == core::LayerKind::Precomp) {
-            // No source resolved. A precomp is comp-sized by definition, and unresolved
-            // footage has no better guess available.
-            baseW = frameW;
-            baseH = frameH;
-        } else if (layer.kind == core::LayerKind::Solid) {
-            // Its own size, or the composition's when it was made comp-sized. Zero means
-            // "match the composition", so a solid follows a comp that gets resized rather
-            // than staying frozen at whatever it was created at.
-            const float pxPerUnit = frameW / compW;
-            baseW = layer.solidWidth > 0
-                        ? static_cast<float>(layer.solidWidth) * pxPerUnit
-                        : frameW;
-            baseH = layer.solidHeight > 0
-                        ? static_cast<float>(layer.solidHeight) * pxPerUnit
-                        : frameH;
-        }
+        const core::LayerSize size = sizeOf(layer, content);
 
-        const float w = baseW * (sxPct / 100.0f);
-        const float h = baseH * (syPct / 100.0f);
-        const float cx = frameX + frameW * (px / 100.0f);
-        const float cy = frameY + frameH * (py / 100.0f);
+        // Unit quad -> the layer's own space, centred. Centred because the anchor point is
+        // measured from the middle of the layer, so an untouched layer pivots about
+        // itself.
+        const core::Transform2D unitToLayer =
+            core::Transform2D::translate(-0.5, -0.5)
+                .then(core::Transform2D::scale(size.width, size.height));
+
+        // Layer space -> composition space, including scale, rotation, anchor and every
+        // parent up the chain.
+        const core::Transform2D layerToComp =
+            core::resolvedTransform(comp, layer, seconds, ctx, static_cast<double>(compW),
+                                    static_cast<double>(compH), sizeOf2);
+
+        // Composition space -> screen pixels. One uniform factor, because the frame fit is
+        // uniform: a composition pixel is the same size horizontally and vertically.
+        const float pxPerUnit = frameW / compW;
+        const core::Transform2D compToScreen =
+            core::Transform2D::scale(static_cast<double>(pxPerUnit),
+                                     static_cast<double>(pxPerUnit))
+                .then(core::Transform2D::translate(static_cast<double>(frameX),
+                                                   static_cast<double>(frameY)));
 
         // item.texture is the effect stack's output, or the raw source when the layer
         // has no effects.
-        pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, tint,
+        pushQuad(unitToLayer.then(layerToComp).then(compToScreen), tint,
                  std::clamp(alpha / 100.0f, 0.0f, 1.0f), item.texture,
                  quadPipelineFor(layer.blend));
     }
