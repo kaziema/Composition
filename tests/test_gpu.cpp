@@ -74,6 +74,35 @@ int main() {
         device->wait_idle();
     }
 
+    // Every blend preset has to actually build. Min and Max are the ones worth checking:
+    // WebGPU ignores the src and dst factors for those operations but still validates
+    // them, and a rejected pipeline would show up as a layer that silently draws in the
+    // wrong mode rather than as an error anyone notices.
+    {
+        constexpr const char* kShader = R"(
+@vertex fn vs(@builtin(vertex_index) i : u32) -> @builtin(position) vec4<f32> {
+    var p = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+    return vec4<f32>(p[i], 0.0, 1.0);
+}
+@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0, 1.0, 1.0, 1.0); }
+)";
+        struct Case { BlendPreset preset; const char* name; };
+        const Case cases[] = {
+            {BlendPreset::AlphaOver, "alpha over"}, {BlendPreset::Add, "add"},
+            {BlendPreset::Screen, "screen"},        {BlendPreset::Multiply, "multiply"},
+            {BlendPreset::Lighten, "lighten"},      {BlendPreset::Darken, "darken"},
+        };
+        for (const Case& c : cases) {
+            const RenderPipelineHandle pipeline = device->create_render_pipeline(
+                kShader, "vs", "fs", TextureFormat::RGBA16Float, c.name, c.preset);
+            if (pipeline == nullptr) {
+                std::fprintf(stderr, "FAIL: blend preset '%s' did not build\n", c.name);
+                ++failures;
+            }
+        }
+    }
+
     // Documented gap, asserted so it cannot be silently "fixed" into a no-op stub.
     check(device->create_compute_pipeline("noop", "main") == nullptr,
           "compute pipelines are not implemented yet and say so by returning null");

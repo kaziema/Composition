@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "ruby/core/Document.h"
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -87,7 +88,14 @@ private:
     [[nodiscard]] Content contentFor(const std::string& path, double seconds);
 
     gpu::GpuDevice& device_;
+    // One quad pipeline per blend mode, built on first use. The blend equation is baked
+    // into a pipeline, so "which blend mode" is a choice of pipeline rather than state we
+    // can set per draw. Every quad is already its own draw call, so this costs nothing.
+    [[nodiscard]] gpu::RenderPipelineHandle quadPipelineFor(core::BlendMode mode);
+
     gpu::RenderPipelineHandle quads_;
+    std::map<core::BlendMode, gpu::RenderPipelineHandle> quadPipelines_;
+    gpu::TextureFormat targetFormat_ = gpu::TextureFormat::BGRA8UnormSrgb;
     std::vector<gpu::BufferHandle> uniforms_;
     gpu::TextureHandle white_;  // stand-in so layers without media use one pipeline
     std::unordered_map<std::string, Source> sources_;

@@ -417,7 +417,8 @@ public:
                                                 std::string_view vertex_entry,
                                                 std::string_view fragment_entry,
                                                 TextureFormat target_format,
-                                                std::string_view label) override {
+                                                std::string_view label,
+                                                BlendPreset blend_preset) override {
         wgpu::ShaderSourceWGSL source{};
         source.code = wgpu::StringView(wgsl.data(), wgsl.size());
 
@@ -426,14 +427,54 @@ public:
         moduleDesc.label = wgpu::StringView(label.data(), label.size());
         wgpu::ShaderModule module = device_.CreateShaderModule(&moduleDesc);
 
-        // Straight alpha over. Layers arrive with their own opacity already folded in.
+        // Source colour is PREMULTIPLIED, which is what lets these compose as plain
+        // blend equations. Alpha is handled the same way in every mode: the destination
+        // keeps whatever coverage it had plus what this draw adds. Only the colour
+        // channels differ, because only colour is what a blend mode is about.
         wgpu::BlendState blend{};
-        blend.color.operation = wgpu::BlendOperation::Add;
-        blend.color.srcFactor = wgpu::BlendFactor::SrcAlpha;
-        blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
         blend.alpha.operation = wgpu::BlendOperation::Add;
         blend.alpha.srcFactor = wgpu::BlendFactor::One;
         blend.alpha.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+        blend.color.operation = wgpu::BlendOperation::Add;
+
+        switch (blend_preset) {
+            case BlendPreset::AlphaOver:
+                // s + d*(1-a). With premultiplied source this is identical to the
+                // straight-alpha SrcAlpha/OneMinusSrcAlpha it replaces.
+                blend.color.srcFactor = wgpu::BlendFactor::One;
+                blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+                break;
+            case BlendPreset::Add:
+                // s + d. Premultiplication is what makes a half-transparent layer add
+                // half as much instead of all of it.
+                blend.color.srcFactor = wgpu::BlendFactor::One;
+                blend.color.dstFactor = wgpu::BlendFactor::One;
+                break;
+            case BlendPreset::Screen:
+                // s + d*(1-s) == 1-(1-s)(1-d), the definition of screen.
+                blend.color.srcFactor = wgpu::BlendFactor::One;
+                blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrc;
+                break;
+            case BlendPreset::Multiply:
+                // s*d + d*(1-a). The second term is what keeps transparent parts of the
+                // layer from multiplying the backdrop down to black.
+                blend.color.srcFactor = wgpu::BlendFactor::Dst;
+                blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+                break;
+            case BlendPreset::Lighten:
+                blend.color.operation = wgpu::BlendOperation::Max;
+                blend.color.srcFactor = wgpu::BlendFactor::One;
+                blend.color.dstFactor = wgpu::BlendFactor::One;
+                break;
+            case BlendPreset::Darken:
+                // Min against a premultiplied source means a transparent area is 0 and
+                // would darken everything to black, so this one is only correct where the
+                // layer is opaque. Same caveat AE carries.
+                blend.color.operation = wgpu::BlendOperation::Min;
+                blend.color.srcFactor = wgpu::BlendFactor::One;
+                blend.color.dstFactor = wgpu::BlendFactor::One;
+                break;
+        }
 
         wgpu::ColorTargetState target{};
         target.format = toWgpu(target_format);

@@ -38,7 +38,13 @@ fn vs(@builtin(vertex_index) index : u32) -> VsOut {
 fn fs(in : VsOut) -> @location(0) vec4<f32> {
     // Layers without media sample a 1x1 white texture, so one pipeline covers both
     // cases instead of two that have to be kept in step.
-    return textureSample(tex, samp, in.uv) * u.color;
+    let c = textureSample(tex, samp, in.uv) * u.color;
+
+    // PREMULTIPLIED output. Every blend mode's factors are written assuming this, and
+    // for Normal it lands on exactly the same result as the straight-alpha blending this
+    // replaced. Without it, Add and Screen blow out wherever a layer is semi-transparent,
+    // because the hardware would add the full colour regardless of coverage.
+    return vec4<f32>(c.rgb * c.a, c.a);
 }
 )";
 
@@ -92,9 +98,10 @@ double componentOr(const core::Property* prop, int index, double fallback,
 }  // namespace
 
 Compositor::Compositor(gpu::GpuDevice& device, gpu::TextureFormat targetFormat)
-    : device_(device) {
+    : device_(device), targetFormat_(targetFormat) {
     quads_ = device_.create_render_pipeline(kQuadShader, "vs", "fs", targetFormat,
                                             "composite quads");
+    quadPipelines_.emplace(core::BlendMode::Normal, quads_);
 
     gpu::TextureDesc desc;
     desc.width = 1;
@@ -155,6 +162,40 @@ gpu::BufferHandle Compositor::uniformBuffer(std::size_t index) {
         uniforms_.push_back(device_.create_uniform_buffer(kUniformStride, "layer quad"));
     }
     return uniforms_[index];
+}
+
+gpu::RenderPipelineHandle Compositor::quadPipelineFor(core::BlendMode mode) {
+    if (const auto it = quadPipelines_.find(mode); it != quadPipelines_.end()) {
+        return it->second;
+    }
+
+    // The four that need to read the destination cannot be a blend equation at all, so
+    // they fall back to Normal rather than silently rendering as something they are not.
+    // Better a layer that looks unblended than one that looks blended wrongly.
+    gpu::BlendPreset preset{};
+    const char* label = "composite quads";
+    switch (mode) {
+        case core::BlendMode::Add:      preset = gpu::BlendPreset::Add;      label = "quads add";      break;
+        case core::BlendMode::Screen:   preset = gpu::BlendPreset::Screen;   label = "quads screen";   break;
+        case core::BlendMode::Multiply: preset = gpu::BlendPreset::Multiply; label = "quads multiply"; break;
+        case core::BlendMode::Lighten:  preset = gpu::BlendPreset::Lighten;  label = "quads lighten";  break;
+        case core::BlendMode::Darken:   preset = gpu::BlendPreset::Darken;   label = "quads darken";   break;
+        case core::BlendMode::Normal:
+        case core::BlendMode::Overlay:
+        case core::BlendMode::SoftLight:
+        case core::BlendMode::HardLight:
+        case core::BlendMode::Difference:
+            quadPipelines_.emplace(mode, quads_);
+            return quads_;
+    }
+
+    gpu::RenderPipelineHandle pipeline = device_.create_render_pipeline(
+        kQuadShader, "vs", "fs", targetFormat_, label, preset);
+    if (pipeline == nullptr) {
+        pipeline = quads_;
+    }
+    quadPipelines_.emplace(mode, pipeline);
+    return pipeline;
 }
 
 gpu::RenderPipelineHandle Compositor::pipelineFor(const EffectDef& def) {
@@ -336,7 +377,8 @@ void Compositor::render(const core::Project& project, const core::Composition& c
 
     // Draw the frame itself, so an empty composition still shows where it is.
     const auto pushQuad = [&](float x, float y, float w, float h, Rgb color, float alpha,
-                              const gpu::TextureHandle& texture) {
+                              const gpu::TextureHandle& texture,
+                              const gpu::RenderPipelineHandle& pipeline) {
         // Pixel rect -> normalised device coordinates. Y flips because NDC is up-positive
         // and our layout is top-down.
         const float sx = 2.0f * w / viewW;
@@ -359,11 +401,11 @@ void Compositor::render(const core::Project& project, const core::Composition& c
 
         const gpu::BufferHandle buffer = uniformBuffer(slot++);
         device_.write_buffer(buffer, &u, sizeof(u));
-        commands->draw(quads_, buffer, texture != nullptr ? texture : white_, 6);
+        commands->draw(pipeline, buffer, texture != nullptr ? texture : white_, 6);
     };
 
     pushQuad(frameX, frameY, frameW, frameH, linearFrom8Bit(0x14, 0x14, 0x14), 1.0f,
-             nullptr);
+             nullptr, quads_);
 
     for (const Prepared& item : prepared) {
         const core::Layer& layer = *item.layer;
@@ -430,7 +472,8 @@ void Compositor::render(const core::Project& project, const core::Composition& c
         // item.texture is the effect stack's output, or the raw source when the layer
         // has no effects.
         pushQuad(cx - w * 0.5f, cy - h * 0.5f, w, h, tint,
-                 std::clamp(alpha / 100.0f, 0.0f, 1.0f), item.texture);
+                 std::clamp(alpha / 100.0f, 0.0f, 1.0f), item.texture,
+                 quadPipelineFor(layer.blend));
     }
 
     commands->end_pass();
