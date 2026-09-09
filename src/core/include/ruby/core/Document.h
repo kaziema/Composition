@@ -192,7 +192,8 @@ struct Layer {
     std::optional<CompId> source;  // set on Precomp layers
     std::optional<MediaId> media;  // resolved through the project's pool
 
-    bool enabled = true;
+    bool enabled = true;       // the eye: whether the layer is drawn
+    bool audioEnabled = true;  // the speaker: whether it is heard
     bool solo = false;
     bool expanded = false;  // twirled open in the timeline
 

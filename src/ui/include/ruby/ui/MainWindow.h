@@ -90,6 +90,14 @@ public slots:
     // state so the caller can say what happened; Failed covers "no audio" as well as
     // "unreadable", because neither produces a waveform.
     media::ConformState conformAudio(const QString& path);
+
+    // Republish the mix from the layers as they are right now.
+    //
+    // Split out from loadAudio because it runs on every mouse move of a drag. It only
+    // reads buffers that are already decoded and never analyses anything, so it is a
+    // walk of the layer list and a seqlock write. loadAudio does the expensive half
+    // (decode, peaks, rhythm) and then calls this.
+    void rebuildMix();
     void addMediaToComposition(core::MediaId id);
     void dropMediaIntoComposition(core::MediaId media, double seconds, int layerIndex);
     void setActiveComposition(core::CompId id);
@@ -141,6 +149,15 @@ private:
     // a vector reallocating under the audio thread would be a crash you could not
     // reproduce. Entries are never erased during a session for the same reason.
     std::map<core::MediaId, media::AudioBuffer> audio_;
+
+    // Peak pyramids for drawing, one per media item, shared by every layer that uses the
+    // clip. Kept beside the samples rather than on the layer: two layers cutting the same
+    // clip want the same peaks, and a per-layer copy would be the same data twice.
+    std::map<core::MediaId, media::PeakPyramid> peaks_;
+
+    // Which clip the rhythm map was last built from. Rhythm analysis is expensive and
+    // must not re-run every time a layer is nudged.
+    std::optional<core::MediaId> analyzedRhythmFor_;
     std::unique_ptr<audio::AudioOutput> audioOut_;
     QString rhythmNote_;
     EditorToolBar* toolBar_ = nullptr;

@@ -121,6 +121,22 @@ void TimelineView::selectLayer(core::LayerId layer) {
     update();
 }
 
+void TimelineView::setAudioPeaks(const AudioPeaks* peaks) {
+    audioPeaks_ = peaks;
+    update();
+}
+
+// The peaks a layer draws with, or null when it has no audio at all. One lookup answers
+// both "is there a speaker switch on this row" and "what do I draw inside the bar",
+// which keeps the two from ever disagreeing.
+const media::PeakPyramid* TimelineView::peaksFor(const Layer& layer) const {
+    if (audioPeaks_ == nullptr || !layer.media.has_value()) {
+        return nullptr;
+    }
+    const auto found = audioPeaks_->find(*layer.media);
+    return found != audioPeaks_->end() ? &found->second : nullptr;
+}
+
 void TimelineView::clearSelection() {
     selected_.reset();
     // Keyframe selection goes with it. Leaving keys selected on a layer that is no
@@ -585,11 +601,17 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.setPen(layer.enabled ? kTextTertiary : kTextFaint);
     p.drawText(QRect(6, row.top, 16, row.height), Qt::AlignCenter, QStringLiteral("◉"));
 
-    p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(Qt::NoPen);
-    p.setBrush(layer.kind == core::LayerKind::Audio ? kCacheReady : QColor("#555555"));
-    p.drawEllipse(QPointF(30.0, static_cast<double>(cy)), 3.5, 3.5);
-    p.setRenderHint(QPainter::Antialiasing, false);
+    // The speaker. Drawn only on layers that actually carry audio, and absent otherwise,
+    // which is how AE says "this layer has no sound" without spending a pixel on it. It
+    // used to be a decorative dot, always present, green if the layer happened to be
+    // LayerKind::Audio, and clicking it did nothing.
+    if (peaksFor(layer) != nullptr) {
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(Qt::NoPen);
+        p.setBrush(layer.audioEnabled ? kCacheReady : QColor("#4a4a4a"));
+        p.drawEllipse(QPointF(30.0, static_cast<double>(cy)), 3.5, 3.5);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
 
     p.setPen(QPen(QColor("#555555"), 1.0));
     p.setBrush(layer.solo ? kTextTertiary : Qt::NoBrush);
@@ -649,46 +671,58 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.fillRect(bar, colors.bar);
     p.fillRect(QRectF(bar.left(), bar.top(), bar.width(), 1.0), colors.topEdge);
 
-    // Waveform inside the bar. Cutting to music without seeing the audio is guesswork,
-    // and this is the surface the rhythm markers will eventually be drawn on.
-    if (!layer.waveform.empty() && layer.waveform.bucketsPerSecond > 0.0) {
-        const core::Waveform& wave = layer.waveform;
-        const double mid = bar.center().y();
-        const double half = bar.height() * 0.5 - 1.0;
+    // Waveform inside the bar, drawn from the mipmap level that matches the zoom.
+    //
+    // The base level is 150 buckets/sec. Zoomed out to an hour that is ~450 buckets per
+    // pixel, which is 540k reads per layer per repaint just to draw a thousand columns.
+    // levelFor picks the coarsest level that still has a bucket per pixel, so the work
+    // per pixel stays roughly constant however far out you go. Olive has this exact
+    // problem open as an unfixed issue; the pyramid is why we do not.
+    if (const media::PeakPyramid* pyramid = peaksFor(layer); pyramid != nullptr) {
+        const double secondsPerPixel =
+            (viewSpan_ > 0.0 ? viewSpan_ : duration()) /
+            std::max(1.0, static_cast<double>(trackWidth()));
+        const media::PeakLevel* level = pyramid->levelFor(secondsPerPixel);
 
-        // Buckets are indexed from the START OF THE SOURCE, not from the start of the
-        // composition. Indexing straight off composition time only looked right while
-        // every audio layer began at zero: a clip dropped at 8.6s drew the waveform from
-        // 8.6s into its own audio, so the picture belonged to a different part of the clip
-        // than the sound.
-        const double layerIn = to_seconds(layer.inPoint, ctx);
+        if (level != nullptr && !level->empty()) {
+            const double mid = bar.center().y();
+            const double half = bar.height() * 0.5 - 1.0;
 
-        p.setPen(QPen(colors.topEdge.lighter(135), 1.0));
-        const int fromX = static_cast<int>(std::floor(bar.left()));
-        const int toX = static_cast<int>(std::ceil(bar.right()));
-        for (int x = std::max(fromX, trackLeft()); x <= toX && x < width(); ++x) {
-            // One column of pixels covers a span of buckets; take the extremes across it
-            // so a transient never disappears just because the view is zoomed out.
-            const double t0 = timeForX(x) - layerIn;
-            const double t1 = timeForX(x + 1) - layerIn;
-            if (t1 < 0.0) {
-                continue;  // pixel is before this layer starts
+            // Buckets are indexed from the START OF THE SOURCE, not from the start of the
+            // composition. Indexing straight off composition time only looked right while
+            // every audio layer began at zero: a clip dropped at 8.6s drew the waveform
+            // from 8.6s into its own audio, so the picture belonged to a different part of
+            // the clip than the sound.
+            const double layerIn = to_seconds(layer.inPoint, ctx);
+
+            p.setPen(QPen(colors.topEdge.lighter(135), 1.0));
+            const int fromX = static_cast<int>(std::floor(bar.left()));
+            const int toX = static_cast<int>(std::ceil(bar.right()));
+            for (int x = std::max(fromX, trackLeft()); x <= toX && x < width(); ++x) {
+                const double t0 = timeForX(x) - layerIn;
+                const double t1 = timeForX(x + 1) - layerIn;
+                if (t1 < 0.0) {
+                    continue;  // this pixel is before the layer starts
+                }
+                const auto b0 = static_cast<std::size_t>(std::max(0.0, t0) *
+                                                         level->bucketsPerSecond);
+                const auto b1 = static_cast<std::size_t>(std::max(0.0, t1) *
+                                                         level->bucketsPerSecond);
+                if (b0 >= level->count()) {
+                    break;
+                }
+                // Still take the extremes across the pixel. The level guarantees this is
+                // a handful of buckets rather than hundreds, but a pixel that lands
+                // between buckets must not lose the louder of the two.
+                float lo = 0.0f;
+                float hi = 0.0f;
+                for (std::size_t b = b0; b <= std::min(b1, level->count() - 1); ++b) {
+                    lo = std::min(lo, level->low[b]);
+                    hi = std::max(hi, level->high[b]);
+                }
+                p.drawLine(QPointF(x, mid - static_cast<double>(hi) * half),
+                           QPointF(x, mid - static_cast<double>(lo) * half));
             }
-            const auto b0 =
-                static_cast<std::size_t>(std::max(0.0, t0) * wave.bucketsPerSecond);
-            const auto b1 =
-                static_cast<std::size_t>(std::max(0.0, t1) * wave.bucketsPerSecond);
-            if (b0 >= wave.low.size()) {
-                break;
-            }
-            float lo = 0.0f;
-            float hi = 0.0f;
-            for (std::size_t b = b0; b <= std::min(b1, wave.low.size() - 1); ++b) {
-                lo = std::min(lo, wave.low[b]);
-                hi = std::max(hi, wave.high[b]);
-            }
-            p.drawLine(QPointF(x, mid - static_cast<double>(hi) * half),
-                       QPointF(x, mid - static_cast<double>(lo) * half));
         }
     }
     p.setPen(QPen(QColor("#0d0d0d"), 1.0));
@@ -1072,6 +1106,18 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
             return;
         }
 
+        // The speaker mutes. Only hit-testable where one is actually drawn, so clicking
+        // the empty slot on a silent layer does nothing rather than toggling a switch the
+        // user cannot see.
+        if (pos.x() >= 24 && pos.x() < 38 && peaksFor(*layer) != nullptr) {
+            emit editBegan(QStringLiteral("Mute Layer"));
+            layer->audioEnabled = !layer->audioEnabled;
+            emit editEnded();
+            emit audioChanged();
+            update();
+            return;
+        }
+
         // The twirl triangle expands in place. Never navigates anywhere.
         const int twirlX = kAvW + kIndexW;
         if (pos.x() >= twirlX && pos.x() < twirlX + 13) {
@@ -1432,6 +1478,7 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     connect(view_, &TimelineView::layersChanged, this, &TimelinePanel::layersChanged);
     connect(view_, &TimelineView::compositionResized, this,
             &TimelinePanel::compositionResized);
+    connect(view_, &TimelineView::audioChanged, this, &TimelinePanel::audioChanged);
     connect(view_, &TimelineView::mediaDropped, this, &TimelinePanel::mediaDropped);
     connect(view_, &TimelineView::layerContextMenuRequested, this,
             &TimelinePanel::layerContextMenuRequested);
@@ -1515,6 +1562,10 @@ std::optional<core::LayerId> TimelinePanel::selectedLayer() const {
 void TimelinePanel::selectLayer(core::LayerId layer) { view_->selectLayer(layer); }
 
 void TimelinePanel::clearSelection() { view_->clearSelection(); }
+
+void TimelinePanel::setAudioPeaks(const TimelineView::AudioPeaks* peaks) {
+    view_->setAudioPeaks(peaks);
+}
 
 void TimelinePanel::syncScrollRange() {
     const int overflow = std::max(0, view_->contentHeight() - view_->height());

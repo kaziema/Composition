@@ -41,6 +41,10 @@ core::Project makeProject() {
     layer.inPoint = core::TimeValue::beats(2.0);
     layer.outPoint = core::TimeValue::seconds(9.25);
     layer.expanded = true;
+    // The eye and the speaker are separate switches, so a project has to be able to say
+    // "visible but muted" and have that mean something after a reload.
+    layer.enabled = true;
+    layer.audioEnabled = false;
 
     const core::TimeContext ctx = comp.timeContext();
     if (core::Property* pos = layer.find("position"); pos != nullptr) {
@@ -93,6 +97,24 @@ int main() {
     const core::Layer& layer = comp.layers.front();
     check(layer.blend == core::BlendMode::Add, "blend mode survives");
     check(layer.expanded, "twirl state survives");
+    check(layer.enabled, "the eye survives");
+    check(!layer.audioEnabled, "and the speaker survives independently of it");
+
+    // A project written before the speaker switch existed has no audioEnabled key. It
+    // must open audible: defaulting to false would silently mute every old project.
+    {
+        std::string json = io::toJson(original);
+        const std::string key = "\"audioEnabled\": false,";
+        const auto at = json.find(key);
+        check(at != std::string::npos, "the field is actually written");
+        json.erase(at, key.size());
+
+        core::Project old_;
+        const io::LoadReport r = io::fromJson(old_, json);
+        check(r.ok, "a project without the field still loads");
+        check(old_.compositions().front().layers.front().audioEnabled,
+              "and its layers default to audible");
+    }
 
     // A time authored in beats must not come back as seconds.
     check(layer.inPoint.mode == core::TimeMode::Beats, "beats stay beats");

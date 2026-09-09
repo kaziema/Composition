@@ -219,7 +219,8 @@ json write(const Layer& l) {
     json out{{"id", l.id}, {"name", l.name}, {"kind", name(l.kind)},
              {"label", name(l.label)}, {"in", write(l.inPoint)},
              {"out", write(l.outPoint)}, {"blend", name(l.blend)},
-             {"enabled", l.enabled}, {"solo", l.solo}, {"expanded", l.expanded}};
+             {"enabled", l.enabled}, {"audioEnabled", l.audioEnabled},
+             {"solo", l.solo}, {"expanded", l.expanded}};
     if (l.parent.has_value()) out["parent"] = *l.parent;
     if (l.source.has_value()) out["source"] = *l.source;
     if (l.media.has_value())  out["media"] = *l.media;
@@ -430,6 +431,9 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 layer.outPoint = readTime(l.contains("out") ? l.at("out") : json{});
                 layer.blend = blendMode(str(l, "blend", "normal"));
                 layer.enabled = get<bool>(l, "enabled", true);
+                // Defaults to on, so projects written before there was an audio switch
+                // open with their sound audible rather than mysteriously muted.
+                layer.audioEnabled = get<bool>(l, "audioEnabled", true);
                 layer.solo = get<bool>(l, "solo", false);
                 layer.expanded = get<bool>(l, "expanded", false);
                 if (l.contains("parent") && l.at("parent").is_number()) {

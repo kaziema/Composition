@@ -10,7 +10,10 @@ class QDropEvent;
 class QScrollBar;
 class QSlider;
 
+#include <map>
+
 #include "ruby/core/Document.h"
+#include "ruby/media/PeakCache.h"
 
 namespace ruby::ui {
 
@@ -66,6 +69,13 @@ public:
     void setSnapping(bool on);
     [[nodiscard]] bool snapping() const noexcept { return snapping_; }
 
+    // Peak pyramids, borrowed, keyed by media. Also the answer to "does this layer have
+    // audio": an entry exists exactly when we have peaks to draw, which is the same
+    // condition under which the speaker switch should be there at all.
+    using AudioPeaks = std::map<core::MediaId, media::PeakPyramid>;
+    void setAudioPeaks(const AudioPeaks* peaks);
+
+
     // --- Horizontal zoom -----------------------------------------------------
     //
     // The track maps a visible WINDOW of time onto its width, not the whole
@@ -108,6 +118,9 @@ signals:
 
     // The composition grew to contain a layer that ran past its end.
     void compositionResized(double seconds);
+
+    // A speaker switch was toggled, so the mix has to be rebuilt.
+    void audioChanged();
 
     // The visible window moved, so the horizontal scrollbar has to follow.
     void viewRangeChanged(double start, double span);
@@ -159,6 +172,7 @@ private:
     [[nodiscard]] double xForTime(double seconds) const noexcept;
     [[nodiscard]] double timeForX(int x) const noexcept;
     [[nodiscard]] double duration() const noexcept;
+    [[nodiscard]] const media::PeakPyramid* peaksFor(const core::Layer& layer) const;
 
     // Keeps the window inside the composition and never lets it collapse.
     void clampView();
@@ -208,6 +222,7 @@ private:
     std::vector<Row> rows_;
 
     bool snapping_ = true;
+    const AudioPeaks* audioPeaks_ = nullptr;
 
     // The visible time window. Span of 0 means "not set yet"; setComposition fits it.
     double viewStart_ = 0.0;
@@ -259,6 +274,7 @@ public:
     [[nodiscard]] std::optional<core::LayerId> selectedLayer() const;
     void selectLayer(core::LayerId layer);
     void clearSelection();
+    void setAudioPeaks(const TimelineView::AudioPeaks* peaks);
 
 signals:
     void currentTimeChanged(double seconds);
@@ -267,6 +283,7 @@ signals:
     void editEnded();
     void layersChanged();
     void compositionResized(double seconds);
+    void audioChanged();
     void layerContextMenuRequested(const QPoint& globalPos);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 

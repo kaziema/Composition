@@ -547,6 +547,10 @@ void MainWindow::newProject() {
         audioOut_->setSources({});
     }
     audio_.clear();
+    peaks_.clear();
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setAudioPeaks(nullptr);
+    }
     rhythmNote_.clear();
 
     // A project with no composition is a legal but useless state, so make one rather
@@ -586,6 +590,10 @@ void MainWindow::openProject() {
         audioOut_->setSources({});
     }
     audio_.clear();
+    peaks_.clear();
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setAudioPeaks(nullptr);
+    }
     rhythmNote_.clear();
 
     core::Composition* active = activeComposition();
@@ -1219,21 +1227,27 @@ void MainWindow::loadAudio() {
         }
         const media::AudioBuffer& buffer = found->second;
 
-        if (layer.waveform.empty()) {
-            const media::WaveformPeaks peaks =
-                media::AudioDecoder::peaks(buffer, media::kBasePeaksPerSecond);
-            layer.waveform.bucketsPerSecond = peaks.bucketsPerSecond;
-            layer.waveform.low = peaks.low;
-            layer.waveform.high = peaks.high;
+        // Peaks for drawing. Try the conform cache written at import first; only build
+        // them if that misses, which is the whole reason the cache exists.
+        if (peaks_.find(*layer.media) == peaks_.end()) {
+            media::PeakPyramid pyramid;
+            if (!pyramid.load(media::peakCachePath(peaksDir_.toStdString(), path))) {
+                pyramid = media::PeakPyramid::build(buffer);
+                pyramid.save(media::peakCachePath(peaksDir_.toStdString(), path));
+            }
+            if (!pyramid.empty()) {
+                peaks_.emplace(*layer.media, std::move(pyramid));
+            }
         }
 
         if (rhythmSource == nullptr && layer.kind == core::LayerKind::Audio) {
             rhythmSource = &buffer;
         }
 
-        // A layer switched off in the timeline makes no sound. It keeps its waveform, so
-        // you can still see what you muted.
-        if (!layer.enabled) {
+        // The SPEAKER, not the eye. Hiding a layer's picture is not the same as muting
+        // it, and AE keeps them separate for good reason: you turn the picture off to see
+        // what is underneath while still cutting to the sound.
+        if (!layer.audioEnabled) {
             continue;
         }
 
@@ -1247,6 +1261,9 @@ void MainWindow::loadAudio() {
 
     if (audioOut_ != nullptr) {
         audioOut_->setSources(sources);
+    }
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setAudioPeaks(&peaks_);
     }
 
     // Rhythm analysis still runs on a dedicated audio layer rather than the mix. Cutting
@@ -1600,6 +1617,12 @@ QWidget* MainWindow::buildBody() {
     // duration and the status bar owes the user an explanation for the rescale.
     connect(timelinePanel, &TimelinePanel::compositionResized, this,
             [this](double) { noteCompositionGrew(); });
+    // Flipping a speaker changes what is audible, so the mix is republished. It is an
+    // undoable edit, which is why the view brackets it with editBegan/editEnded.
+    connect(timelinePanel, &TimelinePanel::audioChanged, this, [this] {
+        loadAudio();
+        markDirty();
+    });
 
     // The Snapping switch finally does something.
     connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,
