@@ -44,6 +44,13 @@ public:
 
     [[nodiscard]] int tabCount() const;
     [[nodiscard]] QString tabLabel(int index) const;
+    void setTabLabel(int index, const QString& label);
+
+    // Which frame currently holds `page`, and at what index. Null when nobody does.
+    //
+    // Necessary because a tab's home is no longer fixed: code that wants to rename the
+    // viewer's composition tab cannot assume the viewer still has it.
+    [[nodiscard]] static PanelFrame* frameHolding(QWidget* page, int* indexOut = nullptr);
     [[nodiscard]] int currentIndex() const;
     void setCurrentIndex(int index);
 

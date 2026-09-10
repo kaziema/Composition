@@ -124,6 +124,61 @@ void a_frame_can_refuse_to_give_tabs_up() {
     delete a;
 }
 
+// A tab's home is no longer fixed, so anything that renames one has to find it first.
+// The viewer's composition tab used to be rewritten by replacing all three viewer labels,
+// which put a label back for a tab that had been dragged elsewhere: the tab then existed
+// in two panels and one of them had no page.
+void a_tab_can_be_found_and_renamed_wherever_it_lives() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("Comp"), QStringLiteral("Footage")});
+    ui::PanelFrame* b = makeFrame({QStringLiteral("Inspector")});
+
+    QWidget* compPage = nullptr;
+    {
+        int index = -1;
+        // The page belonging to tab 0 of a, found the way production code finds it.
+        const ui::PanelFrame::DetachedTab peek = a->takeTab(0);
+        compPage = peek.page;
+        a->insertTab(0, peek.label, peek.page);
+        check(ui::PanelFrame::frameHolding(compPage, &index) == a, "found in its own frame");
+        check(index == 0, "at the right index");
+    }
+
+    int index = -1;
+    ui::PanelFrame* home = ui::PanelFrame::frameHolding(compPage, &index);
+    check(home == a, "still in a");
+    home->setTabLabel(index, QStringLiteral("Comp: Renamed"));
+    check(a->tabLabel(0) == QStringLiteral("Comp: Renamed"), "renamed in place");
+
+    // Move it, then rename again. The rename must follow the tab, not the old panel.
+    const ui::PanelFrame::DetachedTab moved = a->takeTab(0);
+    b->insertTab(0, moved.label, moved.page);
+
+    home = ui::PanelFrame::frameHolding(compPage, &index);
+    check(home == b, "found in the frame it moved to");
+    home->setTabLabel(index, QStringLiteral("Comp: Moved"));
+    check(b->tabLabel(0) == QStringLiteral("Comp: Moved"), "renamed there");
+    checkLabels(*a, {QStringLiteral("Footage")},
+                "and the old frame did not get the label back");
+
+    delete a;
+    delete b;
+}
+
+void a_destroyed_frame_leaves_nothing_behind() {
+    QWidget* page = nullptr;
+    {
+        ui::PanelFrame* gone = makeFrame({QStringLiteral("Temp")});
+        const ui::PanelFrame::DetachedTab taken = gone->takeTab(0);
+        page = taken.page;
+        delete gone;
+    }
+    // The registry must not still be offering a frame that has been destroyed, which is
+    // the crash the id lookup exists to prevent.
+    check(ui::PanelFrame::frameHolding(page) == nullptr,
+          "a page nobody holds is held by nobody");
+    delete page;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -134,6 +189,8 @@ int main(int argc, char** argv) {
     a_frame_can_be_emptied();
     out_of_range_is_refused_rather_than_crashing();
     a_frame_can_refuse_to_give_tabs_up();
+    a_tab_can_be_found_and_renamed_wherever_it_lives();
+    a_destroyed_frame_leaves_nothing_behind();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

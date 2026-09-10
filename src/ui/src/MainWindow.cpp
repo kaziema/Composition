@@ -1591,16 +1591,25 @@ void MainWindow::refreshCompositionTabs() {
     }
     timelineTabs_->setTabs(names);
 
-    // The viewer names the composition it is showing, and it was doing so exactly once,
-    // at construction. Open a project and it kept announcing the demo composition that
-    // had been replaced, which is the sort of thing you only notice in a screenshot.
-    if (viewerTabs_ != nullptr) {
-        const core::Composition* active = activeComposition();
-        viewerTabs_->setTabs({QStringLiteral("Composition: %1")
-                                  .arg(active != nullptr
-                                           ? QString::fromStdString(active->name)
-                                           : QStringLiteral("none")),
-                              QStringLiteral("Footage"), QStringLiteral("Layer")});
+    // The viewer's tab names the composition it is showing. RENAMED, not replaced.
+    //
+    // This used to call setTabs with all three viewer labels, which was fine while tabs
+    // could not move and wrong the moment they could: dragging Footage out of the viewer
+    // and then switching compositions put the label back with no page behind it, so the
+    // tab existed in two places at once and one of them did nothing.
+    //
+    // The composition page is found wherever it now lives rather than assumed to still be
+    // in the viewer, because that is exactly the assumption that broke.
+    if (viewerPage_ != nullptr) {
+        int index = -1;
+        if (PanelFrame* home = PanelFrame::frameHolding(viewerPage_, &index);
+            home != nullptr) {
+            const core::Composition* active = activeComposition();
+            home->setTabLabel(index, QStringLiteral("Composition: %1")
+                                         .arg(active != nullptr
+                                                  ? QString::fromStdString(active->name)
+                                                  : QStringLiteral("none")));
+        }
     }
 }
 
@@ -2114,10 +2123,28 @@ QWidget* MainWindow::buildBody() {
     // nothing behind them yet and say so rather than being blank.
     effectsTabs_ = new PanelFrame({QStringLiteral("Effects"), QStringLiteral("Presets"),
                                     QStringLiteral("CC")});
+    // Three pages, each fixed to one list, rather than one panel plus two placeholders.
+    //
+    // The old shape had a currentChanged handler calling effectsPanel_->setTab(), which
+    // did nothing visible: switching tabs switched the frame to a placeholder page, so
+    // the panel whose tab had changed was not the one on screen. Dead code that looked
+    // load-bearing.
+    //
+    // Three pages also means the tabs can be dragged apart and still work, which is the
+    // whole point of the tab system, and each one shows its own empty state rather than a
+    // generic placeholder.
     effectsPanel_ = new EffectsPanel;
+    effectsPanel_->setTab(EffectsPanel::Tab::Effects);
+
+    auto* presetsPanel = new EffectsPanel;
+    presetsPanel->setTab(EffectsPanel::Tab::Presets);
+
+    auto* ccPanel = new EffectsPanel;
+    ccPanel->setTab(EffectsPanel::Tab::ColorCorrection);
+
     effectsTabs_->addPage(effectsPanel_);
-    effectsTabs_->addPage(makePlaceholder(QStringLiteral("presets")));
-    effectsTabs_->addPage(makePlaceholder(QStringLiteral("colour correction presets")));
+    effectsTabs_->addPage(presetsPanel);
+    effectsTabs_->addPage(ccPanel);
 
     // A stack, not two docks. The toolbar's Project and fx buttons choose which of these
     // the left column shows: they are the same reach for the same space, and having both
@@ -2126,24 +2153,13 @@ QWidget* MainWindow::buildBody() {
     leftDock_->addWidget(projectTabs_);
     leftDock_->addWidget(effectsTabs_);
 
-    connect(effectsPanel_, &EffectsPanel::effectActivated, this,
-            [this](const std::string& id) { applyEffect(id); });
+    // All three, because any of them can end up holding effects once presets exist.
+    for (EffectsPanel* panel : {effectsPanel_, presetsPanel, ccPanel}) {
+        connect(panel, &EffectsPanel::effectActivated, this,
+                [this](const std::string& id) { applyEffect(id); });
+    }
 
-    // The panel's own tabs drive which list it shows, so the three tabs and the three
-    // pages cannot disagree about which one is up.
-    connect(effectsTabs_, &PanelFrame::currentChanged, this, [this](int index) {
-        if (effectsPanel_ == nullptr) {
-            return;
-        }
-        // Keyed off the label, not the index. Tabs move between panels now, so index 1
-        // stops meaning "Presets" the moment anything is inserted before it.
-        const QString label = effectsTabs_->tabLabel(index);
-        effectsPanel_->setTab(label == QStringLiteral("Presets")
-                                  ? EffectsPanel::Tab::Presets
-                              : label == QStringLiteral("CC")
-                                  ? EffectsPanel::Tab::ColorCorrection
-                                  : EffectsPanel::Tab::Effects);
-    });
+
 
     core::Composition& comp = project_.compositions().front();
     activeComp_ = comp.id;
@@ -2151,7 +2167,8 @@ QWidget* MainWindow::buildBody() {
 
     viewerTabs_ = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
                                   QStringLiteral("Footage"), QStringLiteral("Layer")});
-    viewerTabs_->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
+    viewerPage_ = makeViewerPage(&viewerTimecode_, &viewport_);
+    viewerTabs_->addPage(viewerPage_);
     viewerTabs_->addPage(makePlaceholder(QStringLiteral("footage viewer")));
     viewerTabs_->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 

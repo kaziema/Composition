@@ -209,6 +209,9 @@ private:
     PanelFrame* effectsTabs_ = nullptr;
     PanelFrame* inspectorTabs_ = nullptr;
 
+    // The composition viewer's page, so its tab can be renamed wherever it ends up.
+    QWidget* viewerPage_ = nullptr;
+
     // A frame that loses its last tab disappears and the rest take the space. Recomputed
     // rather than toggled per event, because a tab move is a removal and an insertion and
     // the state in between is not one anybody should see.

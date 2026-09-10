@@ -264,7 +264,11 @@ void ProjectPanel::layoutFooter() {
 
 int ProjectPanel::rowAt(int y) const {
     const int top = kSearchH + metrics::kColumnHeaderH;
-    if (y < top) {
+    // Painting stops at the footer; hit testing did not, so with enough items the rows
+    // underneath it were selectable and had tooltips while being invisible. Anything the
+    // user cannot see is not something they can be clicking on.
+    const int bottom = height() - metrics::kProjectFooterH;
+    if (y < top || y >= bottom) {
         return -1;
     }
     const int index = (y - top) / metrics::kProjectRowH;

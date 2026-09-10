@@ -80,6 +80,15 @@ public:
         update();
     }
 
+    void setLabelAt(int index, const QString& label) {
+        if (index < 0 || index >= labels_.size()) {
+            return;
+        }
+        labels_[index] = label;
+        layoutTabs();
+        update();
+    }
+
     void insertLabel(int index, const QString& label) {
         labels_.insert(std::clamp(index, 0, static_cast<int>(labels_.size())), label);
         layoutTabs();
@@ -388,6 +397,30 @@ void PanelFrame::setTabsMovable(bool movable) {
 int PanelFrame::tabCount() const { return strip_->count(); }
 
 QString PanelFrame::tabLabel(int index) const { return strip_->labelAt(index); }
+
+void PanelFrame::setTabLabel(int index, const QString& label) {
+    if (index < 0 || index >= strip_->count() || strip_->labelAt(index) == label) {
+        return;
+    }
+    strip_->setLabelAt(index, label);
+}
+
+PanelFrame* PanelFrame::frameHolding(QWidget* page, int* indexOut) {
+    if (page == nullptr) {
+        return nullptr;
+    }
+    for (const auto& [id, frame] : registry()) {
+        for (int i = 0; i < frame->stack_->count(); ++i) {
+            if (frame->stack_->widget(i) == page) {
+                if (indexOut != nullptr) {
+                    *indexOut = i;
+                }
+                return frame;
+            }
+        }
+    }
+    return nullptr;
+}
 
 int PanelFrame::currentIndex() const { return strip_->current(); }
 
