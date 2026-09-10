@@ -8,6 +8,8 @@
 #include <QPixmap>
 #include <QShortcut>
 #include <QMouseEvent>
+#include <QToolTip>
+#include <QHelpEvent>
 #include <QPainter>
 #include <QVBoxLayout>
 
@@ -20,7 +22,9 @@ using namespace theme;
 namespace {
 
 constexpr int kSearchH = 26;
-constexpr int kTypeW = 52;
+// Wide enough for "Composition" and "Video + Audio", which are the longest values. A
+// column that always elides is a column whose contents you have to hover to read.
+constexpr int kTypeW = 84;
 constexpr int kDurW = 48;
 constexpr int kEdgePad = 8;
 
@@ -120,8 +124,13 @@ void ProjectPanel::rebuild() {
         if (!matches(name)) {
             continue;
         }
-        rows_.push_back({true, comp.id, name, QStringLiteral("Comp"),
-                         formatDuration(comp.duration), kLabelAqua.stripe, 0});
+        rows_.push_back({true, comp.id, name, QStringLiteral("Composition"),
+                         formatDuration(comp.duration), kLabelAqua.stripe, 0,
+                         QStringLiteral("%1 x %2  ·  %3 fps  ·  %4 layers")
+                             .arg(comp.width)
+                             .arg(comp.height)
+                             .arg(comp.fps, 0, 'g', 5)
+                             .arg(comp.layers.size())});
     }
 
     for (const core::MediaItem& item : project_->media()) {
@@ -130,24 +139,53 @@ void ProjectPanel::rebuild() {
             continue;
         }
 
-        // Resolution is more use than a codec name when you are picking a clip.
-        QString kind = QStringLiteral("—");
-        QColor swatch = kLabelGray.stripe;
-        if (item.isVideo()) {
-            kind = (item.height >= 2160) ? QStringLiteral("4K")
-                 : (item.height >= 1080) ? QStringLiteral("HD")
-                                         : QStringLiteral("SD");
-        } else {
-            kind = QStringLiteral("Aud");
-            swatch = kLabelGreen.stripe;
+        // What KIND of thing this is, the way After Effects' Type column works.
+        //
+        // It used to say HD, SD or 4K, which is a resolution class rather than a type: a
+        // column headed "Type" that answers a different question is worse than no column,
+        // because the reader believes the answer. Resolution moved to the tooltip, where
+        // it is still one hover away.
+        //
+        // AE's own values here are the importer's name, so an H.264 file reads
+        // "ImporterEX". That is a leak of Adobe's plugin architecture into the UI and not
+        // worth copying: nobody has ever wanted to know which importer opened a file.
+        QString kind = QStringLiteral("Video");
+        QColor swatch = kLabelAqua.stripe;
+        switch (item.kind) {
+            case core::MediaKind::Video:
+                kind = item.hasAudio ? QStringLiteral("Video + Audio")
+                                     : QStringLiteral("Video");
+                break;
+            case core::MediaKind::Audio:
+                kind = QStringLiteral("Audio");
+                swatch = kLabelGreen.stripe;
+                break;
+            case core::MediaKind::Image:
+                kind = QStringLiteral("Still");
+                swatch = kLabelLavender.stripe;
+                break;
+            case core::MediaKind::Unknown:
+                kind = QStringLiteral("Unknown");
+                swatch = kLabelGray.stripe;
+                break;
         }
 
         const qint64 bytes =
             QFileInfo(QString::fromStdString(item.path)).size();
         totalBytes_ += bytes;
 
+        QString detail;
+        if (item.width > 0 && item.height > 0) {
+            detail = QStringLiteral("%1 x %2").arg(item.width).arg(item.height);
+            if (item.fps > 0.0) {
+                detail += QStringLiteral("  ·  %1 fps").arg(item.fps, 0, 'g', 5);
+            }
+            detail += QStringLiteral("\n");
+        }
+        detail += QString::fromStdString(item.path);
+
         rows_.push_back({false, item.id, name, kind, formatDuration(item.duration),
-                         swatch, bytes});
+                         swatch, bytes, detail});
     }
 
     if (selected_ >= static_cast<int>(rows_.size())) {
@@ -229,7 +267,9 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
         p.setFont(numericFont(type::kMeta));
         p.setPen(kTextDim);
         p.drawText(QRect(nameW, y, kTypeW, metrics::kProjectRowH),
-                   Qt::AlignVCenter | Qt::AlignLeft, row.type);
+                   Qt::AlignVCenter | Qt::AlignLeft,
+                   QFontMetrics(numericFont(type::kMeta))
+                       .elidedText(row.type, Qt::ElideRight, kTypeW - 4));
         p.drawText(QRect(nameW + kTypeW, y, kDurW, metrics::kProjectRowH),
                    Qt::AlignVCenter | Qt::AlignLeft, row.duration);
         p.setFont(font());
@@ -250,6 +290,28 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
 }
 
 const char* ProjectPanel::mediaMimeType() { return "application/x-ruby-media"; }
+
+bool ProjectPanel::event(QEvent* e) {
+    if (e->type() == QEvent::ToolTip) {
+        auto* help = static_cast<QHelpEvent*>(e);
+        const int row = rowAt(help->pos().y());
+        if (row < 0) {
+            QToolTip::hideText();
+            e->ignore();
+            return true;
+        }
+        const Row& hit = rows_[static_cast<std::size_t>(row)];
+        // Name first, because the column elides it and this is often the only place the
+        // whole thing is readable.
+        QToolTip::showText(help->globalPos(),
+                           hit.detail.isEmpty()
+                               ? hit.name
+                               : QStringLiteral("%1\n%2").arg(hit.name, hit.detail),
+                           this);
+        return true;
+    }
+    return QWidget::event(e);
+}
 
 void ProjectPanel::mousePressEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();

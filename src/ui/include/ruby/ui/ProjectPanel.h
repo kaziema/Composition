@@ -40,6 +40,7 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    bool event(QEvent* e) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
@@ -54,6 +55,11 @@ private:
         QString duration;
         QColor swatch;
         qint64 bytes = 0;
+
+        // Everything the columns do not have room for: resolution, frame rate, path.
+        // Shown on hover, because the panel is narrow and most of this is only wanted
+        // occasionally.
+        QString detail;
     };
 
     [[nodiscard]] int rowAt(int y) const;
