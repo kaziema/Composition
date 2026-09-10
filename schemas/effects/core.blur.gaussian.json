@@ -1,0 +1,25 @@
+{
+  "id": "core.blur.gaussian",
+  "schema": 1,
+  "display_name": "Gaussian Blur",
+  "params": [
+    {
+      "key": "radius",
+      "label": "Radius",
+      "order": 0,
+      "type": "float",
+      "unit": "percent-of-width",
+      "default": 0.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          10.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

@@ -1,5 +1,6 @@
 add_library(ruby_io STATIC
     src/ProjectIO.cpp
+    src/SchemaIO.cpp
     src/History.cpp
     src/MediaPool.cpp
 )

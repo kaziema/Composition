@@ -1,0 +1,47 @@
+{
+  "fragment_version": 1,
+  "layers": [
+    {
+      "id": 1,
+      "name": "whip",
+      "kind": "solid",
+      "in": { "mode": "beats", "value": 0.0 },
+      "out": { "mode": "beats", "value": 0.5 },
+      "blend": "normal",
+      "enabled": true,
+      "properties": [
+        {
+          "key": "position",
+          "label": "Position",
+          "unit": "percent-of-width",
+          "value": [50.0, 50.0],
+          "keys": [
+            { "time": { "mode": "beats", "value": 0.0 }, "value": [50.0, 50.0], "interp": "bezier", "easeOut": 0.0 },
+            { "time": { "mode": "beats", "value": 0.5 }, "value": [-150.0, 50.0], "interp": "bezier", "easeIn": 0.9 }
+          ]
+        }
+      ],
+      "effects": [
+        {
+          "effect": "core.blur.directional",
+          "schema": 1,
+          "name": "Motion Blur",
+          "enabled": true,
+          "params": [
+            {
+              "key": "length",
+              "unit": "percent-of-width",
+              "value": 0.0,
+              "keys": [
+                { "time": { "mode": "beats", "value": 0.0 }, "value": 0.0, "interp": "bezier" },
+                { "time": { "mode": "beats", "value": 0.25 }, "value": 9.0, "interp": "bezier" },
+                { "time": { "mode": "beats", "value": 0.5 }, "value": 0.0, "interp": "bezier" }
+              ]
+            },
+            { "key": "angle", "unit": "degrees", "value": 90.0 }
+          ]
+        }
+      ]
+    }
+  ]
+}

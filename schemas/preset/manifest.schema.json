@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ruby.app/schemas/preset/manifest.schema.json",
+  "title": "Ruby preset manifest",
+  "description": "manifest.json inside a .rbyset or .rbypck. Both extensions are the same zip container with a different `kind`, so this is one schema and one parser, forever.",
+  "type": "object",
+  "required": ["format", "format_version", "kind", "id", "name", "requires"],
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "ruby.preset",
+      "description": "Fixed. Lets a file be identified without trusting its extension."
+    },
+    "format_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The container's own version, separate from any effect's schema version."
+    },
+    "kind": {
+      "enum": ["set", "pack"],
+      "description": "`set` is one fragment (.rbyset). `pack` is many fragments plus a shared assets/ folder (.rbypck). 200 transitions sharing 12 textures ship 12 textures."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$",
+      "description": "Immortal, dotted, lower_snake segments. `core.*` is reserved for first-party content; third parties use `com.vendor.*`. Same rule as an effect id (D1)."
+    },
+    "name": { "type": "string", "minLength": 1, "description": "Display name. Free to change." },
+    "description": { "type": "string" },
+    "author": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string" }
+      },
+      "description": "A preset library is a body of authored work with people's names on it. Sapphire's 3,836 presets credit twelve named authors; this field is why."
+    },
+    "category": { "type": "string" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Flat and mixed-axis on purpose: technique, mood, colour, subject. Sapphire shipped a structured tags object with named axes AND a flat list side by side, and the flat list is the one that survived."
+    },
+    "drop_target": {
+      "enum": ["layer", "cut", "timeline"],
+      "default": "layer",
+      "description": "Where this fragment is meant to land. A shake goes onto a layer, a transition onto a cut, a full title build onto the timeline. Declared rather than guessed, because guessing wrong silently produces a mess the user has to undo."
+    },
+    "requires": {
+      "type": "object",
+      "required": ["app_schema"],
+      "additionalProperties": false,
+      "properties": {
+        "app_schema": { "type": "integer", "minimum": 1 },
+        "effects": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 },
+          "description": "Effect id to the schema version this content was authored against."
+        }
+      },
+      "description": "A version check, not a dependency check. Every effect ships with the app, so the only possible failure is a preset newer than the install."
+    },
+    "variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "content": { "type": "string", "description": "Path inside the container." },
+          "thumbnail": { "type": "string" }
+        }
+      },
+      "description": "Absent means one variant at content.json."
+    },
+    "controls": {
+      "type": "array",
+      "description": "The handful of knobs the author chose to surface. Everything else stays editable underneath; this is what shows first, not what is allowed.",
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "target"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "label": { "type": "string" },
+          "target": {
+            "type": "string",
+            "description": "JSON pointer into content.json naming the value this drives."
+          },
+          "unit": {
+            "enum": ["px", "percent-of-width", "percent-of-height", "percent-of-diagonal", "degrees", "percent", "normalized"]
+          },
+          "range": { "$ref": "#/$defs/range" }
+        }
+      }
+    },
+    "sets": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Only on kind=pack: paths to the member manifests."
+    },
+    "preview": { "type": "string", "description": "Plays on hover in the browser." },
+    "thumbnail": { "type": "string" },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spdx": { "type": "string" },
+        "text": { "type": "string", "description": "Path to LICENSE inside the container." }
+      }
+    },
+    "signature": {
+      "type": ["object", "null"],
+      "description": "Reserved and unused. Retrofitting a signature slot into a format already in the wild is miserable, so it exists from the first file ever written."
+    }
+  },
+  "$defs": {
+    "range": {
+      "type": "object",
+      "required": ["slider"],
+      "additionalProperties": false,
+      "properties": {
+        "minimum": { "type": ["number", "null"] },
+        "maximum": { "type": ["number", "null"] },
+        "slider": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2
+        }
+      },
+      "description": "Same shape as an effect parameter's range. A hard limit and a slider are different things; see core::ParamRange."
+    }
+  }
+}

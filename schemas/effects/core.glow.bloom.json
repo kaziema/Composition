@@ -1,0 +1,59 @@
+{
+  "id": "core.glow.bloom",
+  "schema": 1,
+  "display_name": "Glow",
+  "params": [
+    {
+      "key": "threshold",
+      "label": "Threshold",
+      "order": 0,
+      "type": "float",
+      "unit": "normalized",
+      "default": 1.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          4.0
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "radius",
+      "label": "Radius",
+      "order": 1,
+      "type": "float",
+      "unit": "percent-of-width",
+      "default": 2.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          20.0
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "intensity",
+      "label": "Intensity",
+      "order": 2,
+      "type": "float",
+      "unit": "percent",
+      "default": 100.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          400.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

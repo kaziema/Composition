@@ -1,0 +1,42 @@
+{
+  "id": "core.blur.directional",
+  "schema": 1,
+  "display_name": "Directional Blur",
+  "params": [
+    {
+      "key": "length",
+      "label": "Length",
+      "order": 0,
+      "type": "float",
+      "unit": "percent-of-width",
+      "default": 0.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          15.0
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "angle",
+      "label": "Angle",
+      "order": 1,
+      "type": "float",
+      "unit": "degrees",
+      "default": 0.0,
+      "range": {
+        "minimum": null,
+        "maximum": null,
+        "slider": [
+          0.0,
+          360.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

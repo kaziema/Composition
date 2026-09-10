@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ruby.app/schemas/preset/content.schema.json",
+  "title": "Ruby preset content",
+  "description": "content.json inside a preset container: a layer-stack fragment. Deliberately the SAME layer shape a .rbypr project uses, so there is one layer serialization and one parser rather than two that drift. A preset is a subtree of layers, not a single effect chain: a shake is a null plus expressions plus effects, a transition is several layers with time offsets and an SFX. Sapphire's own preset library measures this out, with a median of four chained components per preset and 40% using five or more.",
+  "type": "object",
+  "required": ["layers"],
+  "additionalProperties": false,
+  "properties": {
+    "fragment_version": { "type": "integer", "minimum": 1 },
+    "layers": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/layer" },
+      "description": "Topmost first, matching the timeline. Layer ids are local to the fragment and are remapped on apply."
+    },
+    "media": {
+      "type": "array",
+      "description": "Assets the fragment brings with it, by content-hashed path inside the container.",
+      "items": {
+        "type": "object",
+        "required": ["id", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "integer" },
+          "path": { "type": "string" },
+          "kind": { "enum": ["video", "audio", "still", "unknown"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "required": ["id", "name", "kind"],
+      "properties": {
+        "id": { "type": "integer" },
+        "name": { "type": "string" },
+        "kind": { "enum": ["footage", "solid", "text", "audio", "precomp"] },
+        "in": { "$ref": "#/$defs/time" },
+        "out": { "$ref": "#/$defs/time" },
+        "blend": { "type": "string" },
+        "parent": { "type": "integer", "description": "Another layer id in this fragment." },
+        "media": { "type": "integer" },
+        "enabled": { "type": "boolean" },
+        "audioEnabled": { "type": "boolean" },
+        "solo": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "properties": { "type": "array", "items": { "$ref": "#/$defs/property" } },
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "required": ["effect", "schema"],
+      "properties": {
+        "effect": { "type": "string", "description": "An effect id from D1. Immortal." },
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The version this content was authored against. Loading it into a newer effect runs that effect's migration chain."
+        },
+        "name": { "type": "string" },
+        "enabled": { "type": "boolean" },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/property" } }
+      }
+    },
+    "property": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": { "type": "string", "description": "Immortal. Never renamed, never retyped." },
+        "label": { "type": "string" },
+        "unit": {
+          "enum": ["px", "percent-of-width", "percent-of-height", "percent-of-diagonal", "degrees", "percent", "normalized"],
+          "description": "Why a preset authored on 1080x1920 lands correctly on 1920x1080. An unknown unit is refused, never defaulted: reading it as `normalized` would silently reinterpret every stored value."
+        },
+        "value": { "description": "Scalar or array, matching the parameter's component count." },
+        "expression": { "type": "string" },
+        "keys": { "type": "array", "items": { "$ref": "#/$defs/keyframe" } }
+      },
+      "description": "No `range` key, on purpose. Limits belong to the effect's schema, not to saved content: a file that pinned its own would freeze them, so widening a range later would leave every existing preset on the old one with no way to tell."
+    },
+    "keyframe": {
+      "type": "object",
+      "required": ["time", "value"],
+      "properties": {
+        "time": { "$ref": "#/$defs/time" },
+        "value": {},
+        "interp": { "enum": ["linear", "bezier", "hold"] },
+        "easeIn": { "type": "number" },
+        "easeOut": { "type": "number" },
+        "overshoot": { "type": "number" }
+      }
+    },
+    "time": {
+      "type": "object",
+      "required": ["mode", "value"],
+      "properties": {
+        "mode": { "enum": ["beats", "seconds", "frames"] },
+        "value": { "type": "number" }
+      },
+      "description": "A time authored in beats stays in beats. That is what makes a preset survive being dropped on a song at a different tempo, and it is why `frames` is opt-in rather than the default."
+    }
+  }
+}

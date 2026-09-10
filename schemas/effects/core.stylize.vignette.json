@@ -1,0 +1,42 @@
+{
+  "id": "core.stylize.vignette",
+  "schema": 1,
+  "display_name": "Vignette",
+  "params": [
+    {
+      "key": "amount",
+      "label": "Amount",
+      "order": 0,
+      "type": "float",
+      "unit": "percent",
+      "default": 0.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": 100.0,
+        "slider": [
+          0.0,
+          100.0
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "softness",
+      "label": "Softness",
+      "order": 1,
+      "type": "float",
+      "unit": "percent",
+      "default": 50.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": 100.0,
+        "slider": [
+          0.0,
+          100.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

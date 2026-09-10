@@ -1,0 +1,25 @@
+{
+  "id": "core.stylize.posterize",
+  "schema": 1,
+  "display_name": "Posterize",
+  "params": [
+    {
+      "key": "levels",
+      "label": "Levels",
+      "order": 0,
+      "type": "float",
+      "unit": "normalized",
+      "default": 8.0,
+      "range": {
+        "minimum": 1.0,
+        "maximum": null,
+        "slider": [
+          1.0,
+          32.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

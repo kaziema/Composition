@@ -96,6 +96,15 @@ target_link_libraries(test_timelinerows PRIVATE ruby::ui ruby_warnings)
 add_test(NAME test_timelinerows COMMAND test_timelinerows)
 set_tests_properties(test_timelinerows PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(test_schemas test_schemas.cpp)
+target_link_libraries(test_schemas PRIVATE ruby::engine ruby::io nlohmann_json::nlohmann_json ruby_warnings)
+add_test(NAME test_schemas COMMAND test_schemas)
+set_tests_properties(test_schemas PROPERTIES
+    ENVIRONMENT "RUBY_SCHEMA_DIR=${CMAKE_SOURCE_DIR}/schemas")
+
+add_executable(gen_schemas gen_schemas.cpp)
+target_link_libraries(gen_schemas PRIVATE ruby::engine ruby::io ruby_warnings)
+
 add_executable(test_align test_align.cpp)
 target_link_libraries(test_align PRIVATE ruby::core ruby_warnings)
 add_test(NAME test_align COMMAND test_align)

@@ -1,0 +1,59 @@
+{
+  "id": "core.color.liftgammagain",
+  "schema": 1,
+  "display_name": "Lift Gamma Gain",
+  "params": [
+    {
+      "key": "lift",
+      "label": "Lift",
+      "order": 0,
+      "type": "float",
+      "unit": "normalized",
+      "default": 0.0,
+      "range": {
+        "minimum": null,
+        "maximum": null,
+        "slider": [
+          -0.5,
+          0.5
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "gamma",
+      "label": "Gamma",
+      "order": 1,
+      "type": "float",
+      "unit": "normalized",
+      "default": 1.0,
+      "range": {
+        "minimum": 0.01,
+        "maximum": null,
+        "slider": [
+          0.01,
+          4.0
+        ]
+      },
+      "introduced_in_schema": 1
+    },
+    {
+      "key": "gain",
+      "label": "Gain",
+      "order": 2,
+      "type": "float",
+      "unit": "normalized",
+      "default": 1.0,
+      "range": {
+        "minimum": 0.0,
+        "maximum": null,
+        "slider": [
+          0.0,
+          4.0
+        ]
+      },
+      "introduced_in_schema": 1
+    }
+  ],
+  "retired_keys": []
+}

@@ -1,0 +1,38 @@
+{
+  "format": "ruby.preset",
+  "format_version": 1,
+  "kind": "set",
+  "id": "core.transition.whip_pan_left",
+  "name": "Whip Pan Left",
+  "description": "Whips off the outgoing clip to the left and catches the incoming one, with a directional blur through the middle of the move.",
+  "author": { "name": "Ruby" },
+  "category": "Transitions",
+  "tags": ["Fast", "Whip", "Camera"],
+  "drop_target": "cut",
+  "requires": {
+    "app_schema": 1,
+    "effects": {
+      "core.blur.directional": 1
+    }
+  },
+  "controls": [
+    {
+      "key": "distance",
+      "label": "Distance",
+      "target": "/layers/0/properties/1/keys/1/value",
+      "unit": "percent-of-width",
+      "range": { "minimum": 0.0, "maximum": null, "slider": [50.0, 300.0] }
+    },
+    {
+      "key": "blur",
+      "label": "Blur",
+      "target": "/layers/0/effects/0/params/0/keys/1/value",
+      "unit": "percent-of-width",
+      "range": { "minimum": 0.0, "maximum": null, "slider": [0.0, 15.0] }
+    }
+  ],
+  "preview": "preview.mp4",
+  "thumbnail": "thumb.webp",
+  "license": { "spdx": "CC-BY-4.0", "text": "LICENSE" },
+  "signature": null
+}
