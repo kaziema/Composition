@@ -191,6 +191,9 @@ private:
     void rebuildRows();
     [[nodiscard]] int trackLeft() const noexcept;
     [[nodiscard]] int trackWidth() const noexcept;
+    [[nodiscard]] int navLeft() const noexcept;
+    [[nodiscard]] int parentLeft() const noexcept;
+    [[nodiscard]] int modeLeft() const noexcept;
     [[nodiscard]] QRect trackRect() const noexcept;
     [[nodiscard]] core::LayerId layerAtDrop(const QPoint& pos) const;
     [[nodiscard]] static bool carriesEffect(const QMimeData* mime);

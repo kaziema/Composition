@@ -41,7 +41,7 @@ constexpr int kIndexW = metrics::kIndexW;   // 20
 constexpr int kModeW = metrics::kModeW;     // 56
 constexpr int kParentW = metrics::kParentW; // 52
 constexpr int kPropIndent = 62;             // property rows indent one A/V-column step
-constexpr int kNavW = 52;                   // the ◂ ◆ ▸ keyframe navigator
+constexpr int kNavW = metrics::kKeyNavW;     // the ◂ ◇ ▸ keyframe navigator
 
 const LayerLabel& labelColors(core::LabelColor c) {
     switch (c) {
@@ -217,6 +217,13 @@ QString rulerLabel(double seconds, double step) {
 }
 
 int TimelineView::trackLeft() const noexcept { return metrics::kLayerColumnW; }
+
+// The right-hand columns, laid out from the track edge inward: Mode, Parent, then the
+// keyframe navigator against the track. Computed in one place because they were
+// previously computed at eight call sites, and two of them disagreed.
+int TimelineView::navLeft() const noexcept { return trackLeft() - kNavW; }
+int TimelineView::parentLeft() const noexcept { return navLeft() - kParentW; }
+int TimelineView::modeLeft() const noexcept { return parentLeft() - kModeW; }
 
 // The track region. Everything drawn on the time axis is clipped to this, because with
 // a scrolled view a bar's left edge lands at a negative x and would otherwise paint
@@ -611,10 +618,14 @@ void TimelineView::paintHeader(QPainter& p) const {
     p.drawText(QRect(kAvW, 0, kIndexW, h), Qt::AlignCenter, QStringLiteral("#"));
     p.drawText(QRect(kAvW + kIndexW + 20, 0, 160, h), Qt::AlignVCenter | Qt::AlignLeft,
                QStringLiteral("Source Name"));
-    p.drawText(QRect(trackLeft() - kModeW - kParentW, 0, kModeW, h),
+    p.drawText(QRect(modeLeft(), 0, kModeW, h),
                Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Mode"));
-    p.drawText(QRect(trackLeft() - kParentW, 0, kParentW, h),
+    p.drawText(QRect(parentLeft(), 0, kParentW, h),
                Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Parent"));
+    // A diamond rather than the word "Keys": the column is 52px and the control under it
+    // is three glyphs, so a heading that says what it looks like beats one that says what
+    // it is called.
+    p.drawText(QRect(navLeft(), 0, kNavW, h), Qt::AlignCenter, QStringLiteral("\u25c7"));
 
     // Ruler. Only the visible window is walked, and the spacing adapts, so this costs
     // the same at twelve seconds as it does at three hours.
@@ -703,7 +714,7 @@ bool TimelineView::nearestKey(const core::Layer& layer, bool forward, double& ou
 // says where you can go and nothing about where you are.
 void TimelineView::paintKeyNavigator(QPainter& p, const Row& row, bool hasKeyHere,
                                      bool canGoBack, bool canGoForward) const {
-    const int x = trackLeft() - kNavW;
+    const int x = navLeft();
     const int third = kNavW / 3;
 
     p.setFont(font());
@@ -781,13 +792,13 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.fillRect(QRect(nameX + 13, cy - 7, 3, 14), colors.stripe);
 
     p.setPen(isSelected ? kTextSelectedLayer : kTextBody);
-    p.drawText(QRect(nameX + 21, row.top, trackLeft() - nameX - 21 - kModeW - kParentW,
+    p.drawText(QRect(nameX + 21, row.top, modeLeft() - nameX - 21,
                      row.height),
                Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(layer.name));
 
     // Mode and parent.
     p.setPen(kTextDim);
-    p.drawText(QRect(trackLeft() - kModeW - kParentW, row.top, kModeW, row.height),
+    p.drawText(QRect(modeLeft(), row.top, kModeW, row.height),
                Qt::AlignVCenter | Qt::AlignLeft,
                layer.kind == core::LayerKind::Audio ? QStringLiteral("—")
                                                     : blendName(layer.blend));
@@ -802,7 +813,7 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
                                       // the link had been cleanly removed.
                                       : QStringLiteral("(missing)");
     }
-    p.drawText(QRect(trackLeft() - kParentW, row.top, kParentW, row.height),
+    p.drawText(QRect(parentLeft(), row.top, kParentW, row.height),
                Qt::AlignVCenter | Qt::AlignLeft,
                QFontMetrics(p.font()).elidedText(parentName, Qt::ElideRight, kParentW - 4));
 
@@ -1152,7 +1163,7 @@ bool TimelineView::event(QEvent* e) {
                 break;
             }
 
-            if (row.kind == RowKind::Layer && pos.x() >= trackLeft() - kNavW &&
+            if (row.kind == RowKind::Layer && pos.x() >= navLeft() &&
                 pos.x() < trackLeft()) {
                 const Layer* owner = comp_->find(row.layer);
                 text = (owner != nullptr && owner->keyframeCount() > 0)
@@ -1180,7 +1191,7 @@ bool TimelineView::event(QEvent* e) {
             } else if (row.kind == RowKind::Property) {
                 if (pos.x() < kPropIndent - 12) {
                     text = QStringLiteral("Stopwatch — this property is animated");
-                } else if (pos.x() >= trackLeft() - kNavW && pos.x() < trackLeft()) {
+                } else if (pos.x() >= navLeft() && pos.x() < trackLeft()) {
                     text = QStringLiteral("Previous key  ·  add or remove a key here  ·  "
                                           "next key");
                 } else if (pos.x() >= kPropIndent - 12 && pos.x() < kPropIndent + 120) {
@@ -1294,7 +1305,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // property row is a readout.
         if (row.kind == RowKind::Property) {
             Layer* owner = comp_->find(row.layer);
-            const int navX = trackLeft() - kNavW;
+            const int navX = navLeft();
             if (owner == nullptr || pos.x() < navX || pos.x() >= trackLeft()) {
                 return;
             }
@@ -1394,7 +1405,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
 
         // The Parent cell. Parenting has worked in the compositor since the transform
         // work and there has been no way to reach it.
-        const int parentX = trackLeft() - kParentW;
+        const int parentX = parentLeft();
         if (pos.x() >= parentX && pos.x() < trackLeft()) {
             QMenu menu(this);
             QAction* none = menu.addAction(QStringLiteral("None"));
@@ -1449,7 +1460,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // The Mode cell opens the blend menu. Until now this column displayed a value
         // with no way to change it, which is the same lie as a mode the compositor
         // ignored, just from the other end.
-        const int modeX = trackLeft() - kModeW - kParentW;
+        const int modeX = modeLeft();
         if (pos.x() >= modeX && pos.x() < modeX + kModeW) {
             QMenu menu(this);
             const core::BlendMode modes[] = {
@@ -1492,7 +1503,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // readout only. On a property row it means "put a key here", but a layer has many
         // properties and "add a keyframe to the layer" is not a thing, so it does not
         // pretend to be a button.
-        const int navX = trackLeft() - kNavW;
+        const int navX = navLeft();
         if (layer->keyframeCount() > 0 && pos.x() >= navX && pos.x() < trackLeft()) {
             const int third = kNavW / 3;
             const bool forward = pos.x() >= navX + 2 * third;

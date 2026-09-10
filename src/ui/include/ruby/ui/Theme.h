@@ -119,7 +119,14 @@ inline constexpr int kKeyframeRowH = 22;
 inline constexpr int kProjectPanelW = 250;
 inline constexpr int kInspectorPanelW = 268;
 inline constexpr int kBrowserPanelW = 494;
-inline constexpr int kLayerColumnW = 372;
+// The keyframe navigator has a column of its own, between Parent and the track.
+//
+// It used to be drawn at trackLeft() - kNavW, which is exactly where Parent already was:
+// on a property row nothing else lived there so it looked fine, and on a layer row it
+// printed straight over the word "None". Two things sharing a column is not a layout, it
+// is two layouts that happen not to have collided yet.
+inline constexpr int kKeyNavW = 52;
+inline constexpr int kLayerColumnW = 372 + kKeyNavW;
 
 // Layer column sub-widths
 inline constexpr int kAvToggleW = 62;
