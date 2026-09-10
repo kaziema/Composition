@@ -42,6 +42,9 @@ constexpr int switchX(int n) { return kSwitches + 2 + n * kSwitchW + kSwitchW / 
 constexpr int kFxSwitch = 3;   // shy, collapse, quality, fx
 constexpr int kShySwitch = 0;
 
+// The group twirl's column, matching TimelineView::groupTwirlLeft().
+constexpr int kGroupTwirl = 22 + 6;
+
 int firstRowY() { return kColumnHeaderH + kLayerRowH / 2; }
 
 void click(ui::TimelineView& view, int x, int y) {
@@ -191,6 +194,51 @@ void the_parent_cell_stops_before_the_navigator() {
           "the navigator moved the playhead to the key");
 }
 
+// Group headers collapse. Height is the measurable thing from outside the class, the
+// same currency test_timelinerows works in.
+void a_group_collapses_and_reopens() {
+    Fixture f;
+    f.view.toggleExpanded(f.id);
+
+    const int openHeight = f.view.contentHeight();
+    check(openHeight > kColumnHeaderH + kLayerRowH,
+          "the layer opens onto its transform rows");
+
+    // The group twirl, one indent step in from the layer's own. The Transform header is
+    // the first row under the layer.
+    const int transformRowY = kColumnHeaderH + kLayerRowH + kPropertyRowH / 2;
+    click(f.view, kGroupTwirl, transformRowY);
+
+    const int shutHeight = f.view.contentHeight();
+    check(shutHeight < openHeight, "shutting Transform takes its rows away");
+    check(shutHeight == kColumnHeaderH + kLayerRowH + kPropertyRowH,
+          "and leaves exactly the layer and the group header");
+
+    click(f.view, kGroupTwirl, transformRowY);
+    check(f.view.contentHeight() == openHeight, "and opening it gives them back");
+}
+
+// The group header is a label everywhere except the twirl. Clicking the word "Transform"
+// must not shut it, because the same row is the right-click target for an effect.
+void the_group_label_is_not_a_button() {
+    Fixture f;
+    f.view.toggleExpanded(f.id);
+    const int openHeight = f.view.contentHeight();
+
+    const int transformRowY = kColumnHeaderH + kLayerRowH + kPropertyRowH / 2;
+    click(f.view, kGroupTwirl + 60, transformRowY);
+    check(f.view.contentHeight() == openHeight, "clicking the label changes nothing");
+}
+
+// A shut group must not swallow the layer twirl or leave the layer selected by accident.
+void shutting_a_group_does_not_select_the_layer() {
+    Fixture f;
+    f.view.toggleExpanded(f.id);
+    const int transformRowY = kColumnHeaderH + kLayerRowH + kPropertyRowH / 2;
+    click(f.view, kGroupTwirl, transformRowY);
+    check(!f.view.selectedLayer().has_value(), "the twirl is not a selection");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -203,6 +251,9 @@ int main(int argc, char** argv) {
     the_fx_switch_turns_every_effect_off_and_back_on();
     an_inert_switch_does_not_select_the_layer();
     the_parent_cell_stops_before_the_navigator();
+    a_group_collapses_and_reopens();
+    the_group_label_is_not_a_button();
+    shutting_a_group_does_not_select_the_layer();
 
     if (failures == 0) {
         std::puts("layerswitches: all checks passed");

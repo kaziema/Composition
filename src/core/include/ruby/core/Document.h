@@ -168,6 +168,7 @@ struct EffectInstance {
     int schema = 1;
     std::string displayName;  // cached from the registry for the inspector
     bool enabled = true;
+    bool expanded = true;  // its parameters showing under it in the timeline
     std::vector<Property> params;
 
     [[nodiscard]] Property* find(std::string_view key) noexcept;
@@ -238,6 +239,14 @@ struct Layer {
     int solidWidth = 0;
     int solidHeight = 0;
     bool expanded = false;  // twirled open in the timeline
+
+    // Whether the Transform group under the twirl is open. Separate from `expanded`
+    // because they answer different questions: one is "show me this layer's insides",
+    // the other is "show me the five transform rows in particular". A layer with four
+    // effects on it is mostly Transform rows you are not looking at.
+    //
+    // Defaults open so a project made before groups collapsed opens looking the same.
+    bool transformExpanded = true;
 
     std::vector<Property> properties;
     std::vector<EffectInstance> effects;  // applied in order, top to bottom

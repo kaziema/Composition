@@ -224,6 +224,15 @@ private:
     void paintPropertyRow(QPainter& p, const Row& row, const core::Layer& layer,
                           const core::Property& prop) const;
     void paintEffectHeader(QPainter& p, const Row& row, const core::Layer& layer) const;
+    void paintGroupKeys(QPainter& p, const Row& row, const core::Layer& layer) const;
+
+    // The group twirl's column, one step in from the layer's own.
+    [[nodiscard]] static constexpr int groupTwirlLeft() noexcept { return 22; }
+    static constexpr int kGroupTwirlW = 12;
+
+    // Opens or shuts the Transform group or one effect's parameters. `effect` is
+    // kTransformGroup for the former.
+    void toggleGroup(core::LayerId layer, int effect);
 
     // Resolves a row's property, whether it lives on the layer or on one of its effects.
     [[nodiscard]] static const core::Property* propertyFor(const core::Layer& layer,

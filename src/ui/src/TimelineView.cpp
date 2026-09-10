@@ -292,6 +292,13 @@ void TimelineView::revealAnimated(core::LayerId layer) {
     } else {
         target->expanded = true;
         revealAnimated_.insert(layer);
+        // U means "show me what is animated on this layer", so it opens the groups too.
+        // Otherwise it would open a layer onto a shut Transform and answer the question
+        // with a closed door.
+        target->transformExpanded = true;
+        for (core::EffectInstance& fx : target->effects) {
+            fx.expanded = true;
+        }
     }
     rebuildRows();
     update();
@@ -571,9 +578,11 @@ void TimelineView::rebuildRows() {
         rows_.push_back(transform);
         y += metrics::kPropertyRowH;
 
-        for (std::size_t i = 0; i < layer.properties.size(); ++i) {
-            if (!animatedOnly || layer.properties[i].animated()) {
-                pushProperty(-1, i);
+        if (layer.transformExpanded) {
+            for (std::size_t i = 0; i < layer.properties.size(); ++i) {
+                if (!animatedOnly || layer.properties[i].animated()) {
+                    pushProperty(-1, i);
+                }
             }
         }
 
@@ -592,9 +601,11 @@ void TimelineView::rebuildRows() {
             rows_.push_back(header);
             y += metrics::kPropertyRowH;
 
-            for (std::size_t i = 0; i < effect.params.size(); ++i) {
-                if (!animatedOnly || effect.params[i].animated()) {
-                    pushProperty(static_cast<int>(e), i);
+            if (effect.expanded) {
+                for (std::size_t i = 0; i < effect.params.size(); ++i) {
+                    if (!animatedOnly || effect.params[i].animated()) {
+                        pushProperty(static_cast<int>(e), i);
+                    }
                 }
             }
         }
@@ -612,31 +623,102 @@ void TimelineView::paintEffectHeader(QPainter& p, const Row& row,
     // The Transform group reuses this row kind with a sentinel index rather than getting
     // a kind of its own: it looks the same, sits in the same place, and the only thing
     // that differs is the label and the marker colour.
-    if (row.effect == kTransformGroup) {
+    const bool isTransform = row.effect == kTransformGroup;
+    const auto e = static_cast<std::size_t>(row.effect);
+    if (!isTransform && e >= layer.effects.size()) {
+        return;
+    }
+    const bool open = isTransform ? layer.transformExpanded : layer.effects[e].expanded;
+
+    // The twirl, indented one step from the layer's own. Same glyphs as the layer row,
+    // because it is the same gesture at a smaller scale and there is no reason to make
+    // someone learn it twice.
+    p.setFont(font());
+    p.setPen(kTextDim);
+    p.drawText(QRect(groupTwirlLeft(), row.top, kGroupTwirlW, row.height),
+               Qt::AlignCenter, open ? QStringLiteral("▾") : QStringLiteral("▸"));
+
+    if (isTransform) {
         p.fillRect(QRect(kPropIndent - 26, cy - 4, 8, 8), kTextDim);
-        p.setFont(font());
         p.setPen(kTextBody);
         p.drawText(QRect(kPropIndent - 14, row.top, 200, row.height),
                    Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Transform"));
+        paintGroupKeys(p, row, layer);
         return;
     }
 
-    const auto e = static_cast<std::size_t>(row.effect);
-    if (e >= layer.effects.size()) {
-        return;
-    }
     const core::EffectInstance& effect = layer.effects[e];
 
     // Same green fx marker the inspector uses, so the two panels agree about what an
     // effect looks like.
     p.fillRect(QRect(kPropIndent - 26, cy - 4, 8, 8), kExpressionText);
 
-    p.setFont(font());
     p.setPen(effect.enabled ? kTextBody : kTextFaint);
     p.drawText(QRect(kPropIndent - 14, row.top, 200, row.height),
                Qt::AlignVCenter | Qt::AlignLeft,
                QString::fromStdString(effect.displayName.empty() ? effect.effectId
                                                                  : effect.displayName));
+    paintGroupKeys(p, row, layer);
+}
+
+// Every key under a shut group, drawn hollow on the group's own row.
+//
+// Without this, collapsing a group hides the animation as well as the rows, and the
+// timeline stops being a picture of when things happen. AE draws these for the same
+// reason. Hollow rather than solid so a summary is never mistaken for a key you can grab:
+// they are a readout, and the way to edit one is to open the group.
+void TimelineView::toggleGroup(core::LayerId id, int effect) {
+    Layer* layer = comp_ != nullptr ? comp_->find(id) : nullptr;
+    if (layer == nullptr) {
+        return;
+    }
+    // Not an undoable edit, the same way twirling a layer open is not. Filling someone's
+    // undo stack with "I looked at this" is how the stack stops being useful.
+    if (effect == kTransformGroup) {
+        layer->transformExpanded = !layer->transformExpanded;
+    } else if (effect >= 0 && effect < static_cast<int>(layer->effects.size())) {
+        auto& fx = layer->effects[static_cast<std::size_t>(effect)];
+        fx.expanded = !fx.expanded;
+    } else {
+        return;
+    }
+    rebuildRows();
+    update();
+}
+
+void TimelineView::paintGroupKeys(QPainter& p, const Row& row, const Layer& layer) const {
+    const bool isTransform = row.effect == kTransformGroup;
+    const auto e = static_cast<std::size_t>(row.effect);
+    if (isTransform ? layer.transformExpanded
+                    : (e >= layer.effects.size() || layer.effects[e].expanded)) {
+        return;  // open, so the keys are on the rows below where they belong
+    }
+
+    const std::vector<core::Property>& props =
+        isTransform ? layer.properties : layer.effects[e].params;
+    const core::TimeContext ctx = comp_->timeContext();
+    const int cy = row.top + row.height / 2;
+
+    p.save();
+    p.setClipRect(trackRect().intersected(QRect(0, row.top, width(), row.height)));
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(kTextTertiary, 1.0));
+    p.setBrush(Qt::NoBrush);
+
+    for (const core::Property& prop : props) {
+        for (const core::Keyframe& k : prop.keys) {
+            const double x = xForTime(to_seconds(k.time, ctx));
+            if (x < trackLeft() - 8.0 || x > width() + 8.0) {
+                continue;
+            }
+            const double r = metrics::kKeyframeSize / 2.0 - 0.5;
+            QPolygonF diamond;
+            diamond << QPointF(x, cy - r) << QPointF(x + r, cy)
+                    << QPointF(x, cy + r) << QPointF(x - r, cy);
+            p.drawPolygon(diamond);
+        }
+    }
+    p.restore();
 }
 
 bool TimelineView::isKeySelected(const KeyRef& ref) const {
@@ -1451,8 +1533,15 @@ bool TimelineView::event(QEvent* e) {
                                .arg(QString::fromStdString(layer->name));
                 }
             } else if (row.kind == RowKind::EffectHeader) {
-                text = QStringLiteral("Effect on this layer. Its parameters appear in the "
-                                      "Inspector.");
+                text = (pos.x() >= groupTwirlLeft() &&
+                        pos.x() < groupTwirlLeft() + kGroupTwirlW)
+                           ? QStringLiteral("Twirl — open or shut this group. Shut, its "
+                                            "keyframes show on this row.")
+                       : row.effect == kTransformGroup
+                           ? QStringLiteral("Transform — this layer's anchor, position, "
+                                            "scale, rotation and opacity")
+                           : QStringLiteral("Effect on this layer. Its parameters appear "
+                                            "in the Inspector.");
             } else if (row.kind == RowKind::Property) {
                 if (pos.x() < kPropIndent - 12) {
                     text = QStringLiteral("Stopwatch — this property is animated");
@@ -1566,6 +1655,16 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         if (contentY < row.top || contentY >= row.top + row.height) {
             continue;
         }
+        // Group headers: the twirl, and only the twirl. The rest of the row is a label,
+        // and a whole-row hit would fight the right-click menu an effect header owns.
+        if (row.kind == RowKind::EffectHeader) {
+            if (pos.x() >= groupTwirlLeft() &&
+                pos.x() < groupTwirlLeft() + kGroupTwirlW) {
+                toggleGroup(row.layer, row.effect);
+            }
+            return;
+        }
+
         // Property rows: the navigator, and only the navigator. Everything else on a
         // property row is a readout.
         if (row.kind == RowKind::Property) {

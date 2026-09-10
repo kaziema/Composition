@@ -246,7 +246,7 @@ json write(const EffectInstance& e) {
     // `schema` is what lets an older file migrate forward. Never drop it.
     return json{{"effect", e.effectId}, {"schema", e.schema},
                 {"name", e.displayName}, {"enabled", e.enabled},
-                {"params", std::move(params)}};
+                {"expanded", e.expanded}, {"params", std::move(params)}};
 }
 
 json write(const Layer& l) {
@@ -254,7 +254,8 @@ json write(const Layer& l) {
              {"label", name(l.label)}, {"in", write(l.inPoint)},
              {"out", write(l.outPoint)}, {"blend", name(l.blend)},
              {"enabled", l.enabled}, {"audioEnabled", l.audioEnabled},
-             {"solo", l.solo}, {"locked", l.locked}, {"expanded", l.expanded}};
+             {"solo", l.solo}, {"locked", l.locked}, {"expanded", l.expanded},
+             {"transformExpanded", l.transformExpanded}};
 
 
     // Only on text layers, for the same reason solids only write their own fields.
@@ -511,6 +512,7 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 layer.solo = get<bool>(l, "solo", false);
                 layer.locked = get<bool>(l, "locked", false);
                 layer.expanded = get<bool>(l, "expanded", false);
+                layer.transformExpanded = get<bool>(l, "transformExpanded", true);
                 if (l.contains("parent") && l.at("parent").is_number()) {
                     layer.parent = l.at("parent").get<LayerId>();
                 }
@@ -542,6 +544,7 @@ LoadReport fromJson(Project& project, const std::string& text) {
                         fx.schema = get<int>(e, "schema", 1);
                         fx.displayName = str(e, "name", fx.effectId);
                         fx.enabled = get<bool>(e, "enabled", true);
+                        fx.expanded = get<bool>(e, "expanded", true);
                         if (e.contains("params") && e.at("params").is_array()) {
                             for (const auto& p : e.at("params")) {
                                 fx.params.push_back(readProperty(p));
