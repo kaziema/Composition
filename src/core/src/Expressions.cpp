@@ -63,11 +63,14 @@ Value evaluate(const Layer& layer, const Property& prop, double seconds,
             for (int i = 0; i < widened.count; ++i) {
                 widened.c[static_cast<std::size_t>(i)] = out.c[0];
             }
-            return widened;
+            return prop.clamped(widened);
         }
-        return keyframed;
+        return keyframed;  // already clamped by Property::evaluate
     }
-    return out;
+    // An expression is subject to the same limits as a keyframe. A script that returns
+    // 4000 for Opacity has to land where a keyframe of 4000 would, or "the hard range"
+    // means "unless you write Lua".
+    return prop.clamped(out);
 }
 
 }  // namespace ruby::core

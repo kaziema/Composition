@@ -261,6 +261,18 @@ struct Layer {
 // The transform stack every layer gets, matching the design's inspector.
 [[nodiscard]] std::vector<Property> defaultTransform();
 
+// Re-applies the parts of a property that belong to its definition rather than to the
+// document: right now, its range.
+//
+// Ranges are deliberately NOT written to project files. A file that pinned its own limits
+// would freeze them forever, so widening a range later would leave every existing project
+// on the old one and there would be no way to tell. The file stores what the user chose;
+// the app supplies what the parameter is. This is the same reasoning as not storing an
+// effect's shader in the project.
+//
+// Called on load. Anything with no definition to match is left alone.
+void adoptTransformRanges(Layer& layer);
+
 // --- Composition -------------------------------------------------------------
 
 struct Composition {

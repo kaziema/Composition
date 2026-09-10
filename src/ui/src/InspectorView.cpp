@@ -31,20 +31,14 @@ namespace {
 constexpr int kSubtitleH = 22;
 constexpr int kComponentGap = 6;
 
-// How much one pixel of horizontal drag moves the value. Percentages and angles want a
-// coarser step than a normalised 0..1 control, or scrubbing opacity feels glacial.
-double dragStep(core::SpatialUnit unit) noexcept {
-    switch (unit) {
-        case core::SpatialUnit::Px:                return 1.0;
-        case core::SpatialUnit::Degrees:           return 0.5;
-        case core::SpatialUnit::Percent:
-        case core::SpatialUnit::PercentOfWidth:
-        case core::SpatialUnit::PercentOfHeight:
-        case core::SpatialUnit::PercentOfDiagonal: return 0.25;
-        case core::SpatialUnit::Normalized:        return 0.01;
-    }
-    return 0.25;
-}
+// How much one pixel of horizontal drag moves the value.
+//
+// This used to be a switch on the unit, which meant every Normalized parameter scrubbed
+// at 0.01 per pixel whether its useful range was 0 to 1 or 0 to 500. Glow Threshold and
+// Grade Exposure are both Normalized and want steps two orders of magnitude apart.
+//
+// It comes from the parameter's own slider range now, so a control crosses its useful
+// span in about the same drag distance whatever it measures, and nobody tunes a table.
 constexpr int kLabelX = 26;
 constexpr int kLabelW = 76;
 constexpr int kEdgePad = 9;
@@ -486,7 +480,14 @@ void InspectorView::applyValue(const ValueField& field, double value) {
     const core::TimeContext ctx = comp_->timeContext();
 
     core::Value v = prop.evaluate(currentTime_, ctx);
-    v.c[static_cast<std::size_t>(field.component)] = value;
+    // Clamped going in, not just coming out.
+    //
+    // Reading is clamped too, so the picture would be right either way. The difference is
+    // the drag: without this, pulling Opacity to 400 and back to 150 stores 400 and shows
+    // 100 the whole way, and you have to drag 300 units back through a dead zone before
+    // the number moves. A control that stops responding to the mouse feels broken long
+    // before anyone works out why.
+    v.c[static_cast<std::size_t>(field.component)] = prop.range.clamp(value);
 
     if (prop.animated()) {
         // A keyframed property records the edit at the playhead, which is what AE does
@@ -627,7 +628,7 @@ void InspectorView::mouseMoveEvent(QMouseEvent* e) {
         return;
     }
 
-    double step = dragStep(prop->unit);
+    double step = prop->range.dragStep();
     if (e->modifiers().testFlag(Qt::ShiftModifier)) {
         step *= 0.1;  // fine adjust
     }

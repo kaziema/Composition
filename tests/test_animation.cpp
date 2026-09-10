@@ -137,6 +137,86 @@ void beat_authored_keys_retime_with_tempo() {
     check(p.evaluate(1.379, slow).x() < 60.0, "at 90bpm that bar is only half done");
 }
 
+// Hard ranges are applied when a value is read, not when it is stored.
+//
+// The distinction is the whole design. Storing clamped would mean an overshoot ease
+// between two legal keys had to be flattened or refused; clamping on read means the curve
+// stays exactly as authored and the picture is simply bounded.
+void a_range_clamps_what_evaluation_returns() {
+    TimeContext ctx;
+    ctx.fps = 30.0;
+
+    Property opacity;
+    opacity.key = "opacity";
+    opacity.range = ParamRange::between(0.0, 100.0);
+    opacity.staticValue = Value::scalar(400.0);
+    checkNear(opacity.evaluate(0.0, ctx).c[0], 100.0, "a static value over the ceiling clamps");
+
+    opacity.staticValue = Value::scalar(-50.0);
+    checkNear(opacity.evaluate(0.0, ctx).c[0], 0.0, "and under the floor");
+
+    // Two legal keys with a heavy overshoot between them. The stored keys must be left
+    // alone and only the value read out is bounded.
+    opacity.staticValue = Value::scalar(100.0);
+    Keyframe a;
+    a.time = TimeValue::seconds(0.0);
+    a.value = Value::scalar(0.0);
+    a.interp = Interpolation::Bezier;
+    a.easeOut = 0.9;
+    Keyframe b;
+    b.time = TimeValue::seconds(1.0);
+    b.value = Value::scalar(100.0);
+    b.interp = Interpolation::Bezier;
+    b.easeIn = 0.9;
+    b.overshoot = 2.0;
+    opacity.addKey(a, ctx);
+    opacity.addKey(b, ctx);
+
+    bool everOver = false;
+    for (int i = 0; i <= 40; ++i) {
+        const double t = static_cast<double>(i) / 40.0;
+        const double v = opacity.evaluate(t, ctx).c[0];
+        if (v > 100.0 + 1e-9 || v < -1e-9) {
+            everOver = true;
+        }
+    }
+    check(!everOver, "an overshooting curve never reads outside the range");
+    checkNear(opacity.keys.back().value.c[0], 100.0, "and the stored keys are untouched");
+}
+
+// An unbounded range is the default and must not quietly bound anything.
+void no_range_means_no_clamp() {
+    TimeContext ctx;
+    ctx.fps = 30.0;
+    Property p;
+    p.key = "position";
+    p.staticValue = Value::vec2(-4000.0, 9000.0);
+    checkNear(p.evaluate(0.0, ctx).c[0], -4000.0, "x survives");
+    checkNear(p.evaluate(0.0, ctx).c[1], 9000.0, "y survives");
+}
+
+// Every component of a vector is clamped, not just the first.
+void a_range_applies_to_every_component() {
+    TimeContext ctx;
+    ctx.fps = 30.0;
+    Property p;
+    p.key = "scale";
+    p.range = ParamRange::between(0.0, 100.0);
+    p.staticValue = Value::vec2(-10.0, 500.0);
+    checkNear(p.evaluate(0.0, ctx).c[0], 0.0, "x clamps");
+    checkNear(p.evaluate(0.0, ctx).c[1], 100.0, "y clamps");
+}
+
+// The drag step comes from where the slider ends, so two parameters with the same unit
+// and very different useful ranges do not scrub at the same speed.
+void the_drag_step_follows_the_slider_not_the_unit() {
+    const ParamRange narrow = ParamRange::between(0.0, 1.0);
+    const ParamRange wide = ParamRange::atLeast(0.0, 400.0);
+    check(wide.dragStep() > narrow.dragStep() * 100.0,
+          "a 0-400 control scrubs far faster than a 0-1 one");
+    check(narrow.dragStep() > 0.0, "and neither is zero");
+}
+
 void lerp_respects_component_count() {
     const Value a = Value::vec2(0.0, 10.0);
     const Value b = Value::vec2(100.0, 20.0);
@@ -159,6 +239,10 @@ int main() {
     keys_stay_sorted_and_replace_in_place();
     beat_authored_keys_retime_with_tempo();
     lerp_respects_component_count();
+    a_range_clamps_what_evaluation_returns();
+    no_range_means_no_clamp();
+    a_range_applies_to_every_component();
+    the_drag_step_follows_the_slider_not_the_unit();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

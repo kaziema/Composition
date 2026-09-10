@@ -55,6 +55,22 @@ struct ParamSpec {
     double default_value = 0.0;            // for new instances
     std::optional<double> legacy_default;  // for content predating this param
 
+    // Hard limits and where the slider ends. See ParamRange.
+    //
+    // The hard limits are part of the contract, not decoration: tightening one changes
+    // what an existing saved value evaluates to, so it needs a schema bump and a
+    // migration the same as any other behaviour change. Widening one cannot break
+    // anything and does not. The slider range and the group are display only and are
+    // free to change at any time, like `order` and `label`.
+    ParamRange range;
+
+    // Which section this sits under in the inspector and the timeline. Empty means the
+    // effect's own name, which is what every effect wanted before groups existed.
+    //
+    // Sapphire has effects with 149 parameters. Ours will not, but its widest is 15 and
+    // ours has 8, so the difference is not as comfortable as it sounds.
+    std::string group;
+
     int introduced_in_schema = 1;
 };
 

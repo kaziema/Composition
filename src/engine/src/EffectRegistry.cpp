@@ -42,8 +42,17 @@ fn luma(c : vec3<f32>) -> f32 {
 }
 )";
 
+// Every parameter states its bounds. The range argument is not defaulted on purpose: an
+// unbounded parameter should be something someone decided, written as
+// ParamRange::unbounded, rather than something nobody filled in.
+//
+// These are all schema 1. Ruby has never shipped, so there is no earlier version of any
+// of these schemas anywhere on disk or in anyone's project, and no v1-without-ranges for
+// a tightened limit to break. Schema 1 with ranges is the baseline the schema files in
+// task 2 will record. Every tightening after that costs a bump, which validate_against_
+// previous now enforces.
 core::ParamSpec param(std::string key, std::string label, SpatialUnit unit, double value,
-                      int order) {
+                      int order, core::ParamRange range) {
     core::ParamSpec spec;
     spec.key = std::move(key);
     spec.label = std::move(label);
@@ -51,9 +60,12 @@ core::ParamSpec param(std::string key, std::string label, SpatialUnit unit, doub
     spec.type = ParamType::Float;
     spec.unit = unit;
     spec.default_value = value;
+    spec.range = range;
     spec.introduced_in_schema = 1;
     return spec;
 }
+
+using R = core::ParamRange;
 
 EffectDef makeGrade() {
     EffectDef def;
@@ -61,9 +73,17 @@ EffectDef makeGrade() {
     def.schema.schema = 1;
     def.schema.display_name = "Grade";
     def.schema.params = {
-        param("exposure", "Exposure", SpatialUnit::Normalized, 0.0, 0),
-        param("contrast", "Contrast", SpatialUnit::Percent, 100.0, 1),
-        param("saturation", "Saturation", SpatialUnit::Percent, 100.0, 2),
+        param("exposure", "Exposure", SpatialUnit::Normalized, 0.0, 0,
+              // Stops. Past six either way the picture is white or black, but there is
+              // no reason to forbid it: a grade can be a deliberate blowout.
+              R::unbounded(-6.0, 6.0)),
+        param("contrast", "Contrast", SpatialUnit::Percent, 100.0, 1,
+              // Zero is flat grey and negative inverts, which is a real look.
+              R::unbounded(0.0, 300.0)),
+        param("saturation", "Saturation", SpatialUnit::Percent, 100.0, 2,
+              // Floored at zero: negative saturation is channel inversion wearing a
+              // saturation label, and there is an invert effect for that.
+              R::atLeast(0.0, 300.0)),
     };
 
     // Every operation is in linear light, which is the whole reason this can look like a
@@ -103,7 +123,10 @@ EffectDef makeBlur() {
     def.schema.schema = 1;
     def.schema.display_name = "Gaussian Blur";
     def.schema.params = {
-        param("radius", "Radius", SpatialUnit::PercentOfWidth, 0.0, 0),
+        param("radius", "Radius", SpatialUnit::PercentOfWidth, 0.0, 0,
+              // A negative blur radius is not a thing. Nine taps per axis, so past about
+              // 10% of frame width it is banding rather than blur.
+              R::atLeast(0.0, 10.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -139,8 +162,12 @@ EffectDef makeChromatic() {
     def.schema.schema = 1;
     def.schema.display_name = "Chromatic Aberration";
     def.schema.params = {
-        param("amount", "Amount", SpatialUnit::PercentOfWidth, 0.0, 0),
-        param("angle", "Angle", SpatialUnit::Degrees, 0.0, 1),
+        param("amount", "Amount", SpatialUnit::PercentOfWidth, 0.0, 0,
+              // Channel separation. Negative just swaps which way red and blue go.
+              R::unbounded(-5.0, 5.0)),
+        param("angle", "Angle", SpatialUnit::Degrees, 0.0, 1,
+              // Wraps, so a limit would be a lie. The slider covers one turn.
+              R::unbounded(0.0, 360.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -169,9 +196,14 @@ EffectDef makeGlow() {
     def.schema.schema = 1;
     def.schema.display_name = "Glow";
     def.schema.params = {
-        param("threshold", "Threshold", SpatialUnit::Normalized, 1.0, 0),
-        param("radius", "Radius", SpatialUnit::PercentOfWidth, 2.0, 1),
-        param("intensity", "Intensity", SpatialUnit::Percent, 100.0, 2),
+        param("threshold", "Threshold", SpatialUnit::Normalized, 1.0, 0,
+              // Linear light, so above 1.0 is the highlight range this is meant to pick
+              // out. Hard floor at zero: below it everything glows and it is not a glow.
+              R::atLeast(0.0, 4.0)),
+        param("radius", "Radius", SpatialUnit::PercentOfWidth, 2.0, 1,
+              R::atLeast(0.0, 20.0)),
+        param("intensity", "Intensity", SpatialUnit::Percent, 100.0, 2,
+              R::atLeast(0.0, 400.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -208,8 +240,11 @@ EffectDef makeMotionBlur() {
     def.schema.schema = 1;
     def.schema.display_name = "Directional Blur";
     def.schema.params = {
-        param("length", "Length", SpatialUnit::PercentOfWidth, 0.0, 0),
-        param("angle", "Angle", SpatialUnit::Degrees, 0.0, 1),
+        param("length", "Length", SpatialUnit::PercentOfWidth, 0.0, 0,
+              R::atLeast(0.0, 15.0)),
+        param("angle", "Angle", SpatialUnit::Degrees, 0.0, 1,
+              // Wraps, so a limit would be a lie. The slider covers one turn.
+              R::unbounded(0.0, 360.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -240,9 +275,15 @@ EffectDef makeLiftGammaGain() {
     def.schema.schema = 1;
     def.schema.display_name = "Lift Gamma Gain";
     def.schema.params = {
-        param("lift", "Lift", SpatialUnit::Normalized, 0.0, 0),
-        param("gamma", "Gamma", SpatialUnit::Normalized, 1.0, 1),
-        param("gain", "Gain", SpatialUnit::Normalized, 1.0, 2),
+        param("lift", "Lift", SpatialUnit::Normalized, 0.0, 0,
+              // Added to the blacks. Small numbers, and the slider says so.
+              R::unbounded(-0.5, 0.5)),
+        param("gamma", "Gamma", SpatialUnit::Normalized, 1.0, 1,
+              // An exponent. Zero or below is a divide by zero or a sign flip in pow,
+              // so the floor here is protecting the shader, not taste.
+              R::atLeast(0.01, 4.0)),
+        param("gain", "Gain", SpatialUnit::Normalized, 1.0, 2,
+              R::atLeast(0.0, 4.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -269,8 +310,12 @@ EffectDef makeVignette() {
     def.schema.schema = 1;
     def.schema.display_name = "Vignette";
     def.schema.params = {
-        param("amount", "Amount", SpatialUnit::Percent, 0.0, 0),
-        param("softness", "Softness", SpatialUnit::Percent, 50.0, 1),
+        param("amount", "Amount", SpatialUnit::Percent, 0.0, 0,
+              // How dark the corners go. Fully bounded: past 100 there is nothing left
+              // to darken and the control stops meaning anything.
+              R::between(0.0, 100.0)),
+        param("softness", "Softness", SpatialUnit::Percent, 50.0, 1,
+              R::between(0.0, 100.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -296,7 +341,10 @@ EffectDef makePosterize() {
     def.schema.schema = 1;
     def.schema.display_name = "Posterize";
     def.schema.params = {
-        param("levels", "Levels", SpatialUnit::Normalized, 8.0, 0),
+        param("levels", "Levels", SpatialUnit::Normalized, 8.0, 0,
+              // Quantisation steps. One is a solid colour, and below one the maths is
+              // meaningless, so this one is a genuine hard floor.
+              R::atLeast(1.0, 32.0)),
     };
     def.shader = std::string(kEffectPrologue) + R"(
 @fragment
@@ -350,6 +398,21 @@ const EffectDef* EffectRegistry::find(std::string_view id) const noexcept {
     return it == effects_.end() ? nullptr : &*it;
 }
 
+void EffectRegistry::adoptSchema(core::EffectInstance& instance) const {
+    const EffectDef* def = find(instance.effectId);
+    if (def == nullptr) {
+        return;  // unknown effect; the loader already reported it
+    }
+    for (core::Property& p : instance.params) {
+        if (const core::ParamSpec* spec = def->schema.find(p.key); spec != nullptr) {
+            p.range = spec->range;
+            if (!spec->group.empty()) {
+                p.group = spec->group;
+            }
+        }
+    }
+}
+
 core::EffectInstance EffectRegistry::instantiate(std::string_view id) const {
     core::EffectInstance instance;
     const EffectDef* def = find(id);
@@ -365,8 +428,11 @@ core::EffectInstance EffectRegistry::instantiate(std::string_view id) const {
         core::Property property;
         property.key = spec.key;
         property.label = spec.label;
-        property.group = def->schema.display_name;
+        // An empty group in the schema means "this effect's own name", which is what
+        // every parameter wanted before groups existed and still what most want.
+        property.group = spec.group.empty() ? def->schema.display_name : spec.group;
         property.unit = spec.unit;
+        property.range = spec.range;
         property.staticValue = core::Value::scalar(spec.default_value);
         instance.params.push_back(std::move(property));
     }

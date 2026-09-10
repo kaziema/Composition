@@ -182,6 +182,21 @@ int main() {
     // A locked layer that comes back unlocked is worse than one that never locked: the
     // user thinks it is protected and it is not.
     check(layer.locked, "the padlock survives a save and reopen");
+
+    // Ranges are deliberately not written to the file, so a reloaded property arrives
+    // with default ones. `adoptTransformRanges` is what puts them back, and a project
+    // that skipped it would have Opacity unbounded and Position scrubbing at a crawl.
+    const core::Property* op = layer.find("opacity");
+    check(op != nullptr, "the reloaded layer still has opacity");
+    if (op != nullptr) {
+        check(!op->range.maximum.has_value(),
+              "the file did not carry a range, and should not have");
+    }
+    core::adoptTransformRanges(const_cast<core::Layer&>(layer));
+    const core::Property* after = layer.find("opacity");
+    check(after != nullptr && after->range.maximum.has_value() &&
+              *after->range.maximum == 100.0,
+          "and the definition supplies it on load");
     // Group expansion is per layer and per effect, so reopening a project puts the
     // timeline back the way it was left rather than fully twirled open every time.
     check(!layer.transformExpanded, "a shut Transform group stays shut");

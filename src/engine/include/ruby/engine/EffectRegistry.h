@@ -40,6 +40,11 @@ public:
     // A ready-to-use instance with every parameter at its default.
     [[nodiscard]] core::EffectInstance instantiate(std::string_view id) const;
 
+    // Puts the schema-owned parts of a loaded instance back: ranges and group names.
+    // Project files store the values a user chose, not the limits the effect declares,
+    // so a freshly loaded effect arrives with default ranges until this runs.
+    void adoptSchema(core::EffectInstance& instance) const;
+
 private:
     EffectRegistry();
 

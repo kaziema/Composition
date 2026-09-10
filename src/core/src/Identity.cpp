@@ -98,6 +98,33 @@ std::vector<SchemaProblem> validate(const EffectSchema& s) {
         if (p.introduced_in_schema < 1 || p.introduced_in_schema > s.schema) {
             add(where, "introduced_in_schema must be in [1, schema]");
         }
+
+        // Range sanity. Each of these is a mistake that produces a control which looks
+        // fine and cannot be used, which is worse than one that obviously does not work.
+        const ParamRange& r = p.range;
+        if (r.minimum.has_value() && r.maximum.has_value() && *r.minimum > *r.maximum) {
+            add(where, "range minimum is above its maximum");
+        }
+        if (r.slider_min >= r.slider_max) {
+            add(where, "slider_min must be below slider_max; a slider with no span "
+                       "cannot be dragged");
+        }
+        if (r.minimum.has_value() && r.slider_min < *r.minimum) {
+            add(where, "slider starts below the hard minimum, so the first part of the "
+                       "slider does nothing");
+        }
+        if (r.maximum.has_value() && r.slider_max > *r.maximum) {
+            add(where, "slider ends above the hard maximum, so the last part of the "
+                       "slider does nothing");
+        }
+        if (r.clamp(p.default_value) != p.default_value) {
+            add(where, "default_value is outside the hard range");
+        }
+        if (p.legacy_default.has_value() &&
+            r.clamp(*p.legacy_default) != *p.legacy_default) {
+            add(where, "legacy_default is outside the hard range; content authored "
+                       "before this parameter existed would be silently changed");
+        }
         // A parameter added after v1 is loaded into older content, so it needs a
         // legacy_default or old presets silently adopt the new default.
         if (p.introduced_in_schema > 1 && !p.legacy_default.has_value()) {
@@ -167,6 +194,25 @@ std::vector<SchemaProblem> validate_against_previous(const EffectSchema& previou
             add(current.id + "." + now.key,
                 "default_value changed without a legacy_default pinning the old default; "
                 "existing content will silently change");
+        }
+
+        // Widening a hard limit cannot break stored content. Tightening one can: a value
+        // that was legal yesterday now evaluates to something else. Slider range and
+        // group are display only and are not checked here at all.
+        const auto tightened = [](const std::optional<double>& before,
+                                  const std::optional<double>& now_, bool isMin) {
+            if (!now_.has_value()) return false;         // now unbounded: widened
+            if (!before.has_value()) return true;        // was unbounded, now is not
+            return isMin ? (*now_ > *before) : (*now_ < *before);
+        };
+        if (tightened(before.range.minimum, now.range.minimum, true) ||
+            tightened(before.range.maximum, now.range.maximum, false)) {
+            if (now.introduced_in_schema <= previous.schema &&
+                current.schema == previous.schema) {
+                add(current.id + "." + now.key,
+                    "hard range tightened without a schema bump; a stored value that was "
+                    "legal before now clamps to something else");
+            }
         }
     }
 

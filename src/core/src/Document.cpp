@@ -173,10 +173,17 @@ std::vector<Property> defaultTransform() {
     // frame, so a preset built on 1080x1920 lands correctly on 1920x1080.
     std::vector<Property> t;
 
+    // Four of the five are deliberately unbounded. A transform is where people do the
+    // things an app did not plan for: a layer flown in from off screen, a scale of -100
+    // to mirror it, twelve rotations for a spin. Clamping any of that would be the app
+    // deciding what an edit is allowed to look like. Only Opacity has a real limit,
+    // because past 100% there is nothing more to show and below 0% nothing less.
+
     Property anchor;
     anchor.key = "anchor_point";
     anchor.label = "Anchor Point";
     anchor.unit = SpatialUnit::PercentOfWidth;
+    anchor.range = ParamRange::unbounded(-100.0, 100.0);
     anchor.staticValue = Value::vec2(0.0, 0.0);
     t.push_back(anchor);
 
@@ -184,6 +191,9 @@ std::vector<Property> defaultTransform() {
     position.key = "position";
     position.label = "Position";
     position.unit = SpatialUnit::PercentOfWidth;
+    // Slider covers one frame either side of the frame, because moving a layer in from
+    // outside is the single most common thing anyone does with Position.
+    position.range = ParamRange::unbounded(-100.0, 200.0);
     position.staticValue = Value::vec2(50.0, 50.0);
     t.push_back(position);
 
@@ -191,6 +201,8 @@ std::vector<Property> defaultTransform() {
     scale.key = "scale";
     scale.label = "Scale";
     scale.unit = SpatialUnit::Percent;
+    // Negative is a mirror, not an error.
+    scale.range = ParamRange::unbounded(-200.0, 400.0);
     scale.staticValue = Value::vec2(100.0, 100.0);
     t.push_back(scale);
 
@@ -198,6 +210,7 @@ std::vector<Property> defaultTransform() {
     rotation.key = "rotation";
     rotation.label = "Rotation";
     rotation.unit = SpatialUnit::Degrees;
+    rotation.range = ParamRange::unbounded(-360.0, 360.0);
     rotation.staticValue = Value::scalar(0.0);
     t.push_back(rotation);
 
@@ -205,10 +218,22 @@ std::vector<Property> defaultTransform() {
     opacity.key = "opacity";
     opacity.label = "Opacity";
     opacity.unit = SpatialUnit::Percent;
+    opacity.range = ParamRange::between(0.0, 100.0);
     opacity.staticValue = Value::scalar(100.0);
     t.push_back(opacity);
 
     return t;
+}
+
+void adoptTransformRanges(Layer& layer) {
+    static const std::vector<Property> canonical = defaultTransform();
+    for (Property& p : layer.properties) {
+        const auto it = std::find_if(canonical.begin(), canonical.end(),
+                                     [&p](const Property& c) { return c.key == p.key; });
+        if (it != canonical.end()) {
+            p.range = it->range;
+        }
+    }
 }
 
 // --- Composition -------------------------------------------------------------

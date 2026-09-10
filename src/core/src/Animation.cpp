@@ -99,18 +99,32 @@ std::size_t Property::addKey(const Keyframe& k, const TimeContext& ctx) {
     return static_cast<std::size_t>(std::distance(keys.begin(), inserted));
 }
 
+// A value with every component put inside the property's hard range.
+//
+// Applied on the way out rather than on the way in, so the stored number is whatever the
+// user or the file said and the clamp is a property of reading it. That matters for
+// overshoot easing: a bounce past 100% opacity is a legal curve between two legal keys,
+// and the right answer is to render it clamped, not to refuse to store it or to flatten
+// the curve.
+Value Property::clamped(Value v) const noexcept {
+    for (int i = 0; i < v.count; ++i) {
+        v.c[static_cast<std::size_t>(i)] = range.clamp(v.c[static_cast<std::size_t>(i)]);
+    }
+    return v;
+}
+
 Value Property::evaluate(double seconds, const TimeContext& ctx) const {
     if (keys.empty()) {
-        return staticValue;
+        return clamped(staticValue);
     }
     if (keys.size() == 1) {
-        return keys.front().value;
+        return clamped(keys.front().value);
     }
     if (seconds <= to_seconds(keys.front().time, ctx)) {
-        return keys.front().value;
+        return clamped(keys.front().value);
     }
     if (seconds >= to_seconds(keys.back().time, ctx)) {
-        return keys.back().value;
+        return clamped(keys.back().value);
     }
 
     std::size_t i = 0;
@@ -122,21 +136,21 @@ Value Property::evaluate(double seconds, const TimeContext& ctx) const {
     const Keyframe& b = keys[i + 1];
 
     if (a.interp == Interpolation::Hold) {
-        return a.value;
+        return clamped(a.value);
     }
 
     const double t0 = to_seconds(a.time, ctx);
     const double t1 = to_seconds(b.time, ctx);
     const double span = t1 - t0;
     if (span <= 0.0) {
-        return b.value;
+        return clamped(b.value);
     }
 
     const double raw = (seconds - t0) / span;
     const double t = (a.interp == Interpolation::Linear)
                          ? raw
                          : easeCurve(raw, a.easeOut, b.easeIn, b.overshoot);
-    return lerp(a.value, b.value, t);
+    return clamped(lerp(a.value, b.value, t));
 }
 
 }  // namespace ruby::core

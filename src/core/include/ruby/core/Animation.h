@@ -80,12 +80,22 @@ struct Property {
     std::string group = "Transform";
     SpatialUnit unit = SpatialUnit::Normalized;
 
+    // Copied from the effect's ParamSpec when the instance is made, and set directly for
+    // a layer's own transform properties, which have no schema behind them. Lives on the
+    // runtime property because the inspector and the compositor only ever see this, the
+    // same reason `unit` and `label` are duplicated here.
+    ParamRange range;
+
     Value staticValue;           // used when there are no keyframes
     std::vector<Keyframe> keys;  // kept sorted by resolved time
     std::optional<std::string> expression;
     bool expanded = false;  // twirled open in the timeline
 
     [[nodiscard]] bool animated() const noexcept { return !keys.empty(); }
+
+    // Every component put inside `range`. Public because expressions need it: a script
+    // that returns 4000 for opacity has to land in the same place a keyframe would.
+    [[nodiscard]] Value clamped(Value v) const noexcept;
 
     // Inserts in time order and returns the index. A key already at that time is
     // replaced, which is what clicking the navigator's centre diamond does.

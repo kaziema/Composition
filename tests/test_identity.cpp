@@ -36,10 +36,26 @@ EffectSchema good_effect() {
     s.id = "core.blur.directional";
     s.schema = 1;
     s.display_name = "Directional Blur";
+    // Designated rather than positional. The positional form broke the moment ParamSpec
+    // grew a field in the middle, which is exactly the fragility this struct's own rules
+    // are about.
     s.params = {
-        {"amount", "Amount", 0, ParamType::Float, SpatialUnit::PercentOfDiagonal,
-         2.5, std::nullopt, 1},
-        {"angle", "Angle", 1, ParamType::Float, SpatialUnit::Degrees, 0.0, std::nullopt, 1},
+        ParamSpec{.key = "amount",
+                  .label = "Amount",
+                  .order = 0,
+                  .type = ParamType::Float,
+                  .unit = SpatialUnit::PercentOfDiagonal,
+                  .default_value = 2.5,
+                  .range = ParamRange::atLeast(0.0, 20.0),
+                  .introduced_in_schema = 1},
+        ParamSpec{.key = "angle",
+                  .label = "Angle",
+                  .order = 1,
+                  .type = ParamType::Float,
+                  .unit = SpatialUnit::Degrees,
+                  .default_value = 0.0,
+                  .range = ParamRange::unbounded(0.0, 360.0),
+                  .introduced_in_schema = 1},
     };
     return s;
 }
@@ -82,13 +98,80 @@ void retired_keys_can_never_be_reused() {
 void params_added_later_need_a_legacy_default() {
     EffectSchema s = good_effect();
     s.schema = 2;
-    s.params.push_back({"falloff", "Falloff", 2, ParamType::Float,
-                        SpatialUnit::Normalized, 0.5, std::nullopt, 2});
+    s.params.push_back(ParamSpec{.key = "falloff",
+                                 .label = "Falloff",
+                                 .order = 2,
+                                 .type = ParamType::Float,
+                                 .unit = SpatialUnit::Normalized,
+                                 .default_value = 0.5,
+                                 .range = ParamRange::between(0.0, 1.0),
+                                 .introduced_in_schema = 2});
     check(mentions(validate(s), "legacy_default"),
           "param introduced after v1 without legacy_default is rejected");
 
     s.params.back().legacy_default = 0.0;
     check(validate(s).empty(), "same param with a legacy_default validates clean");
+}
+
+// A range that cannot be used is worse than one that obviously does not work, because it
+// looks fine in a screenshot.
+void nonsense_ranges_are_rejected() {
+    {
+        EffectSchema s = good_effect();
+        s.params[0].range = ParamRange{5.0, 1.0, 5.0, 1.0};
+        check(mentions(validate(s), "above its maximum"), "inverted hard range");
+    }
+    {
+        EffectSchema s = good_effect();
+        s.params[0].range = ParamRange{0.0, 10.0, 4.0, 4.0};
+        check(mentions(validate(s), "cannot be dragged"), "slider with no span");
+    }
+    {
+        // The slider running past the clamp means the last stretch of it does nothing,
+        // which reads as a broken control rather than a deliberate limit.
+        EffectSchema s = good_effect();
+        s.params[0].range = ParamRange{0.0, 10.0, 0.0, 50.0};
+        check(mentions(validate(s), "above the hard maximum"), "slider past the clamp");
+    }
+    {
+        EffectSchema s = good_effect();
+        s.params[0].range = ParamRange::between(0.0, 1.0);  // default_value is 2.5
+        check(mentions(validate(s), "default_value is outside"), "default outside range");
+    }
+    {
+        EffectSchema s = good_effect();
+        s.schema = 2;
+        s.params[0].legacy_default = 40.0;
+        s.params[0].range = ParamRange::between(0.0, 10.0);
+        s.params[0].default_value = 5.0;
+        check(mentions(validate(s), "legacy_default is outside"),
+              "a legacy default outside the range would silently rewrite old content");
+    }
+}
+
+// Widening a limit cannot break anything. Tightening one changes what a stored value
+// evaluates to, which is a behaviour change and costs a schema bump like any other.
+void tightening_a_range_costs_a_bump() {
+    const EffectSchema before = good_effect();
+
+    EffectSchema tighter = good_effect();
+    tighter.params[0].range = ParamRange::between(0.0, 5.0);  // was 0 or greater
+    check(mentions(validate_against_previous(before, tighter), "tightened"),
+          "adding a ceiling at the same schema version is rejected");
+
+    tighter.schema = 2;
+    check(!mentions(validate_against_previous(before, tighter), "tightened"),
+          "the same change with a bump is fine");
+
+    EffectSchema wider = good_effect();
+    wider.params[0].range = ParamRange::atLeast(0.0, 40.0);  // slider only
+    check(!mentions(validate_against_previous(before, wider), "tightened"),
+          "moving where the slider ends is display only and costs nothing");
+
+    EffectSchema loosened = good_effect();
+    loosened.params[0].range = ParamRange::unbounded(0.0, 20.0);  // floor removed
+    check(!mentions(validate_against_previous(before, loosened), "tightened"),
+          "removing a floor cannot invalidate a stored value");
 }
 
 void ids_and_types_are_immortal() {
@@ -144,6 +227,8 @@ void changing_a_default_requires_pinning_the_old_one() {
 
 int main() {
     a_valid_schema_has_no_problems();
+    nonsense_ranges_are_rejected();
+    tightening_a_range_costs_a_bump();
     effect_ids_must_be_namespaced();
     parameter_keys_must_be_snake_case_and_unique();
     retired_keys_can_never_be_reused();

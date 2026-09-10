@@ -766,6 +766,18 @@ void MainWindow::openProject(const QString& path) {
         return;
     }
 
+    // Ranges live in the schema, not the file, so a freshly loaded project arrives with
+    // default ones until they are put back. Without this a reopened project has Position
+    // scrubbing at 1/260th of a unit per pixel and Opacity unbounded again.
+    for (core::Composition& comp : loaded.compositions()) {
+        for (core::Layer& layer : comp.layers) {
+            core::adoptTransformRanges(layer);
+            for (core::EffectInstance& fx : layer.effects) {
+                engine::EffectRegistry::instance().adoptSchema(fx);
+            }
+        }
+    }
+
     project_ = std::move(loaded);
     history_.clear();
     projectPath_ = path;

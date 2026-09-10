@@ -1,8 +1,62 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace ruby::core {
+
+// --- Parameter range ---------------------------------------------------------
+//
+// A hard limit and a slider are not the same thing, and conflating them is why so many
+// controls are unusable. Sapphire's most common documented range, by a factor of three
+// over anything else, is "0 or greater": a floor with no ceiling at all. A slider still
+// has to end somewhere, so it carries both numbers, and the place the slider ends is a
+// statement about where the useful values are, not about what is legal.
+//
+//     Blur radius:  floor 0, no ceiling, slider ends at 20.
+//     Opacity:      hard 0 to 100, slider the same.
+//     Scale:        no limit either way (negative flips), slider -200 to 400.
+//
+// Before this existed nothing in Ruby was bounded. Opacity could be dragged to -4000%
+// and the drag step came from the parameter's unit, so every Normalized parameter
+// scrubbed at the same speed whether its useful range was 0..1 or 0..500.
+struct ParamRange {
+    // Absent means unbounded on that side. A value outside these is clamped wherever it
+    // comes from: a drag, a typed number, a keyframe, an expression.
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+
+    // Where a slider or scrub gesture runs from and to. Always inside the hard range when
+    // there is one, usually much narrower when there is not.
+    double slider_min = 0.0;
+    double slider_max = 1.0;
+
+    [[nodiscard]] constexpr double clamp(double v) const noexcept {
+        if (minimum.has_value() && v < *minimum) return *minimum;
+        if (maximum.has_value() && v > *maximum) return *maximum;
+        return v;
+    }
+
+    // How far one pixel of horizontal drag should move the value. Derived from where the
+    // slider ends rather than from the unit, so a parameter that runs 0..500 scrubs five
+    // hundred times faster than one that runs 0..1 without anyone tuning it by hand.
+    [[nodiscard]] constexpr double dragStep() const noexcept {
+        const double span = slider_max - slider_min;
+        return (span > 0.0 ? span : 1.0) / 260.0;  // ~260px to cross the useful range
+    }
+
+    // The common shapes, named. Reads better at a declaration site than four fields.
+    [[nodiscard]] static constexpr ParamRange atLeast(double lo, double sliderTop) noexcept {
+        return {lo, std::nullopt, lo, sliderTop};
+    }
+    [[nodiscard]] static constexpr ParamRange between(double lo, double hi) noexcept {
+        return {lo, hi, lo, hi};
+    }
+    [[nodiscard]] static constexpr ParamRange unbounded(double sliderLo,
+                                                        double sliderHi) noexcept {
+        return {std::nullopt, std::nullopt, sliderLo, sliderHi};
+    }
+};
 
 // --- Time -------------------------------------------------------------------
 //
