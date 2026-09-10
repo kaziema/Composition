@@ -372,6 +372,43 @@ void deleting_a_null_releases_what_it_drove() {
     }
 }
 
+// Removing a clip from the project must not take the edit with it.
+void removing_media_clears_the_layers_that_used_it() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+    const MediaId clip =
+        project.addMedia("/a/clip.mov", "clip.mov", MediaKind::Video, 5.0, 1920, 1080,
+                         30.0, true)
+            .id;
+    const MediaId other =
+        project.addMedia("/a/song.wav", "song.wav", MediaKind::Audio, 60.0, 0, 0, 0.0,
+                         true)
+            .id;
+
+    project.addLayer(comp, "one", LayerKind::Footage).media = clip;
+    project.addLayer(comp, "two", LayerKind::Footage).media = clip;
+    project.addLayer(comp, "song", LayerKind::Audio).media = other;
+
+    check(project.usageCount(clip) == 2, "two layers use the clip");
+    check(project.usageCount(other) == 1, "one uses the song");
+
+    check(project.removeMedia(clip) == 2, "removing it reports how many were affected");
+    check(project.media().size() == 1, "the item is gone from the pool");
+    check(comp.layers.size() == 3,
+          "but the layers stay: removing a clip is not deleting an edit");
+
+    for (const Layer& l : comp.layers) {
+        if (l.name == "one" || l.name == "two") {
+            check(!l.media.has_value(),
+                  "layers that used it have no media rather than a dangling id");
+        }
+    }
+    check(project.usageCount(other) == 1, "an unrelated layer keeps its media");
+
+    check(project.removeMedia(9999) == 0, "removing something absent affects nothing");
+    check(project.media().size() == 1, "and removes nothing");
+}
+
 }  // namespace
 
 int main() {
@@ -394,6 +431,7 @@ int main() {
     removing_a_layer_orphans_its_children();
     created_layers_have_sane_defaults();
     deleting_a_null_releases_what_it_drove();
+    removing_media_clears_the_layers_that_used_it();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

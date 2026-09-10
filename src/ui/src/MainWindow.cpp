@@ -1212,6 +1212,90 @@ void MainWindow::runBeatAnalyzer() {
     statusBar()->showMessage(rhythmNote_, 5000);
 }
 
+// A composition that matches a clip: its size, its frame rate, its length, its name.
+//
+// The dialog route makes you read those four numbers off the clip and type them back in,
+// which is a transcription exercise the app can do perfectly and a person cannot.
+void MainWindow::compositionFromMedia(core::MediaId media) {
+    const core::MediaItem* item = project_.findMedia(media);
+    if (item == nullptr) {
+        return;
+    }
+    recordEdit(QStringLiteral("New Composition from %1")
+                   .arg(QString::fromStdString(item->name)));
+
+    // Audio has no frame to match, so it falls back to the composition defaults rather
+    // than making a 0x0 comp. Its duration is still worth taking.
+    const int width = item->width > 0 ? item->width : 1080;
+    const int height = item->height > 0 ? item->height : 1920;
+    const double fps = item->fps > 0.0 ? item->fps : 30.0;
+    const double duration = item->duration > 0.0 ? item->duration : 15.0;
+
+    core::Composition& comp =
+        project_.addComposition(item->name, width, height, fps, duration);
+    core::Layer& layer = project_.addLayer(comp, item->name,
+                                           item->isVideo() ? core::LayerKind::Footage
+                                                           : core::LayerKind::Audio);
+    layer.media = media;
+    layer.inPoint = core::TimeValue::seconds(0.0);
+    layer.outPoint = core::TimeValue::seconds(duration);
+
+    setActiveComposition(comp.id);
+    projectPanel_->refresh();
+    markDirty();
+    statusBar()->showMessage(
+        QStringLiteral("Created %1  ·  %2x%3  ·  %4 fps")
+            .arg(QString::fromStdString(item->name)).arg(width).arg(height)
+            .arg(fps, 0, 'g', 5),
+        5000);
+}
+
+void MainWindow::deleteProjectItem(bool isComposition, std::uint64_t id) {
+    if (isComposition) {
+        // Deleting a composition is a bigger question than this footer button should
+        // answer on its own: it may be nested inside another one, and there is no
+        // precomp-reference cleanup yet. Refused out loud rather than half-done.
+        statusBar()->showMessage(
+            QStringLiteral("Deleting compositions is not supported yet"), 4000);
+        return;
+    }
+    const auto media = static_cast<core::MediaId>(id);
+    const core::MediaItem* item = project_.findMedia(media);
+    if (item == nullptr) {
+        return;
+    }
+    const std::size_t used = project_.usageCount(media);
+
+    // Asked before, not reported after. Removing a clip that six layers depend on is a
+    // thing you want to know about while you can still say no.
+    if (used > 0) {
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("Remove media"),
+            QStringLiteral("%1 is used by %2 layer%3.\n\nRemoving it leaves those layers "
+                           "in place with no source. Continue?")
+                .arg(QString::fromStdString(item->name))
+                .arg(used)
+                .arg(used == 1 ? QString() : QStringLiteral("s")),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    recordEdit(QStringLiteral("Remove %1").arg(QString::fromStdString(item->name)));
+    project_.removeMedia(media);
+
+    projectPanel_->refresh();
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(activeComposition());
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
 void MainWindow::deselectAll() {
     if (timelinePanel_ != nullptr) {
         timelinePanel_->clearSelection();
@@ -2194,6 +2278,12 @@ QWidget* MainWindow::buildBody() {
     });
     connect(projectPanel_, &ProjectPanel::mediaActivated, this,
             &MainWindow::addMediaToComposition);
+    connect(projectPanel_, &ProjectPanel::newCompositionRequested, this,
+            &MainWindow::newComposition);
+    connect(projectPanel_, &ProjectPanel::compositionFromMediaRequested, this,
+            &MainWindow::compositionFromMedia);
+    connect(projectPanel_, &ProjectPanel::deleteRequested, this,
+            &MainWindow::deleteProjectItem);
     connect(timelinePanel, &TimelinePanel::mediaDropped, this,
             &MainWindow::dropMediaIntoComposition);
     connect(timelinePanel, &TimelinePanel::layerContextMenuRequested, this,

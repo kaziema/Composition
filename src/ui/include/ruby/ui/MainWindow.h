@@ -90,6 +90,10 @@ public slots:
     // the result on the timeline.
     void runBeatAnalyzer();
 
+    // Project panel footer.
+    void compositionFromMedia(core::MediaId media);
+    void deleteProjectItem(bool isComposition, std::uint64_t id);
+
     // Layer > New. Both land above the selected layer, as AE does, so a new layer arrives
     // where you were looking rather than at the top of a twenty layer stack.
     void newSolidLayer();

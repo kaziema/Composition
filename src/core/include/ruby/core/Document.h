@@ -317,6 +317,17 @@ public:
                         bool hasAudio);
 
     [[nodiscard]] const std::vector<MediaItem>& media() const noexcept { return media_; }
+
+    // Removes a media item and clears every layer that referenced it.
+    //
+    // A layer whose media id points at nothing is worse than a layer with no media: the
+    // second draws a placeholder and the first tries to resolve a path that is not there.
+    // Returns how many layers were affected, so the caller can warn before doing it.
+    std::size_t removeMedia(MediaId media);
+
+    // How many layers, across every composition, use this item. The count you have to show
+    // someone before you delete something out from under them.
+    [[nodiscard]] std::size_t usageCount(MediaId media) const noexcept;
     [[nodiscard]] const MediaItem* findMedia(MediaId id) const noexcept;
     [[nodiscard]] const MediaItem* findMediaByPath(std::string_view path) const noexcept;
 

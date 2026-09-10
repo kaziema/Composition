@@ -10,6 +10,8 @@
 #include <QMouseEvent>
 #include <QToolTip>
 #include <QHelpEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QPainter>
 #include <QVBoxLayout>
 
@@ -53,6 +55,8 @@ QString formatSize(qint64 bytes) {
 }  // namespace
 
 ProjectPanel::ProjectPanel(QWidget* parent) : QWidget(parent) {
+    setAcceptDrops(true);
+    setMouseTracking(true);
     QFont f = font();
     f.setPixelSize(type::kRowLabel);
     setFont(f);
@@ -102,8 +106,48 @@ void ProjectPanel::refresh() {
     update();
 }
 
+void ProjectPanel::dragEnterEvent(QDragEnterEvent* e) {
+    if (e->mimeData() != nullptr && e->mimeData()->hasFormat(mediaMimeType())) {
+        e->acceptProposedAction();
+    }
+}
+
+void ProjectPanel::dragMoveEvent(QDragMoveEvent* e) {
+    // Only the New Composition button is a target. Dropping media anywhere else in the
+    // panel it came from means nothing, and accepting it would imply otherwise.
+    const bool over = newCompRect_.contains(e->position().toPoint());
+    if (over != dropOnNewComp_) {
+        dropOnNewComp_ = over;
+        update();
+    }
+    if (over) {
+        e->acceptProposedAction();
+    } else {
+        e->ignore();
+    }
+}
+
+void ProjectPanel::dragLeaveEvent(QDragLeaveEvent*) {
+    dropOnNewComp_ = false;
+    update();
+}
+
+void ProjectPanel::dropEvent(QDropEvent* e) {
+    const bool over = newCompRect_.contains(e->position().toPoint());
+    dropOnNewComp_ = false;
+    update();
+    if (!over || e->mimeData() == nullptr) {
+        return;
+    }
+    const auto id = static_cast<core::MediaId>(
+        e->mimeData()->data(mediaMimeType()).toULongLong());
+    e->acceptProposedAction();
+    emit compositionFromMediaRequested(id);
+}
+
 void ProjectPanel::resizeEvent(QResizeEvent* e) {
     QWidget::resizeEvent(e);
+    layoutFooter();
     update();
 }
 
@@ -193,6 +237,31 @@ void ProjectPanel::rebuild() {
     }
 }
 
+// Everything in the footer, positioned from one place.
+//
+// The buttons and the item count were both put at kEdgePad, independently, and printed on
+// top of each other. Same mistake as the keyframe navigator sharing Parent's column. Two
+// things that each decide their own position have not been laid out; they have been
+// guessed at twice and happened to agree.
+//
+// So the count starts where the buttons end, by construction rather than by arithmetic
+// somebody has to keep in step.
+void ProjectPanel::layoutFooter() {
+    const int y = height() - metrics::kProjectFooterH;
+    const int size = metrics::kProjectFooterH - 6;
+
+    newCompRect_ = QRect(kEdgePad, y + 3, size, size);
+    deleteRect_ = QRect(newCompRect_.right() + 7, y + 3, size, size);
+
+    // The count, then the size, sharing what is left. The size stays hard right because
+    // it is the one number that is read by glancing rather than by looking.
+    const int textLeft = deleteRect_.right() + 12;
+    const int available = width() - textLeft - kEdgePad;
+    countRect_ = QRect(textLeft, y, available / 2, metrics::kProjectFooterH);
+    sizeRect_ = QRect(textLeft + available / 2, y, available - available / 2,
+                      metrics::kProjectFooterH);
+}
+
 int ProjectPanel::rowAt(int y) const {
     const int top = kSearchH + metrics::kColumnHeaderH;
     if (y < top) {
@@ -203,6 +272,11 @@ int ProjectPanel::rowAt(int y) const {
 }
 
 void ProjectPanel::paintEvent(QPaintEvent*) {
+    // Recomputed here rather than only on resize, so the rects can never be stale. It is
+    // six lines of arithmetic and it removes the whole class of bug where geometry and
+    // painting disagree because one of them ran and the other did not.
+    layoutFooter();
+
     QPainter p(this);
     p.fillRect(rect(), kPanelBody);
 
@@ -279,14 +353,41 @@ void ProjectPanel::paintEvent(QPaintEvent*) {
     p.fillRect(QRect(0, footerY, width(), metrics::kProjectFooterH), kColumnHeader);
     p.setFont(numericFont(type::kMeta));
     p.setPen(kTextDim);
-    p.drawText(QRect(kEdgePad, footerY, width() / 2, metrics::kProjectFooterH),
-               Qt::AlignVCenter | Qt::AlignLeft,
+    p.drawText(countRect_, Qt::AlignVCenter | Qt::AlignLeft,
                QStringLiteral("%1 item%2")
                    .arg(rows_.size())
                    .arg(rows_.size() == 1 ? QString() : QStringLiteral("s")));
-    p.drawText(QRect(width() / 2, footerY, width() / 2 - kEdgePad,
-                     metrics::kProjectFooterH),
-               Qt::AlignVCenter | Qt::AlignRight, formatSize(totalBytes_));
+    p.drawText(sizeRect_, Qt::AlignVCenter | Qt::AlignRight, formatSize(totalBytes_));
+
+    // New Composition, then Delete.
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    if (dropOnNewComp_) {
+        // Lit while footage is hovering over it, because a drop target you cannot see is
+        // a drop target you find by accident.
+        p.fillRect(newCompRect_.adjusted(-2, -2, 2, 2), kAccent);
+    } else if (hoverButton_ == 0) {
+        p.fillRect(newCompRect_.adjusted(-2, -2, 2, 2), kMenuActive);
+    }
+    p.setPen(QPen(dropOnNewComp_ ? QColor("#12212e") : kTextTertiary, 1.0));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(newCompRect_.adjusted(1, 3, -1, -3));
+
+    if (hoverButton_ == 1) {
+        p.fillRect(deleteRect_.adjusted(-2, -2, 2, 2), kMenuActive);
+    }
+    const bool canDelete = selected_ >= 0;
+    p.setPen(QPen(canDelete ? kTextTertiary : kTextFaint, 1.0));
+    {
+        // A bin: lid, body, and two lines down it.
+        const QRect r = deleteRect_.adjusted(2, 2, -2, -2);
+        p.drawLine(r.left(), r.top() + 3, r.right(), r.top() + 3);
+        p.drawLine(r.left() + 3, r.top() + 3, r.left() + 3, r.bottom());
+        p.drawLine(r.right() - 3, r.top() + 3, r.right() - 3, r.bottom());
+        p.drawLine(r.left() + 3, r.bottom(), r.right() - 3, r.bottom());
+        p.drawLine(r.center().x() - 2, r.top(), r.center().x() + 2, r.top());
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
 }
 
 const char* ProjectPanel::mediaMimeType() { return "application/x-ruby-media"; }
@@ -294,6 +395,18 @@ const char* ProjectPanel::mediaMimeType() { return "application/x-ruby-media"; }
 bool ProjectPanel::event(QEvent* e) {
     if (e->type() == QEvent::ToolTip) {
         auto* help = static_cast<QHelpEvent*>(e);
+        if (newCompRect_.contains(help->pos())) {
+            QToolTip::showText(help->globalPos(),
+                               QStringLiteral("New Composition — or drop a clip here to "
+                                              "make one that matches it"),
+                               this);
+            return true;
+        }
+        if (deleteRect_.contains(help->pos())) {
+            QToolTip::showText(help->globalPos(),
+                               QStringLiteral("Delete the selected item"), this);
+            return true;
+        }
         const int row = rowAt(help->pos().y());
         if (row < 0) {
             QToolTip::hideText();
@@ -315,6 +428,19 @@ bool ProjectPanel::event(QEvent* e) {
 
 void ProjectPanel::mousePressEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();
+
+    if (newCompRect_.contains(pos)) {
+        emit newCompositionRequested();
+        return;
+    }
+    if (deleteRect_.contains(pos)) {
+        if (selected_ >= 0) {
+            const Row& row = rows_[static_cast<std::size_t>(selected_)];
+            emit deleteRequested(row.isComposition, row.id);
+        }
+        return;
+    }
+
     const int row = rowAt(pos.y());
     if (row != selected_) {
         selected_ = row;
@@ -327,6 +453,13 @@ void ProjectPanel::mousePressEvent(QMouseEvent* e) {
 }
 
 void ProjectPanel::mouseMoveEvent(QMouseEvent* e) {
+    const QPoint at = e->position().toPoint();
+    const int button = newCompRect_.contains(at) ? 0 : (deleteRect_.contains(at) ? 1 : -1);
+    if (button != hoverButton_) {
+        hoverButton_ = button;
+        update();
+    }
+
     if (!maybeDragging_ || (e->buttons() & Qt::LeftButton) == 0) {
         return;
     }
