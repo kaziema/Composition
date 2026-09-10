@@ -2,6 +2,8 @@
 
 #include <QAction>
 #include <QLabel>
+#include <QPushButton>
+#include <QRadioButton>
 #include <QMenu>
 #include <QDateTime>
 #include <QDir>
@@ -1113,6 +1115,103 @@ void MainWindow::removeEffect(int index) {
     markDirty();
 }
 
+// Beat Analyzer. Two lanes, and the choice is the user's rather than something guessed
+// at, because the two are not two settings of one thing.
+//
+// A beat grid is periodic and quantisable; vocal onsets are an aperiodic list where "snap
+// to the half beat" is meaningless. Measured on a real edit, cuts landed on syllables at
+// 29ms median while a fitted beat grid matched the audio worse than a random offset. Which
+// one a track wants is a fact about the music, and only the person listening to it knows.
+void MainWindow::runBeatAnalyzer() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        return;
+    }
+
+    // The track to analyse: the first layer that is an audio layer and decoded. The same
+    // rule loadAudio uses to pick a rhythm source, so the two cannot disagree.
+    const media::AudioBuffer* track = nullptr;
+    for (const core::Layer& layer : comp->layers) {
+        if (layer.kind != core::LayerKind::Audio || !layer.media.has_value()) {
+            continue;
+        }
+        if (const auto found = audio_.find(*layer.media); found != audio_.end()) {
+            track = &found->second;
+            break;
+        }
+    }
+    if (track == nullptr) {
+        statusBar()->showMessage(
+            QStringLiteral("Beat Analyzer needs an audio layer in this composition"), 5000);
+        return;
+    }
+
+    auto detector = beat::createDetector();
+    if (detector == nullptr || !detector->available()) {
+        // Says so plainly rather than running and finding nothing, which would look like
+        // the track had no beats in it.
+        QMessageBox::information(
+            this, QStringLiteral("Beat Analyzer"),
+            QStringLiteral("This build has no rhythm analysis.\n\n%1")
+                .arg(QString::fromUtf8(detector != nullptr ? detector->description()
+                                                           : "No detector.")));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Beat Analyzer"));
+    dialog.setModal(true);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* beats = new QRadioButton(QStringLiteral("Beats"), &dialog);
+    auto* vocals = new QRadioButton(QStringLiteral("Vocals"), &dialog);
+    beats->setChecked(true);
+    layout->addWidget(beats);
+    layout->addWidget(vocals);
+
+    auto* help = new QLabel(
+        QStringLiteral("Beats finds a periodic grid you can quantise to. Vocals finds "
+                       "syllable onsets, which is what to use when the cuts follow the "
+                       "words rather than the drums."),
+        &dialog);
+    help->setWordWrap(true);
+    help->setMaximumWidth(360);
+    help->setStyleSheet(QStringLiteral("color: %1;").arg(theme::kTextDim.name()));
+    layout->addWidget(help);
+
+    auto* buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Analyse"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const beat::Lane lane = vocals->isChecked() ? beat::Lane::Vocal : beat::Lane::Beat;
+
+    recordEdit(QStringLiteral("Analyse Audio"));
+    const beat::Result result = detector->analyze(*track, lane);
+
+    // setLane preserves markers the user placed by hand, which is the whole point of the
+    // lanes being separate: re-analysing must not throw away someone's corrections.
+    comp->rhythm.setLane(lane == beat::Lane::Vocal ? core::MarkerLane::Vocal
+                                                   : core::MarkerLane::Beat,
+                         result.markers);
+
+    rhythmNote_ = QStringLiteral("%1 %2")
+                      .arg(static_cast<int>(result.markers.size()))
+                      .arg(lane == beat::Lane::Vocal ? QStringLiteral("vocal onsets")
+                                                     : QStringLiteral("beats"));
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    updateStatus();
+    markDirty();
+    statusBar()->showMessage(rhythmNote_, 5000);
+}
+
 void MainWindow::deselectAll() {
     if (timelinePanel_ != nullptr) {
         timelinePanel_->clearSelection();
@@ -2051,6 +2150,31 @@ QWidget* MainWindow::buildBody() {
     // The Snapping switch finally does something.
     connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,
             &TimelinePanel::setSnapping);
+
+    connect(toolBar_, &EditorToolBar::featureTriggered, this, [this](int index) {
+        if (index == 0) {
+            runBeatAnalyzer();
+        } else {
+            // Audio Studio is specified but not built. See NOTEBOOK F6.
+            statusBar()->showMessage(
+                QStringLiteral("Audio Studio is not built yet"), 4000);
+        }
+    });
+
+    // Workspaces collapse to a menu rather than a permanent row of names. Ruby has one
+    // layout; the row that After Effects spends on workspace names is worth more spent on
+    // the modes that are specific to this app.
+    connect(toolBar_, &EditorToolBar::workspaceMenuRequested, this,
+            [this](const QPoint& at) {
+                QMenu menu(this);
+                QAction* def = menu.addAction(QStringLiteral("Default"));
+                def->setCheckable(true);
+                def->setChecked(true);
+                menu.addSeparator();
+                addPending(&menu, {QStringLiteral("Save Workspace..."),
+                                   QStringLiteral("Reset Workspace")});
+                menu.exec(at);
+            });
 
     // The two panel buttons choose what the left column shows.
     connect(toolBar_, &EditorToolBar::panelSelected, this, [this](int index) {

@@ -65,6 +65,27 @@ constexpr const char* kToolTips[] = {
 // here. Leaving them looking live would be the lie the whole toolbar used to tell.
 constexpr bool kToolReady[] = {true, true, true, true, true, true, false, false};
 
+// The right side of the bar, where After Effects lists workspaces.
+//
+// Ruby has no workspaces worth a permanent row: it has one layout, and the space is worth
+// more spent on the modes that are specific to this app. So the named entries here are
+// features, and workspace switching collapses to a menu.
+struct Feature {
+    const char* label;
+    const char* tip;
+    bool ready;
+};
+constexpr Feature kFeatures[] = {
+    {"Beat Analyzer", "Beat Analyzer — find the beats or the vocal onsets in this "
+                      "composition's audio and put them on the timeline", true},
+    {"Audio Studio", "Audio Studio — show only the layers you are working with, with a "
+                     "mixer. Not built yet.", false},
+};
+constexpr int kFeatureCount = static_cast<int>(std::size(kFeatures));
+
+constexpr int kFeaturePadX = 10;
+constexpr int kWorkspaceW = 26;
+
 constexpr int kEdgePad = 8;
 constexpr int kToolGap = 1;
 constexpr int kSwitchPillW = 26;
@@ -125,6 +146,20 @@ void EditorToolBar::relayout() {
     x += 7;
     dividerRect_ = QRect(x, 6, 1, metrics::kToolBarH - 12);
     x += 1 + 11;
+
+    // Laid out from the right edge inward, so the workspace menu stays pinned to the
+    // corner however wide the window is and the features sit beside it.
+    const QFontMetrics rightFm(font());
+    int rx = width() - kEdgePad - kWorkspaceW;
+    workspaceRect_ = QRect(rx, 0, kWorkspaceW, metrics::kToolBarH);
+
+    featureRects_.clear();
+    for (int i = kFeatureCount - 1; i >= 0; --i) {
+        const int w = rightFm.horizontalAdvance(QString::fromUtf8(kFeatures[i].label)) +
+                      kFeaturePadX * 2;
+        rx -= w;
+        featureRects_.prepend(QRect(rx, 0, w, metrics::kToolBarH));
+    }
 
     const QFontMetrics fm(font());
     for (Switch& sw : switches_) {
@@ -198,6 +233,30 @@ void EditorToolBar::paintEvent(QPaintEvent*) {
 
     p.fillRect(dividerRect_, kDivider);
 
+    // Named modes, then the workspace menu. Text rather than icons, the way AE lists
+    // workspaces: these are places to go, not tools to hold, and a word says that better
+    // than a glyph nobody has learned yet.
+    p.setFont(font());
+    for (int i = 0; i < featureRects_.size() && i < kFeatureCount; ++i) {
+        const QRect r = featureRects_.at(i);
+        const bool ready = kFeatures[i].ready;
+        if (i == hoverFeature_ && ready) {
+            p.fillRect(r, kMenuActive);
+        }
+        p.setPen(ready ? kTextTertiary : kTextFaint);
+        p.drawText(r, Qt::AlignCenter, QString::fromUtf8(kFeatures[i].label));
+    }
+
+    if (hoverWorkspace_) {
+        p.fillRect(workspaceRect_, kMenuActive);
+    }
+    p.setPen(QPen(kTextTertiary, 1.0));
+    const int mx = workspaceRect_.center().x();
+    const int my = workspaceRect_.center().y();
+    for (int row = -1; row <= 1; ++row) {
+        p.drawLine(mx - 5, my + row * 4, mx + 5, my + row * 4);
+    }
+
     for (const Switch& sw : switches_) {
         paintSwitch(p, sw);
     }
@@ -240,6 +299,21 @@ void EditorToolBar::mousePressEvent(QMouseEvent* e) {
                 activePanel_ = i;
                 update();
                 emit panelSelected(i);
+            }
+            return;
+        }
+    }
+
+    if (workspaceRect_.contains(pos)) {
+        emit workspaceMenuRequested(mapToGlobal(pos));
+        return;
+    }
+    for (int i = 0; i < featureRects_.size() && i < kFeatureCount; ++i) {
+        if (featureRects_.at(i).contains(pos)) {
+            // A feature that does not exist swallows the click, like the tools that are
+            // waiting on something. Its tooltip is what explains why.
+            if (kFeatures[i].ready) {
+                emit featureTriggered(i);
             }
             return;
         }
@@ -288,6 +362,18 @@ bool EditorToolBar::event(QEvent* e) {
                 return true;
             }
         }
+        for (int i = 0; i < featureRects_.size() && i < kFeatureCount; ++i) {
+            if (featureRects_.at(i).contains(pos)) {
+                QToolTip::showText(help->globalPos(),
+                                   QString::fromUtf8(kFeatures[i].tip), this);
+                return true;
+            }
+        }
+        if (workspaceRect_.contains(pos)) {
+            QToolTip::showText(help->globalPos(),
+                               QStringLiteral("Workspaces — saved panel layouts"), this);
+            return true;
+        }
         for (const Switch& sw : switches_) {
             if (!sw.pillRect.contains(pos) && !sw.labelRect.contains(pos)) {
                 continue;
@@ -324,17 +410,31 @@ void EditorToolBar::mouseMoveEvent(QMouseEvent* e) {
             break;
         }
     }
-    if (hit != hoverTool_ || panelHit != hoverPanel_) {
+    int featureHit = -1;
+    for (int i = 0; i < featureRects_.size(); ++i) {
+        if (featureRects_.at(i).contains(pos)) {
+            featureHit = i;
+            break;
+        }
+    }
+    const bool workspaceHit = workspaceRect_.contains(pos);
+
+    if (hit != hoverTool_ || panelHit != hoverPanel_ || featureHit != hoverFeature_ ||
+        workspaceHit != hoverWorkspace_) {
         hoverTool_ = hit;
         hoverPanel_ = panelHit;
+        hoverFeature_ = featureHit;
+        hoverWorkspace_ = workspaceHit;
         update();
     }
 }
 
 void EditorToolBar::leaveEvent(QEvent*) {
-    if (hoverTool_ != -1 || hoverPanel_ != -1) {
+    if (hoverTool_ != -1 || hoverPanel_ != -1 || hoverFeature_ != -1 || hoverWorkspace_) {
         hoverTool_ = -1;
         hoverPanel_ = -1;
+        hoverFeature_ = -1;
+        hoverWorkspace_ = false;
         update();
     }
 }
