@@ -7,6 +7,8 @@ class QAction;
 class QCloseEvent;
 
 #include "ruby/core/Document.h"
+#include "ruby/core/Transform.h"
+#include "ruby/ui/AlignPanel.h"
 #include <map>
 #include <optional>
 
@@ -50,6 +52,17 @@ public:
     explicit MainWindow(gpu::GpuDevice* device = nullptr, QWidget* parent = nullptr);
 
     [[nodiscard]] const core::Project& project() const noexcept { return project_; }
+
+    // How big a layer is, before its own scale. The compositor works this out from decoded
+    // frames; the window works it out from the media pool and a text layout, which agree
+    // for everything the align panel can act on.
+    [[nodiscard]] core::SizeOf layerSizes();
+
+    // Moves the selected layer so one of its edges or centres meets the composition's.
+    void alignSelectedLayer(AlignPanel::Align edge);
+
+    // Turns the align buttons on or off for whatever is selected now.
+    void updateAlignAvailability();
 
 signals:
     // The pool changed. The project panel listens; nothing else needs to yet.
@@ -200,6 +213,7 @@ private:
     ProjectPanel* projectPanel_ = nullptr;
     PooledMediaPanel* pooledPanel_ = nullptr;
     EffectsPanel* effectsPanel_ = nullptr;
+    AlignPanel* alignPanel_ = nullptr;
     QStackedWidget* leftDock_ = nullptr;
     StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;

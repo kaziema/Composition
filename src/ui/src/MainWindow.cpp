@@ -25,6 +25,7 @@
 #include "ruby/ui/DemoProject.h"
 #include "ruby/ui/EditorToolBar.h"
 #include "ruby/ui/EffectsPanel.h"
+#include "ruby/ui/TextRaster.h"
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/beat/Detector.h"
 #include "ruby/media/AudioDecoder.h"
@@ -384,6 +385,154 @@ void MainWindow::redo() {
     afterDocumentReplaced();
     markDirty();
     refreshUndoActions();
+}
+
+core::SizeOf MainWindow::layerSizes() {
+    return [this](const core::Layer& layer) -> core::LayerSize {
+        const core::Composition* comp = activeComposition();
+        const double compW = comp != nullptr ? static_cast<double>(comp->width) : 0.0;
+        const double compH = comp != nullptr ? static_cast<double>(comp->height) : 0.0;
+
+        switch (layer.kind) {
+            case core::LayerKind::Solid:
+                // Zero means "match the composition", the same rule the compositor uses.
+                return {layer.solidWidth > 0 ? static_cast<double>(layer.solidWidth) : compW,
+                        layer.solidHeight > 0 ? static_cast<double>(layer.solidHeight)
+                                              : compH};
+            case core::LayerKind::Precomp:
+                if (layer.source.has_value()) {
+                    if (const core::Composition* src = project_.find(*layer.source);
+                        src != nullptr) {
+                        return {static_cast<double>(src->width),
+                                static_cast<double>(src->height)};
+                    }
+                }
+                return {compW, compH};
+            case core::LayerKind::Text: {
+                // Measured from the laid-out glyphs rather than rasterised. The ink is the
+                // layer: a title is as wide as the word, not as wide as the frame, and
+                // centring it on the frame's width would centre the wrong thing.
+                QRectF ink;
+                for (const LaidOutGlyph& g : layOutText(layer, 1.0)) {
+                    ink = ink.isNull() ? g.bounds : ink.united(g.bounds);
+                }
+                if (ink.isNull() || ink.width() <= 0.0 || ink.height() <= 0.0) {
+                    return {0.0, 0.0};
+                }
+                return {ink.width(), ink.height()};
+            }
+            case core::LayerKind::Audio:
+                return {0.0, 0.0};  // no picture, so no box
+            case core::LayerKind::Footage:
+            default:
+                if (layer.media.has_value()) {
+                    if (const core::MediaItem* item = project_.findMedia(*layer.media);
+                        item != nullptr && item->width > 0 && item->height > 0) {
+                        return {static_cast<double>(item->width),
+                                static_cast<double>(item->height)};
+                    }
+                }
+                return {compW, compH};
+        }
+    };
+}
+
+void MainWindow::updateAlignAvailability() {
+    if (alignPanel_ == nullptr) {
+        return;
+    }
+    const core::Layer* layer = selectedLayer();
+    // A locked layer is not alignable for the same reason it is not draggable, and an
+    // audio layer has no picture to line up. Both would otherwise be a button that looks
+    // live and does nothing when pressed.
+    alignPanel_->setAlignable(layer != nullptr && !layer->locked &&
+                              layer->kind != core::LayerKind::Audio);
+}
+
+void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || layer->locked) {
+        return;
+    }
+    core::Property* position = layer->find("position");
+    if (position == nullptr) {
+        return;
+    }
+
+    const double compW = static_cast<double>(comp->width);
+    const double compH = static_cast<double>(comp->height);
+    const core::TimeContext ctx = comp->timeContext();
+    const double seconds = playback_ != nullptr ? playback_->time() : 0.0;
+    const core::SizeOf sizes = layerSizes();
+
+    const core::Bounds box =
+        core::layerBounds(*comp, *layer, seconds, ctx, compW, compH, sizes);
+    if (box.width() <= 0.0 && box.height() <= 0.0) {
+        return;  // nothing with an edge to align
+    }
+
+    // How far the layer has to travel, in composition pixels.
+    double dx = 0.0;
+    double dy = 0.0;
+    switch (edge) {
+        case AlignPanel::Align::Left:    dx = -box.left; break;
+        case AlignPanel::Align::HCenter: dx = compW / 2.0 - box.centerX(); break;
+        case AlignPanel::Align::Right:   dx = compW - box.right; break;
+        case AlignPanel::Align::Top:     dy = -box.top; break;
+        case AlignPanel::Align::VCenter: dy = compH / 2.0 - box.centerY(); break;
+        case AlignPanel::Align::Bottom:  dy = compH - box.bottom; break;
+    }
+
+    // Position is stored in the PARENT's space, so a distance in composition pixels is
+    // not the number to add to it. Ask the parent chain what that distance is worth: for
+    // an unparented layer this is the identity and dx stays dx, and for a layer parented
+    // to something rotated or scaled it is the difference between landing on the edge and
+    // landing near it.
+    if (layer->parent.has_value()) {
+        if (const core::Layer* owner = comp->find(*layer->parent); owner != nullptr) {
+            const core::Transform2D toComp = core::resolvedTransform(
+                *comp, *owner, seconds, ctx, compW, compH, sizes);
+            const core::Transform2D back = toComp.inverse();
+            // The linear part only. A delta is a direction and a distance, not a point,
+            // so the translation must not come along.
+            const double ux = back.applyX(dx, dy) - back.applyX(0.0, 0.0);
+            const double uy = back.applyY(dx, dy) - back.applyY(0.0, 0.0);
+            dx = ux;
+            dy = uy;
+        }
+    }
+
+    // Back into the percentages Position is stored in.
+    const double px = compW > 0.0 ? dx / compW * 100.0 : 0.0;
+    const double py = compH > 0.0 ? dy / compH * 100.0 : 0.0;
+    if (std::fabs(px) < 1e-9 && std::fabs(py) < 1e-9) {
+        return;  // already there; do not put a no-op on the undo stack
+    }
+
+    recordEdit(QStringLiteral("Align Layer"));
+
+    // An animated Position moves as a whole. Aligning is a statement about where the
+    // layer sits, and setting one key at the playhead would align this frame by breaking
+    // every other one: the move you asked for plus a move you did not.
+    if (position->animated()) {
+        for (core::Keyframe& k : position->keys) {
+            k.value = core::Value::vec2(k.value.c[0] + px, k.value.c[1] + py);
+        }
+    } else {
+        position->staticValue = core::Value::vec2(position->staticValue.c[0] + px,
+                                                  position->staticValue.c[1] + py);
+    }
+
+    // The inspector reads Position too, so it is refreshed along with the timeline and
+    // the viewer. An align that moves the layer on screen while the Position field still
+    // reads the old number looks like two different apps.
+    timelinePanel_->setComposition(comp);
+    inspector_->setSelectedLayer(layer->id);
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
 }
 
 core::Layer* MainWindow::selectedLayer() {
@@ -2178,7 +2327,11 @@ QWidget* MainWindow::buildBody() {
     inspector_ = new InspectorView;
     inspector_->setComposition(&comp);
     inspectorTabs_->addPage(inspector_);
-    inspectorTabs_->addPage(makePlaceholder(QStringLiteral("align tools")));
+    alignPanel_ = new AlignPanel;
+    inspectorTabs_->addPage(alignPanel_);
+    connect(alignPanel_, &AlignPanel::alignRequested, this,
+            &MainWindow::alignSelectedLayer);
+    updateAlignAvailability();
 
     bodySplit_->addWidget(leftDock_);
     bodySplit_->addWidget(viewerTabs_);
@@ -2224,7 +2377,10 @@ QWidget* MainWindow::buildBody() {
     }
 
     connect(timelinePanel, &TimelinePanel::selectionChanged, inspector_,
-            [this](core::LayerId id) { inspector_->setSelectedLayer(id); });
+            [this](core::LayerId id) {
+                inspector_->setSelectedLayer(id);
+                updateAlignAvailability();
+            });
     connect(timelinePanel, &TimelinePanel::currentTimeChanged, inspector_,
             [this](double seconds) { inspector_->setCurrentTime(seconds); });
     inspector_->setSelectedLayer(comp.layers.empty()
@@ -2279,6 +2435,9 @@ QWidget* MainWindow::buildBody() {
         if (viewport_ != nullptr) {
             viewport_->update();
         }
+        // Locking the selected layer has to grey the align buttons out too, and locking
+        // arrives here rather than through selectionChanged.
+        updateAlignAvailability();
         // Moving or trimming a bar changes when its sound plays. The mixer holds its own
         // copy of those times, so it has to be told on every step of the drag, not at the
         // end: a drag you are listening to should stay in sync while you do it.

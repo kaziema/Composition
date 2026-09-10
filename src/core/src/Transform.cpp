@@ -2,6 +2,7 @@
 
 #include "ruby/core/Expressions.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace ruby::core {
@@ -69,6 +70,49 @@ Transform2D Transform2D::then(const Transform2D& outer) const noexcept {
 
 double Transform2D::applyX(double x, double y) const noexcept { return a * x + c * y + tx; }
 double Transform2D::applyY(double x, double y) const noexcept { return b * x + d * y + ty; }
+
+Transform2D Transform2D::inverse() const noexcept {
+    const double det = a * d - b * c;
+    if (std::fabs(det) < 1e-12) {
+        return identity();  // collapsed to a point or a line; nothing to undo
+    }
+    const double ia = d / det;
+    const double ib = -b / det;
+    const double ic = -c / det;
+    const double id = a / det;
+    return Transform2D{ia, ib, ic, id, -(ia * tx + ic * ty), -(ib * tx + id * ty)};
+}
+
+Bounds layerBounds(const Composition& comp, const Layer& layer, double seconds,
+                   const TimeContext& ctx, double compWidth, double compHeight,
+                   const SizeOf& sizeOf) {
+    const LayerSize size = sizeOf ? sizeOf(layer) : LayerSize{};
+
+    // The same two steps the compositor uses, in the same order, because a box that
+    // disagrees with what is on screen is worse than no box at all. Unit square, centred,
+    // scaled to the layer, then through the layer's full transform.
+    const Transform2D unitToLayer =
+        Transform2D::translate(-0.5, -0.5).then(Transform2D::scale(size.width, size.height));
+    const Transform2D toComp =
+        unitToLayer.then(resolvedTransform(comp, layer, seconds, ctx, compWidth,
+                                           compHeight, sizeOf));
+
+    const double corners[4][2] = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}};
+    Bounds out{};
+    for (int i = 0; i < 4; ++i) {
+        const double x = toComp.applyX(corners[i][0], corners[i][1]);
+        const double y = toComp.applyY(corners[i][0], corners[i][1]);
+        if (i == 0) {
+            out = Bounds{x, y, x, y};
+            continue;
+        }
+        out.left = std::min(out.left, x);
+        out.top = std::min(out.top, y);
+        out.right = std::max(out.right, x);
+        out.bottom = std::max(out.bottom, y);
+    }
+    return out;
+}
 
 Transform2D layerTransform(const Layer& layer, double seconds, const TimeContext& ctx,
                            double compWidth, double compHeight, const LayerSize& size) {

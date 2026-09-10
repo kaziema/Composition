@@ -15,6 +15,7 @@ qt_add_library(ruby_ui STATIC
     src/ProjectPanel.cpp
     src/PooledMediaPanel.cpp
     src/EffectsPanel.cpp
+    src/AlignPanel.cpp
     src/StatusReadout.cpp
     src/NewCompositionDialog.cpp
     src/NewSolidDialog.cpp
@@ -34,6 +35,7 @@ qt_add_library(ruby_ui STATIC
     include/ruby/ui/ProjectPanel.h
     include/ruby/ui/PooledMediaPanel.h
     include/ruby/ui/EffectsPanel.h
+    include/ruby/ui/AlignPanel.h
     include/ruby/ui/StatusReadout.h
     include/ruby/ui/NewCompositionDialog.h
     include/ruby/ui/NewSolidDialog.h
