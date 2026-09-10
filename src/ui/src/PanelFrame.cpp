@@ -11,6 +11,7 @@
 #include <QPixmap>
 #include <QStackedWidget>
 #include <QStringList>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include <map>
@@ -62,6 +63,7 @@ public:
     [[nodiscard]] int current() const { return current_; }
     [[nodiscard]] int count() const { return static_cast<int>(labels_.size()); }
     [[nodiscard]] QString labelAt(int i) const { return labels_.value(i); }
+    [[nodiscard]] QRect rectAt(int i) const { return tabRects_.value(i); }
 
     void setLabels(const QStringList& labels) {
         labels_ = labels;
@@ -138,7 +140,9 @@ protected:
 
             p.setPen(active ? kTabActiveText : kTabInactiveText);
             const QRect textRect = r.adjusted(kPadX + kDotW, 0, -kPadX, 0);
-            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, labels_.at(i));
+            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                       QFontMetrics(p.font()).elidedText(labels_.at(i), Qt::ElideRight,
+                                                         textRect.width()));
         }
 
         // Where a dragged tab would land. One line, at the seam it would be inserted at,
@@ -216,6 +220,33 @@ protected:
         update();
     }
 
+    // How much room the tabs have is now part of how wide they are, so the strip has to
+    // lay them out again when the panel is resized. Without this the fit is only correct
+    // until the first time the window changes size.
+    void resizeEvent(QResizeEvent* e) override {
+        QWidget::resizeEvent(e);
+        layoutTabs();
+        update();
+    }
+
+    // A squeezed tab reads "Pooled M…", and the only other place the full name appears is
+    // the panel it opens. Say it on hover rather than making someone click to find out.
+    bool event(QEvent* e) override {
+        if (e->type() != QEvent::ToolTip) {
+            return QWidget::event(e);
+        }
+        auto* help = static_cast<QHelpEvent*>(e);
+        const int hit = tabAt(help->pos());
+        const QString label = labels_.value(hit);
+        const QRect r = hit >= 0 ? tabRects_.at(hit) : QRect();
+        const int room = r.width() - (kPadX + kDotW) - kPadX;
+        const bool clipped =
+            hit >= 0 && QFontMetrics(font()).horizontalAdvance(label) > room;
+        QToolTip::showText(help->globalPos(), clipped ? label : QString(), this);
+        e->accept();
+        return true;
+    }
+
     void dropEvent(QDropEvent* e) override {
         const int at = dropAt_;
         dropAt_ = -1;
@@ -237,6 +268,9 @@ protected:
 
 private:
     static constexpr int kPadX = 9;
+    // The narrowest a tab is allowed to get before the others start giving up width:
+    // the dot, both pads, and enough room for a couple of characters and the ellipsis.
+    static constexpr int kMinTabW = 46;
     static constexpr int kDotW = 10;
 
     void startDrag(int index) {
@@ -273,12 +307,72 @@ private:
         drag->exec(Qt::MoveAction);
     }
 
+    // Tabs are laid out at their natural width until they stop fitting, and then they
+    // share out the strip instead.
+    //
+    // They used to keep their natural width whatever happened, which meant a tab dragged
+    // into a full panel was painted past the right edge: still there, still in the stack,
+    // but invisible and impossible to click. A tab you cannot get back is a tab you lost.
     void layoutTabs() {
         const QFontMetrics fm(font());
         tabRects_.clear();
-        int x = 0;
+        if (labels_.isEmpty()) {
+            return;
+        }
+
+        QList<int> natural;
+        natural.reserve(labels_.size());
+        int total = 0;
         for (const QString& label : labels_) {
             const int w = kPadX + kDotW + fm.horizontalAdvance(label) + kPadX;
+            natural.append(w);
+            total += w;
+        }
+
+        const int avail = std::max(1, width());
+        QList<int> widths = natural;
+
+        if (total > avail) {
+            // Shrink the wide ones first. Every tab keeps a floor wide enough to stay a
+            // target you can hit and drag, and whatever is left over is shared out in
+            // proportion to how much each tab wanted above that floor. Squeezing them
+            // all by the same percentage would take as much off "fx" as off "Pooled
+            // Media", and "fx" has nothing to give.
+            int floors = 0;
+            int wanted = 0;
+            for (const int w : natural) {
+                floors += std::min(w, kMinTabW);
+                wanted += std::max(0, w - kMinTabW);
+            }
+
+            if (floors >= avail || wanted <= 0) {
+                // More tabs than the strip has room for even at the floor. Split it
+                // evenly: past this point every tab is a dot and a sliver, and the only
+                // thing left worth preserving is that all of them are still reachable.
+                for (int i = 0; i < widths.size(); ++i) {
+                    widths[i] = avail / widths.size();
+                }
+            } else {
+                const int slack = avail - floors;
+                for (int i = 0; i < widths.size(); ++i) {
+                    const int base = std::min(natural.at(i), kMinTabW);
+                    const int extra = std::max(0, natural.at(i) - kMinTabW);
+                    widths[i] = base + static_cast<int>(
+                                           static_cast<qint64>(extra) * slack / wanted);
+                }
+            }
+
+            // Integer division loses a few pixels across the run. Give them to the last
+            // tab so the strip ends exactly at its right edge rather than a gap short.
+            int laid = 0;
+            for (const int w : widths) {
+                laid += w;
+            }
+            widths.last() += avail - laid;
+        }
+
+        int x = 0;
+        for (const int w : widths) {
             tabRects_.append(QRect(x, 0, w, metrics::kTabStripH));
             x += w;
         }
@@ -445,6 +539,8 @@ PanelFrame::DetachedTab PanelFrame::takeTab(int index) {
     emit tabsChanged();
     return out;
 }
+
+QRect PanelFrame::tabRect(int index) const { return strip_->rectAt(index); }
 
 void PanelFrame::insertTab(int index, const QString& label, QWidget* page) {
     if (page == nullptr) {

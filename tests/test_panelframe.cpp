@@ -179,6 +179,57 @@ void a_destroyed_frame_leaves_nothing_behind() {
     delete page;
 }
 
+// Tabs share the strip out when they stop fitting.
+//
+// They used to keep their natural width whatever happened, so a tab dragged into a panel
+// that was already full got painted past the right edge: still in the stack, still in the
+// label list, invisible and unclickable. Kaz lost the Align tab this way.
+void tabs_that_do_not_fit_share_the_strip_out() {
+    ui::PanelFrame* frame = makeFrame({QStringLiteral("Project"),
+                                       QStringLiteral("Pooled Media"),
+                                       QStringLiteral("Comp Map"),
+                                       QStringLiteral("Align")});
+    frame->resize(220, 300);
+    // Laid out on resize, so the strip has to have been through a layout pass.
+    frame->show();
+    QApplication::processEvents();
+
+    // The frame insets its contents by 1px on each side so its border stays visible.
+    const int strip = frame->width() - 2;
+    check(strip > 0, "the strip has a width to share");
+
+    int previousRight = 0;
+    for (int i = 0; i < frame->tabCount(); ++i) {
+        const QRect r = frame->tabRect(i);
+        check(r.width() > 0, "every tab has some width");
+        check(r.left() == previousRight, "tabs are contiguous, no gaps and no overlap");
+        check(r.right() < strip + 1, "and none of them runs off the right edge");
+        previousRight = r.left() + r.width();
+    }
+    check(previousRight == strip, "the run ends exactly at the strip's edge");
+
+    frame->hide();
+    delete frame;
+}
+
+// The other half: when they do fit, they keep their natural width rather than being
+// stretched to fill. A two-tab panel should not have two half-panel-wide tabs.
+void tabs_that_fit_keep_their_own_width() {
+    ui::PanelFrame* frame = makeFrame({QStringLiteral("A"), QStringLiteral("B")});
+    frame->resize(600, 300);
+    frame->show();
+    QApplication::processEvents();
+
+    int laid = 0;
+    for (int i = 0; i < frame->tabCount(); ++i) {
+        laid += frame->tabRect(i).width();
+    }
+    check(laid > 0 && laid < 300, "two short tabs do not stretch across 600px");
+
+    frame->hide();
+    delete frame;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -191,6 +242,8 @@ int main(int argc, char** argv) {
     a_frame_can_refuse_to_give_tabs_up();
     a_tab_can_be_found_and_renamed_wherever_it_lives();
     a_destroyed_frame_leaves_nothing_behind();
+    tabs_that_do_not_fit_share_the_strip_out();
+    tabs_that_fit_keep_their_own_width();
 
     if (failures != 0) {
         std::fprintf(stderr, "\n%d check(s) failed\n", failures);

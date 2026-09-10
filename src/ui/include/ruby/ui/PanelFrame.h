@@ -44,6 +44,11 @@ public:
 
     [[nodiscard]] int tabCount() const;
     [[nodiscard]] QString tabLabel(int index) const;
+
+    // Where a tab sits in the strip, in strip coordinates. Public because the layout is
+    // the thing that keeps going wrong: tabs used to keep their natural width and run off
+    // the right edge, and nothing outside this class could see that they had.
+    [[nodiscard]] QRect tabRect(int index) const;
     void setTabLabel(int index, const QString& label);
 
     // Which frame currently holds `page`, and at what index. Null when nobody does.
