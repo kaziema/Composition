@@ -26,6 +26,12 @@ public:
     // picture, so there is no edge to line up.
     void setAlignable(bool alignable);
 
+    // Where a button sits. Public for the same reason PanelFrame::tabRect is: a row of
+    // controls laid out at its natural width and never asked what room it had is a bug
+    // this codebase has now shipped three times, and nothing outside could see it.
+    [[nodiscard]] QRect buttonRect(int index) const;
+    [[nodiscard]] int buttonCount() const;
+
 signals:
     void alignRequested(Align edge);
 
@@ -54,6 +60,7 @@ private:
 
     std::vector<Button> buttons_;
     QRect targetRect_;  // the "Align Layers to:" dropdown
+    int labelW_ = 90;  // measured, not assumed
     int hover_ = -1;
     bool alignable_ = false;
 };

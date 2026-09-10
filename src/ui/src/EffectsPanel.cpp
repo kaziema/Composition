@@ -104,7 +104,11 @@ void EffectsPanel::rebuild() {
 }
 
 int EffectsPanel::rowAt(int y) const {
-    if (y < kSearchH) {
+    // Painting stops at the bottom of the panel and hit testing did not, so a list longer
+    // than the panel had rows underneath it that could be selected, dragged onto a layer
+    // and double-clicked while being invisible. The same bug the project panel had
+    // against its footer.
+    if (y < kSearchH || y >= height()) {
         return -1;
     }
     const int index = (y - kSearchH) / kRowH;

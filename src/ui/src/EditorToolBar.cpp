@@ -170,6 +170,21 @@ void EditorToolBar::relayout() {
                             kSwitchPillH);
         x += kSwitchPillW + 16;
     }
+
+    // The bar is laid out from both ends and nothing was checking that the two runs meet.
+    // Narrow the window far enough and Motion Blur printed over Beat Analyzer, because
+    // each run knew where it started and neither knew where the other one stopped.
+    //
+    // The window has no minimum width of its own, so the bar states its own: what its
+    // contents actually measure. Everything else in the layout can shrink; a toolbar
+    // cannot, because none of it is text that could elide.
+    const int rightRunW = featureRects_.isEmpty()
+                              ? kEdgePad + kWorkspaceW
+                              : width() - featureRects_.first().left();
+    const int needed = x + rightRunW + 12;
+    if (minimumWidth() != needed) {
+        setMinimumWidth(needed);
+    }
 }
 
 void EditorToolBar::resizeEvent(QResizeEvent* e) {

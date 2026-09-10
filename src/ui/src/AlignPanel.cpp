@@ -6,6 +6,8 @@
 #include <QPainter>
 #include <QToolTip>
 
+#include <algorithm>
+
 #include "ruby/ui/Theme.h"
 
 namespace ruby::ui {
@@ -134,17 +136,34 @@ bool AlignPanel::enabled(const Button& b) const {
 }
 
 void AlignPanel::layoutButtons() {
+    // Six buttons across, narrowed to whatever room there is rather than keeping their
+    // natural width and running off the right edge. This panel lives in a splitter with no
+    // minimum, so "there is always 224px" is not a fact about it, it is a hope.
+    // No lower bound. A minimum width sounds like it protects the buttons and does the
+    // opposite: below it the run stops fitting and goes off the right edge, which is
+    // exactly what it was meant to prevent. A 13px button is small; a button you cannot
+    // see is not there.
+    const int room = width() - kPad * 2 - kBtnGap * 5;
+    const int w = std::max(1, std::min(kBtnW, room / 6));
+
     int y = kPad + kLabelH + kTargetH + kRowGap;
     for (int i = 0; i < 6; ++i) {
         buttons_[static_cast<std::size_t>(i)].rect =
-            QRect(kPad + i * (kBtnW + kBtnGap), y, kBtnW, kBtnH);
+            QRect(kPad + i * (w + kBtnGap), y, w, kBtnH);
     }
     y += kBtnH + kRowGap + kLabelH;
     for (int i = 6; i < 12; ++i) {
         buttons_[static_cast<std::size_t>(i)].rect =
-            QRect(kPad + (i - 6) * (kBtnW + kBtnGap), y, kBtnW, kBtnH);
+            QRect(kPad + (i - 6) * (w + kBtnGap), y, w, kBtnH);
     }
-    targetRect_ = QRect(kPad + 92, kPad + kLabelH - 2, std::max(60, width() - kPad * 2 - 92),
+
+    // The dropdown starts after the label, measured, not after a number that happened to
+    // clear it in the font this was written in.
+    QFont small = font();
+    small.setPixelSize(type::kColumnHeader);
+    labelW_ = QFontMetrics(small).horizontalAdvance(QStringLiteral("Align Layers to:")) + 8;
+    const int left = kPad + labelW_;
+    targetRect_ = QRect(left, kPad + kLabelH - 2, std::max(52, width() - kPad - left),
                         kTargetH);
 }
 
@@ -153,6 +172,14 @@ void AlignPanel::resizeEvent(QResizeEvent* e) {
     layoutButtons();
     update();
 }
+
+QRect AlignPanel::buttonRect(int index) const {
+    return (index >= 0 && index < static_cast<int>(buttons_.size()))
+               ? buttons_[static_cast<std::size_t>(index)].rect
+               : QRect();
+}
+
+int AlignPanel::buttonCount() const { return static_cast<int>(buttons_.size()); }
 
 int AlignPanel::buttonAt(const QPoint& pos) const {
     for (int i = 0; i < static_cast<int>(buttons_.size()); ++i) {
@@ -172,7 +199,7 @@ void AlignPanel::paintEvent(QPaintEvent*) {
 
     p.setFont(small);
     p.setPen(kTextTertiary);
-    p.drawText(QRect(kPad, kPad, 90, kLabelH), Qt::AlignVCenter | Qt::AlignLeft,
+    p.drawText(QRect(kPad, kPad, labelW_, kLabelH), Qt::AlignVCenter | Qt::AlignLeft,
                QStringLiteral("Align Layers to:"));
 
     // The target dropdown. Composition is the only entry that does anything, so it is the

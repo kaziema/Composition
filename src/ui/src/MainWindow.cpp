@@ -510,19 +510,38 @@ void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
         return;  // already there; do not put a no-op on the undo stack
     }
 
-    recordEdit(QStringLiteral("Align Layer"));
-
     // An animated Position moves as a whole. Aligning is a statement about where the
     // layer sits, and setting one key at the playhead would align this frame by breaking
     // every other one: the move you asked for plus a move you did not.
-    if (position->animated()) {
-        for (core::Keyframe& k : position->keys) {
-            k.value = core::Value::vec2(k.value.c[0] + px, k.value.c[1] + py);
+    const auto shift = [px, py](core::Property& prop) {
+        if (prop.animated()) {
+            for (core::Keyframe& k : prop.keys) {
+                k.value = core::Value::vec2(k.value.c[0] + px, k.value.c[1] + py);
+            }
+        } else {
+            prop.staticValue =
+                core::Value::vec2(prop.staticValue.c[0] + px, prop.staticValue.c[1] + py);
         }
-    } else {
-        position->staticValue = core::Value::vec2(position->staticValue.c[0] + px,
-                                                  position->staticValue.c[1] + py);
+    };
+
+    // Tried on a copy first, because writing to Position does not always move the layer.
+    // An expression that returns an absolute value ignores what is underneath it, so the
+    // layer would stay put while the file was marked dirty and an undo entry appeared for
+    // a move that never happened. Rather than special-casing expressions, ask the only
+    // question that matters: does the box end up somewhere else?
+    core::Layer trial = *layer;
+    if (core::Property* trialPos = trial.find("position"); trialPos != nullptr) {
+        shift(*trialPos);
     }
+    const core::Bounds moved =
+        core::layerBounds(*comp, trial, seconds, ctx, compW, compH, sizes);
+    if (std::fabs(moved.left - box.left) < 1e-6 &&
+        std::fabs(moved.top - box.top) < 1e-6) {
+        return;  // Position is not what decides where this layer is
+    }
+
+    recordEdit(QStringLiteral("Align Layer"));
+    shift(*position);
 
     // The inspector reads Position too, so it is refreshed along with the timeline and
     // the viewer. An align that moves the layer on screen while the Position field still
