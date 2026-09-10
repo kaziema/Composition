@@ -1,6 +1,7 @@
 add_library(ruby_core STATIC
     src/Units.cpp
     src/Identity.cpp
+    src/Migration.cpp
     src/Animation.cpp
     src/Document.cpp
     src/Transform.cpp

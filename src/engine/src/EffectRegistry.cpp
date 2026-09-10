@@ -1,6 +1,7 @@
 #include "ruby/engine/EffectRegistry.h"
 
 #include <algorithm>
+#include <string>
 #include <cctype>
 
 namespace ruby::engine {
@@ -396,6 +397,118 @@ const EffectDef* EffectRegistry::find(std::string_view id) const noexcept {
     const auto it = std::find_if(effects_.begin(), effects_.end(),
                                  [id](const EffectDef& d) { return d.schema.id == id; });
     return it == effects_.end() ? nullptr : &*it;
+}
+
+EffectRegistryMigrationReport EffectRegistry::migrate(
+    core::EffectInstance& instance) const {
+    const EffectDef* def = find(instance.effectId);
+    if (def == nullptr) {
+        // The loader already said the effect is unknown. Nothing to migrate onto, and the
+        // parameters are left exactly as they were so a later version of the app that does
+        // know this effect can still read them.
+        EffectRegistryMigrationReport report;
+        report.ok = false;
+        report.from_schema = instance.schema;
+        report.to_schema = instance.schema;
+        return report;
+    }
+    return migrateAgainst(*def, instance);
+}
+
+EffectRegistryMigrationReport migrateAgainst(const EffectDef& definition,
+                                             core::EffectInstance& instance) {
+    const EffectDef* def = &definition;
+    EffectRegistryMigrationReport report;
+    report.from_schema = instance.schema;
+    report.to_schema = instance.schema;
+
+    const int current = def->schema.schema;
+    const int authored = instance.schema > 0 ? instance.schema : 1;
+
+    if (authored > current) {
+        // Content from a newer app. Refused rather than guessed at: the parameters may
+        // mean something this build does not know, and interpreting them with today's
+        // schema is how you silently change someone's work.
+        report.ok = false;
+        report.notes.push_back(instance.effectId + " was authored at schema " +
+                               std::to_string(authored) + " and this build only knows " +
+                               std::to_string(current) +
+                               "; its parameters were left untouched");
+        return report;
+    }
+
+    // 1. The bag: what the file actually had, whatever the schema thinks of it now.
+    core::ParamBag bag;
+    for (const core::Property& p : instance.params) {
+        core::ParamBag::Entry e;
+        e.value = p.staticValue;
+        e.keys = p.keys;
+        e.expression = p.expression;
+        bag.set(p.key, std::move(e));
+    }
+
+    if (authored < current) {
+        core::runMigrations(def->migrations, authored, current, bag);
+        report.notes.push_back(instance.effectId + " migrated from schema " +
+                               std::to_string(authored) + " to " +
+                               std::to_string(current));
+    }
+
+    // 2 and 3 together: rebuild the parameter list in schema order, taking each key from
+    // the bag when the content had it. Anything left in the bag afterwards is a key no
+    // current parameter claims, which is either retired or from a version that renamed it.
+    std::vector<core::Property> rebuilt;
+    rebuilt.reserve(def->schema.params.size());
+
+    for (const core::ParamSpec& spec : def->schema.params) {
+        core::Property p;
+        p.key = spec.key;
+        p.label = spec.label;
+        p.unit = spec.unit;
+        p.range = spec.range;
+        p.group = spec.group.empty() ? def->schema.display_name : spec.group;
+
+        if (const core::ParamBag::Entry* e = bag.find(spec.key); e != nullptr) {
+            p.staticValue = e->value;
+            p.keys = e->keys;
+            p.expression = e->expression;
+            bag.remove(spec.key);
+        } else if (spec.introduced_in_schema > authored && spec.legacy_default.has_value()) {
+            // THE rule this whole harness exists for. A parameter added in schema 3,
+            // loading into content authored at schema 1, must take the value that keeps
+            // that content looking the way it did, not today's better default. Improving
+            // a default should never silently rewrite saved work.
+            //
+            // AE calls this PF_ParamFlag_USE_VALUE_FOR_OLD_PROJECTS and learned it the
+            // hard way; validate() refuses a post-v1 parameter that has no legacy_default
+            // precisely so this branch always has something to use.
+            p.staticValue = core::Value::scalar(*spec.legacy_default);
+            report.notes.push_back(instance.effectId + "." + spec.key +
+                                   " did not exist at schema " + std::to_string(authored) +
+                                   "; filled in with its legacy default");
+        } else {
+            p.staticValue = core::Value::scalar(spec.default_value);
+        }
+        rebuilt.push_back(std::move(p));
+    }
+
+    for (const auto& [key, entry] : bag.entries()) {
+        (void)entry;
+        // Silently for a retired key, which is D1's rule: it was deliberately removed and
+        // the user does not need to hear about a decision made years ago. Noted for a key
+        // nobody recognises, because that is either a corrupt file or a bug in a migration
+        // and both are worth seeing.
+        if (!def->schema.is_retired(key)) {
+            report.notes.push_back(instance.effectId + " had an unknown parameter \"" +
+                                   key + "\", which was dropped");
+        }
+    }
+
+    instance.params = std::move(rebuilt);
+    instance.schema = current;
+    instance.displayName = def->schema.display_name;
+    report.to_schema = current;
+    return report;
 }
 
 void EffectRegistry::adoptSchema(core::EffectInstance& instance) const {

@@ -766,14 +766,25 @@ void MainWindow::openProject(const QString& path) {
         return;
     }
 
+    // Bring the loaded document onto the current schemas.
+    //
     // Ranges live in the schema, not the file, so a freshly loaded project arrives with
-    // default ones until they are put back. Without this a reopened project has Position
-    // scrubbing at 1/260th of a unit per pixel and Opacity unbounded again.
+    // default ones until they are put back. Effects go further: an effect authored at an
+    // older schema version runs its migration chain here, which is the only place it can.
+    //
+    // Every note goes into the same list the loader already uses, so a migrated project
+    // says what changed in the same dialog that reports a missing media link. A project
+    // that quietly reinterprets your work is worse than one that tells you.
+    std::vector<std::string> migrationNotes;
     for (core::Composition& comp : loaded.compositions()) {
         for (core::Layer& layer : comp.layers) {
             core::adoptTransformRanges(layer);
             for (core::EffectInstance& fx : layer.effects) {
-                engine::EffectRegistry::instance().adoptSchema(fx);
+                engine::EffectRegistry::MigrationReport r =
+                    engine::EffectRegistry::instance().migrate(fx);
+                for (std::string& note : r.notes) {
+                    migrationNotes.push_back(std::move(note));
+                }
             }
         }
     }
@@ -806,9 +817,13 @@ void MainWindow::openProject(const QString& path) {
 
     // Anything the loader had to repair is said out loud. A project that quietly opens
     // missing a link is worse than one that tells you which link it lost.
-    if (!report.notes.empty()) {
+    std::vector<std::string> allNotes = report.notes;
+    for (std::string& note : migrationNotes) {
+        allNotes.push_back(std::move(note));
+    }
+    if (!allNotes.empty()) {
         QStringList notes;
-        for (const std::string& note : report.notes) {
+        for (const std::string& note : allNotes) {
             notes << QString::fromStdString(note);
         }
         QMessageBox::information(this, QStringLiteral("Opened with changes"),
