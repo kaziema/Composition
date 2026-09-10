@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include "ruby/ui/Format.h"
 #include "ruby/ui/ProjectPanel.h"
@@ -658,6 +659,67 @@ void TimelineView::paintDiamond(QPainter& p, double cx, double cy, bool selected
     p.setBrush(Qt::NoBrush);
 }
 
+bool TimelineView::nearestKey(const core::Layer& layer, bool forward, double& out,
+                              bool& onKey) const {
+    if (comp_ == nullptr) {
+        return false;
+    }
+    const core::TimeContext ctx = comp_->timeContext();
+    bool found = false;
+    double best = forward ? std::numeric_limits<double>::max()
+                          : std::numeric_limits<double>::lowest();
+
+    const auto consider = [&](const core::Property& prop) {
+        for (const core::Keyframe& k : prop.keys) {
+            const double t = to_seconds(k.time, ctx);
+            if (std::fabs(t - currentTime_) < 1e-6) {
+                onKey = true;
+                continue;  // a key we are standing on is not one to travel to
+            }
+            if (forward ? (t > currentTime_ && t < best) : (t < currentTime_ && t > best)) {
+                best = t;
+                found = true;
+            }
+        }
+    };
+    for (const core::Property& prop : layer.properties) {
+        consider(prop);
+    }
+    // Effect parameters count too. A layer whose only animation is a Glow's intensity is
+    // still an animated layer, and stepping past it would be a lie by omission.
+    for (const core::EffectInstance& fx : layer.effects) {
+        for (const core::Property& prop : fx.params) {
+            consider(prop);
+        }
+    }
+    out = best;
+    return found;
+}
+
+// Previous key, a diamond for the key at this time, next key.
+//
+// `hasKeyHere` fills the diamond, and that is the whole readout: filled means the playhead
+// is sitting exactly on a key, hollow means it is between them. Without it the control
+// says where you can go and nothing about where you are.
+void TimelineView::paintKeyNavigator(QPainter& p, const Row& row, bool hasKeyHere,
+                                     bool canGoBack, bool canGoForward) const {
+    const int x = trackLeft() - kNavW;
+    const int third = kNavW / 3;
+
+    p.setFont(font());
+    p.setPen(canGoBack ? kTextDim : kTextFaint);
+    p.drawText(QRect(x, row.top, third, row.height), Qt::AlignCenter,
+               QStringLiteral("\u25c2"));
+
+    p.setPen(hasKeyHere ? kAccent : kTextDim);
+    p.drawText(QRect(x + third, row.top, third, row.height), Qt::AlignCenter,
+               hasKeyHere ? QStringLiteral("\u25c6") : QStringLiteral("\u25c7"));
+
+    p.setPen(canGoForward ? kTextDim : kTextFaint);
+    p.drawText(QRect(x + 2 * third, row.top, third, row.height), Qt::AlignCenter,
+               QStringLiteral("\u25b8"));
+}
+
 void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer) const {
     const bool isSelected = selected_.has_value() && *selected_ == layer.id;
     const QRect r(0, row.top, width(), row.height);
@@ -697,6 +759,17 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.setPen(kTextDim);
     p.drawText(QRect(kAvW, row.top, kIndexW, row.height), Qt::AlignCenter,
                QString::number(index + 1));
+
+    // The navigator on the layer row, whenever anything under this layer is animated.
+    // Lets you step between a layer's keys without twirling it open to find them, which is
+    // the common case: you want to land on the next key, not to look at it.
+    if (layer.keyframeCount() > 0) {
+        double target = 0.0;
+        bool onKey = false;
+        const bool back = nearestKey(layer, false, target, onKey);
+        const bool fwd = nearestKey(layer, true, target, onKey);
+        paintKeyNavigator(p, row, onKey, back, fwd);
+    }
 
     // Twirl, label stripe, name.
     p.setFont(font());
@@ -858,11 +931,24 @@ void TimelineView::paintPropertyRow(QPainter& p, const Row& row, const Layer& la
                Qt::AlignVCenter | Qt::AlignRight,
                formatPropertyValue(prop, currentTime_, ctx));
 
-    // Keyframe navigator.
-    p.setFont(font());
-    p.setPen(kTextDim);
-    p.drawText(QRect(trackLeft() - kNavW, row.top, kNavW, row.height), Qt::AlignCenter,
-               QStringLiteral("◂  ◆  ▸"));
+    // Keyframe navigator, for this property alone.
+    {
+        const core::TimeContext keyCtx = comp_->timeContext();
+        bool onKey = false;
+        bool back = false;
+        bool fwd = false;
+        for (const core::Keyframe& k : prop.keys) {
+            const double t = to_seconds(k.time, keyCtx);
+            if (std::fabs(t - currentTime_) < 1e-6) {
+                onKey = true;
+            } else if (t < currentTime_) {
+                back = true;
+            } else {
+                fwd = true;
+            }
+        }
+        paintKeyNavigator(p, row, onKey, back, fwd);
+    }
 
     if (prop.keys.empty()) {
         return;
@@ -1066,7 +1152,14 @@ bool TimelineView::event(QEvent* e) {
                 break;
             }
 
-            if (row.kind == RowKind::Layer && pos.x() < trackLeft()) {
+            if (row.kind == RowKind::Layer && pos.x() >= trackLeft() - kNavW &&
+                pos.x() < trackLeft()) {
+                const Layer* owner = comp_->find(row.layer);
+                text = (owner != nullptr && owner->keyframeCount() > 0)
+                           ? QStringLiteral("Previous key  ·  on a key  ·  next key, "
+                                            "across everything animated on this layer")
+                           : QString();
+            } else if (row.kind == RowKind::Layer && pos.x() < trackLeft()) {
                 // The A/V column is three unlabelled dots. Nobody guesses these.
                 if (pos.x() < 24) {
                     text = QStringLiteral("Visibility — hide this layer without deleting it");
@@ -1090,6 +1183,8 @@ bool TimelineView::event(QEvent* e) {
                 } else if (pos.x() >= trackLeft() - kNavW && pos.x() < trackLeft()) {
                     text = QStringLiteral("Previous key  ·  add or remove a key here  ·  "
                                           "next key");
+                } else if (pos.x() >= kPropIndent - 12 && pos.x() < kPropIndent + 120) {
+                    text = QStringLiteral("Property — its value at the playhead");
                 } else if (pos.x() >= trackLeft()) {
                     text = QStringLiteral("Keyframes — click to select, shift-click to add "
                                           "to the selection");
@@ -1195,6 +1290,80 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         if (contentY < row.top || contentY >= row.top + row.height) {
             continue;
         }
+        // Property rows: the navigator, and only the navigator. Everything else on a
+        // property row is a readout.
+        if (row.kind == RowKind::Property) {
+            Layer* owner = comp_->find(row.layer);
+            const int navX = trackLeft() - kNavW;
+            if (owner == nullptr || pos.x() < navX || pos.x() >= trackLeft()) {
+                return;
+            }
+            Property* prop = nullptr;
+            if (row.effect < 0) {
+                if (row.propertyIndex < static_cast<int>(owner->properties.size())) {
+                    prop = &owner->properties[static_cast<std::size_t>(row.propertyIndex)];
+                }
+            } else if (row.effect < static_cast<int>(owner->effects.size())) {
+                auto& params = owner->effects[static_cast<std::size_t>(row.effect)].params;
+                if (row.propertyIndex < static_cast<int>(params.size())) {
+                    prop = &params[static_cast<std::size_t>(row.propertyIndex)];
+                }
+            }
+            if (prop == nullptr) {
+                return;
+            }
+
+            const core::TimeContext ctx = comp_->timeContext();
+            const int third = kNavW / 3;
+
+            if (pos.x() < navX + third || pos.x() >= navX + 2 * third) {
+                const bool forward = pos.x() >= navX + 2 * third;
+                double best = forward ? std::numeric_limits<double>::max()
+                                      : std::numeric_limits<double>::lowest();
+                bool found = false;
+                for (const core::Keyframe& k : prop->keys) {
+                    const double t = to_seconds(k.time, ctx);
+                    if (forward ? (t > currentTime_ + 1e-6 && t < best)
+                                : (t < currentTime_ - 1e-6 && t > best)) {
+                        best = t;
+                        found = true;
+                    }
+                }
+                if (found) {
+                    setCurrentTime(best);
+                }
+                return;
+            }
+
+            // The diamond. Adds a key here holding the value the property already has, or
+            // removes the one that is here. Toggling rather than always adding is what
+            // makes it usable as a single control: the same click undoes itself.
+            const auto existing =
+                std::find_if(prop->keys.begin(), prop->keys.end(),
+                             [&](const core::Keyframe& k) {
+                                 return std::fabs(to_seconds(k.time, ctx) - currentTime_) <
+                                        1e-6;
+                             });
+            emit editBegan(existing != prop->keys.end() ? QStringLiteral("Remove Keyframe")
+                                                        : QStringLiteral("Add Keyframe"));
+            if (existing != prop->keys.end()) {
+                prop->keys.erase(existing);
+            } else {
+                core::Keyframe made;
+                made.time = core::TimeValue::seconds(currentTime_);
+                made.value = prop->evaluate(currentTime_, ctx);
+                made.interp = core::Interpolation::Bezier;
+                made.easeIn = 0.33;
+                made.easeOut = 0.33;
+                prop->addKey(made, ctx);
+            }
+            emit editEnded();
+            emit layersChanged();
+            rebuildRows();
+            update();
+            return;
+        }
+
         if (row.kind != RowKind::Layer) {
             return;
         }
@@ -1316,6 +1485,25 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
                 });
             }
             menu.exec(e->globalPosition().toPoint());
+            return;
+        }
+
+        // The keyframe navigator. Previous and next step the playhead; the diamond is a
+        // readout only. On a property row it means "put a key here", but a layer has many
+        // properties and "add a keyframe to the layer" is not a thing, so it does not
+        // pretend to be a button.
+        const int navX = trackLeft() - kNavW;
+        if (layer->keyframeCount() > 0 && pos.x() >= navX && pos.x() < trackLeft()) {
+            const int third = kNavW / 3;
+            const bool forward = pos.x() >= navX + 2 * third;
+            const bool backward = pos.x() < navX + third;
+            if (forward || backward) {
+                double target = 0.0;
+                bool onKey = false;
+                if (nearestKey(*layer, forward, target, onKey)) {
+                    setCurrentTime(target);
+                }
+            }
             return;
         }
 

@@ -214,6 +214,14 @@ private:
     // Resolves a row's property, whether it lives on the layer or on one of its effects.
     [[nodiscard]] static const core::Property* propertyFor(const core::Layer& layer,
                                                            int effect, int index);
+    void paintKeyNavigator(QPainter& p, const Row& row, bool hasKeyHere, bool canGoBack,
+                           bool canGoForward) const;
+
+    // The nearest keyframe on this layer before or after the playhead, across its own
+    // properties and every effect's. `onKey` is set when one sits exactly here.
+    [[nodiscard]] bool nearestKey(const core::Layer& layer, bool forward, double& out,
+                                  bool& onKey) const;
+
     void paintRhythm(QPainter& p) const;
     void paintPlayhead(QPainter& p) const;
     static void paintDiamond(QPainter& p, double cx, double cy, bool selected);
