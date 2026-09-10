@@ -95,3 +95,22 @@ add_executable(test_timelinerows test_timelinerows.cpp)
 target_link_libraries(test_timelinerows PRIVATE ruby::ui ruby_warnings)
 add_test(NAME test_timelinerows COMMAND test_timelinerows)
 set_tests_properties(test_timelinerows PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(test_align test_align.cpp)
+target_link_libraries(test_align PRIVATE ruby::core ruby_warnings)
+add_test(NAME test_align COMMAND test_align)
+
+add_executable(test_alignpanel test_alignpanel.cpp)
+target_link_libraries(test_alignpanel PRIVATE ruby::ui ruby_warnings)
+add_test(NAME test_alignpanel COMMAND test_alignpanel)
+set_tests_properties(test_alignpanel PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(test_layerswitches test_layerswitches.cpp)
+target_link_libraries(test_layerswitches PRIVATE ruby::ui ruby_warnings)
+add_test(NAME test_layerswitches COMMAND test_layerswitches)
+set_tests_properties(test_layerswitches PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(test_panelframe test_panelframe.cpp)
+target_link_libraries(test_panelframe PRIVATE ruby::ui ruby_warnings)
+add_test(NAME test_panelframe COMMAND test_panelframe)
+set_tests_properties(test_panelframe PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

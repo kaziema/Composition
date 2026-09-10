@@ -2,6 +2,8 @@
 
 #include <QAction>
 #include <QLabel>
+#include <QPushButton>
+#include <QRadioButton>
 #include <QMenu>
 #include <QDateTime>
 #include <QDir>
@@ -16,11 +18,14 @@
 #include <QTimer>
 #include <QPainter>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QVBoxLayout>
 
 #include "ruby/ui/DemoProject.h"
 #include "ruby/ui/EditorToolBar.h"
+#include "ruby/ui/EffectsPanel.h"
+#include "ruby/ui/TextRaster.h"
 #include "ruby/audio/AudioOutput.h"
 #include "ruby/beat/Detector.h"
 #include "ruby/media/AudioDecoder.h"
@@ -380,6 +385,173 @@ void MainWindow::redo() {
     afterDocumentReplaced();
     markDirty();
     refreshUndoActions();
+}
+
+core::SizeOf MainWindow::layerSizes() {
+    return [this](const core::Layer& layer) -> core::LayerSize {
+        const core::Composition* comp = activeComposition();
+        const double compW = comp != nullptr ? static_cast<double>(comp->width) : 0.0;
+        const double compH = comp != nullptr ? static_cast<double>(comp->height) : 0.0;
+
+        switch (layer.kind) {
+            case core::LayerKind::Solid:
+                // Zero means "match the composition", the same rule the compositor uses.
+                return {layer.solidWidth > 0 ? static_cast<double>(layer.solidWidth) : compW,
+                        layer.solidHeight > 0 ? static_cast<double>(layer.solidHeight)
+                                              : compH};
+            case core::LayerKind::Precomp:
+                if (layer.source.has_value()) {
+                    if (const core::Composition* src = project_.find(*layer.source);
+                        src != nullptr) {
+                        return {static_cast<double>(src->width),
+                                static_cast<double>(src->height)};
+                    }
+                }
+                return {compW, compH};
+            case core::LayerKind::Text: {
+                // Measured from the laid-out glyphs rather than rasterised. The ink is the
+                // layer: a title is as wide as the word, not as wide as the frame, and
+                // centring it on the frame's width would centre the wrong thing.
+                QRectF ink;
+                for (const LaidOutGlyph& g : layOutText(layer, 1.0)) {
+                    ink = ink.isNull() ? g.bounds : ink.united(g.bounds);
+                }
+                if (ink.isNull() || ink.width() <= 0.0 || ink.height() <= 0.0) {
+                    return {0.0, 0.0};
+                }
+                return {ink.width(), ink.height()};
+            }
+            case core::LayerKind::Audio:
+                return {0.0, 0.0};  // no picture, so no box
+            case core::LayerKind::Footage:
+            default:
+                if (layer.media.has_value()) {
+                    if (const core::MediaItem* item = project_.findMedia(*layer.media);
+                        item != nullptr && item->width > 0 && item->height > 0) {
+                        return {static_cast<double>(item->width),
+                                static_cast<double>(item->height)};
+                    }
+                }
+                return {compW, compH};
+        }
+    };
+}
+
+void MainWindow::updateAlignAvailability() {
+    if (alignPanel_ == nullptr) {
+        return;
+    }
+    const core::Layer* layer = selectedLayer();
+    // A locked layer is not alignable for the same reason it is not draggable, and an
+    // audio layer has no picture to line up. Both would otherwise be a button that looks
+    // live and does nothing when pressed.
+    alignPanel_->setAlignable(layer != nullptr && !layer->locked &&
+                              layer->kind != core::LayerKind::Audio);
+}
+
+void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
+    core::Composition* comp = activeComposition();
+    core::Layer* layer = selectedLayer();
+    if (comp == nullptr || layer == nullptr || layer->locked) {
+        return;
+    }
+    core::Property* position = layer->find("position");
+    if (position == nullptr) {
+        return;
+    }
+
+    const double compW = static_cast<double>(comp->width);
+    const double compH = static_cast<double>(comp->height);
+    const core::TimeContext ctx = comp->timeContext();
+    const double seconds = playback_ != nullptr ? playback_->time() : 0.0;
+    const core::SizeOf sizes = layerSizes();
+
+    const core::Bounds box =
+        core::layerBounds(*comp, *layer, seconds, ctx, compW, compH, sizes);
+    if (box.width() <= 0.0 && box.height() <= 0.0) {
+        return;  // nothing with an edge to align
+    }
+
+    // How far the layer has to travel, in composition pixels.
+    double dx = 0.0;
+    double dy = 0.0;
+    switch (edge) {
+        case AlignPanel::Align::Left:    dx = -box.left; break;
+        case AlignPanel::Align::HCenter: dx = compW / 2.0 - box.centerX(); break;
+        case AlignPanel::Align::Right:   dx = compW - box.right; break;
+        case AlignPanel::Align::Top:     dy = -box.top; break;
+        case AlignPanel::Align::VCenter: dy = compH / 2.0 - box.centerY(); break;
+        case AlignPanel::Align::Bottom:  dy = compH - box.bottom; break;
+    }
+
+    // Position is stored in the PARENT's space, so a distance in composition pixels is
+    // not the number to add to it. Ask the parent chain what that distance is worth: for
+    // an unparented layer this is the identity and dx stays dx, and for a layer parented
+    // to something rotated or scaled it is the difference between landing on the edge and
+    // landing near it.
+    if (layer->parent.has_value()) {
+        if (const core::Layer* owner = comp->find(*layer->parent); owner != nullptr) {
+            const core::Transform2D toComp = core::resolvedTransform(
+                *comp, *owner, seconds, ctx, compW, compH, sizes);
+            const core::Transform2D back = toComp.inverse();
+            // The linear part only. A delta is a direction and a distance, not a point,
+            // so the translation must not come along.
+            const double ux = back.applyX(dx, dy) - back.applyX(0.0, 0.0);
+            const double uy = back.applyY(dx, dy) - back.applyY(0.0, 0.0);
+            dx = ux;
+            dy = uy;
+        }
+    }
+
+    // Back into the percentages Position is stored in.
+    const double px = compW > 0.0 ? dx / compW * 100.0 : 0.0;
+    const double py = compH > 0.0 ? dy / compH * 100.0 : 0.0;
+    if (std::fabs(px) < 1e-9 && std::fabs(py) < 1e-9) {
+        return;  // already there; do not put a no-op on the undo stack
+    }
+
+    // An animated Position moves as a whole. Aligning is a statement about where the
+    // layer sits, and setting one key at the playhead would align this frame by breaking
+    // every other one: the move you asked for plus a move you did not.
+    const auto shift = [px, py](core::Property& prop) {
+        if (prop.animated()) {
+            for (core::Keyframe& k : prop.keys) {
+                k.value = core::Value::vec2(k.value.c[0] + px, k.value.c[1] + py);
+            }
+        } else {
+            prop.staticValue =
+                core::Value::vec2(prop.staticValue.c[0] + px, prop.staticValue.c[1] + py);
+        }
+    };
+
+    // Tried on a copy first, because writing to Position does not always move the layer.
+    // An expression that returns an absolute value ignores what is underneath it, so the
+    // layer would stay put while the file was marked dirty and an undo entry appeared for
+    // a move that never happened. Rather than special-casing expressions, ask the only
+    // question that matters: does the box end up somewhere else?
+    core::Layer trial = *layer;
+    if (core::Property* trialPos = trial.find("position"); trialPos != nullptr) {
+        shift(*trialPos);
+    }
+    const core::Bounds moved =
+        core::layerBounds(*comp, trial, seconds, ctx, compW, compH, sizes);
+    if (std::fabs(moved.left - box.left) < 1e-6 &&
+        std::fabs(moved.top - box.top) < 1e-6) {
+        return;  // Position is not what decides where this layer is
+    }
+
+    recordEdit(QStringLiteral("Align Layer"));
+    shift(*position);
+
+    // The inspector reads Position too, so it is refreshed along with the timeline and
+    // the viewer. An align that moves the layer on screen while the Position field still
+    // reads the old number looks like two different apps.
+    timelinePanel_->setComposition(comp);
+    inspector_->setSelectedLayer(layer->id);
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
 }
 
 core::Layer* MainWindow::selectedLayer() {
@@ -1111,6 +1283,217 @@ void MainWindow::removeEffect(int index) {
     markDirty();
 }
 
+// Beat Analyzer. Two lanes, and the choice is the user's rather than something guessed
+// at, because the two are not two settings of one thing.
+//
+// A beat grid is periodic and quantisable; vocal onsets are an aperiodic list where "snap
+// to the half beat" is meaningless. Measured on a real edit, cuts landed on syllables at
+// 29ms median while a fitted beat grid matched the audio worse than a random offset. Which
+// one a track wants is a fact about the music, and only the person listening to it knows.
+void MainWindow::runBeatAnalyzer() {
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        return;
+    }
+
+    // The track to analyse: the first layer that is an audio layer and decoded. The same
+    // rule loadAudio uses to pick a rhythm source, so the two cannot disagree.
+    const media::AudioBuffer* track = nullptr;
+    for (const core::Layer& layer : comp->layers) {
+        if (layer.kind != core::LayerKind::Audio || !layer.media.has_value()) {
+            continue;
+        }
+        if (const auto found = audio_.find(*layer.media); found != audio_.end()) {
+            track = &found->second;
+            break;
+        }
+    }
+    if (track == nullptr) {
+        statusBar()->showMessage(
+            QStringLiteral("Beat Analyzer needs an audio layer in this composition"), 5000);
+        return;
+    }
+
+    auto detector = beat::createDetector();
+    if (detector == nullptr || !detector->available()) {
+        // Says so plainly rather than running and finding nothing, which would look like
+        // the track had no beats in it.
+        QMessageBox::information(
+            this, QStringLiteral("Beat Analyzer"),
+            QStringLiteral("This build has no rhythm analysis.\n\n%1")
+                .arg(QString::fromUtf8(detector != nullptr ? detector->description()
+                                                           : "No detector.")));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Beat Analyzer"));
+    dialog.setModal(true);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* beats = new QRadioButton(QStringLiteral("Beats"), &dialog);
+    auto* vocals = new QRadioButton(QStringLiteral("Vocals"), &dialog);
+    beats->setChecked(true);
+    layout->addWidget(beats);
+    layout->addWidget(vocals);
+
+    auto* help = new QLabel(
+        QStringLiteral("Beats finds a periodic grid you can quantise to. Vocals finds "
+                       "syllable onsets, which is what to use when the cuts follow the "
+                       "words rather than the drums."),
+        &dialog);
+    help->setWordWrap(true);
+    help->setMaximumWidth(360);
+    help->setStyleSheet(QStringLiteral("color: %1;").arg(theme::kTextDim.name()));
+    layout->addWidget(help);
+
+    auto* buttons =
+        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Analyse"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const beat::Lane lane = vocals->isChecked() ? beat::Lane::Vocal : beat::Lane::Beat;
+
+    recordEdit(QStringLiteral("Analyse Audio"));
+    const beat::Result result = detector->analyze(*track, lane);
+
+    // setLane preserves markers the user placed by hand, which is the whole point of the
+    // lanes being separate: re-analysing must not throw away someone's corrections.
+    comp->rhythm.setLane(lane == beat::Lane::Vocal ? core::MarkerLane::Vocal
+                                                   : core::MarkerLane::Beat,
+                         result.markers);
+
+    rhythmNote_ = QStringLiteral("%1 %2")
+                      .arg(static_cast<int>(result.markers.size()))
+                      .arg(lane == beat::Lane::Vocal ? QStringLiteral("vocal onsets")
+                                                     : QStringLiteral("beats"));
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(comp);
+    }
+    updateStatus();
+    markDirty();
+    statusBar()->showMessage(rhythmNote_, 5000);
+}
+
+// A composition that matches a clip: its size, its frame rate, its length, its name.
+//
+// The dialog route makes you read those four numbers off the clip and type them back in,
+// which is a transcription exercise the app can do perfectly and a person cannot.
+void MainWindow::compositionFromMedia(core::MediaId media) {
+    const core::MediaItem* item = project_.findMedia(media);
+    if (item == nullptr) {
+        return;
+    }
+    recordEdit(QStringLiteral("New Composition from %1")
+                   .arg(QString::fromStdString(item->name)));
+
+    // Audio has no frame to match, so it falls back to the composition defaults rather
+    // than making a 0x0 comp. Its duration is still worth taking.
+    const int width = item->width > 0 ? item->width : 1080;
+    const int height = item->height > 0 ? item->height : 1920;
+    const double fps = item->fps > 0.0 ? item->fps : 30.0;
+    const double duration = item->duration > 0.0 ? item->duration : 15.0;
+
+    core::Composition& comp =
+        project_.addComposition(item->name, width, height, fps, duration);
+    core::Layer& layer = project_.addLayer(comp, item->name,
+                                           item->isVideo() ? core::LayerKind::Footage
+                                                           : core::LayerKind::Audio);
+    layer.media = media;
+    layer.inPoint = core::TimeValue::seconds(0.0);
+    layer.outPoint = core::TimeValue::seconds(duration);
+
+    setActiveComposition(comp.id);
+    projectPanel_->refresh();
+    markDirty();
+    statusBar()->showMessage(
+        QStringLiteral("Created %1  ·  %2x%3  ·  %4 fps")
+            .arg(QString::fromStdString(item->name)).arg(width).arg(height)
+            .arg(fps, 0, 'g', 5),
+        5000);
+}
+
+void MainWindow::deleteProjectItem(bool isComposition, std::uint64_t id) {
+    if (isComposition) {
+        // Deleting a composition is a bigger question than this footer button should
+        // answer on its own: it may be nested inside another one, and there is no
+        // precomp-reference cleanup yet. Refused out loud rather than half-done.
+        statusBar()->showMessage(
+            QStringLiteral("Deleting compositions is not supported yet"), 4000);
+        return;
+    }
+    const auto media = static_cast<core::MediaId>(id);
+    const core::MediaItem* item = project_.findMedia(media);
+    if (item == nullptr) {
+        return;
+    }
+    const std::size_t used = project_.usageCount(media);
+
+    // Asked before, not reported after. Removing a clip that six layers depend on is a
+    // thing you want to know about while you can still say no.
+    if (used > 0) {
+        const auto answer = QMessageBox::question(
+            this, QStringLiteral("Remove media"),
+            QStringLiteral("%1 is used by %2 layer%3.\n\nRemoving it leaves those layers "
+                           "in place with no source. Continue?")
+                .arg(QString::fromStdString(item->name))
+                .arg(used)
+                .arg(used == 1 ? QString() : QStringLiteral("s")),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+    }
+
+    recordEdit(QStringLiteral("Remove %1").arg(QString::fromStdString(item->name)));
+    project_.removeMedia(media);
+
+    projectPanel_->refresh();
+    if (timelinePanel_ != nullptr) {
+        timelinePanel_->setComposition(activeComposition());
+    }
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    updateStatus();
+    markDirty();
+}
+
+// A frame with no tabs left has nothing to show, so it goes and the rest take the space.
+//
+// Recomputed from scratch rather than toggled per event: a tab move is a removal followed
+// by an insertion, and the state in between is one where the source looks empty. Reacting
+// to each half separately would flash a panel out and back in.
+void MainWindow::updatePanelVisibility() {
+    if (viewerTabs_ != nullptr) {
+        viewerTabs_->setVisible(viewerTabs_->tabCount() > 0);
+    }
+    if (inspectorTabs_ != nullptr) {
+        inspectorTabs_->setVisible(inspectorTabs_->tabCount() > 0);
+    }
+
+    // The left dock is two frames stacked behind the toolbar's Project and fx buttons, so
+    // an empty one is not a gap in the layout, it is a button that leads nowhere. The dock
+    // itself only disappears once both are empty.
+    if (leftDock_ != nullptr) {
+        const int project = projectTabs_ != nullptr ? projectTabs_->tabCount() : 0;
+        const int effects = effectsTabs_ != nullptr ? effectsTabs_->tabCount() : 0;
+        leftDock_->setVisible(project > 0 || effects > 0);
+
+        // Do not leave the dock parked on an empty half when the other one has something.
+        if (project == 0 && effects > 0) {
+            leftDock_->setCurrentWidget(effectsTabs_);
+        } else if (effects == 0 && project > 0) {
+            leftDock_->setCurrentWidget(projectTabs_);
+        }
+    }
+}
+
 void MainWindow::deselectAll() {
     if (timelinePanel_ != nullptr) {
         timelinePanel_->clearSelection();
@@ -1376,16 +1759,25 @@ void MainWindow::refreshCompositionTabs() {
     }
     timelineTabs_->setTabs(names);
 
-    // The viewer names the composition it is showing, and it was doing so exactly once,
-    // at construction. Open a project and it kept announcing the demo composition that
-    // had been replaced, which is the sort of thing you only notice in a screenshot.
-    if (viewerTabs_ != nullptr) {
-        const core::Composition* active = activeComposition();
-        viewerTabs_->setTabs({QStringLiteral("Composition: %1")
-                                  .arg(active != nullptr
-                                           ? QString::fromStdString(active->name)
-                                           : QStringLiteral("none")),
-                              QStringLiteral("Footage"), QStringLiteral("Layer")});
+    // The viewer's tab names the composition it is showing. RENAMED, not replaced.
+    //
+    // This used to call setTabs with all three viewer labels, which was fine while tabs
+    // could not move and wrong the moment they could: dragging Footage out of the viewer
+    // and then switching compositions put the label back with no page behind it, so the
+    // tab existed in two places at once and one of them did nothing.
+    //
+    // The composition page is found wherever it now lives rather than assumed to still be
+    // in the viewer, because that is exactly the assumption that broke.
+    if (viewerPage_ != nullptr) {
+        int index = -1;
+        if (PanelFrame* home = PanelFrame::frameHolding(viewerPage_, &index);
+            home != nullptr) {
+            const core::Composition* active = activeComposition();
+            home->setTabLabel(index, QStringLiteral("Composition: %1")
+                                         .arg(active != nullptr
+                                                  ? QString::fromStdString(active->name)
+                                                  : QStringLiteral("none")));
+        }
     }
 }
 
@@ -1884,18 +2276,58 @@ QWidget* MainWindow::buildBody() {
     bodySplit_->setHandleWidth(metrics::kGutter);
     bodySplit_->setChildrenCollapsible(false);
 
-    auto* project = new PanelFrame({QStringLiteral("Project"),
+    projectTabs_ = new PanelFrame({QStringLiteral("Project"),
                                     QStringLiteral("Pooled Media"),
-                                    QStringLiteral("Comp Map"),
-                                    QStringLiteral("Media")});
+                                    QStringLiteral("Comp Map")});
     projectPanel_ = new ProjectPanel;
     projectPanel_->setProject(&project_);
     pooledPanel_ = new PooledMediaPanel;
     pooledPanel_->setPool(&pool_);
-    project->addPage(projectPanel_);
-    project->addPage(pooledPanel_);
-    project->addPage(makePlaceholder(QStringLiteral("composition map")));
-    project->addPage(makePlaceholder(QStringLiteral("media browser")));
+    projectTabs_->addPage(projectPanel_);
+    projectTabs_->addPage(pooledPanel_);
+    projectTabs_->addPage(makePlaceholder(QStringLiteral("composition map")));
+
+    // Effects and presets, one panel with three tabs. Presets and colour correction have
+    // nothing behind them yet and say so rather than being blank.
+    effectsTabs_ = new PanelFrame({QStringLiteral("Effects"), QStringLiteral("Presets"),
+                                    QStringLiteral("CC")});
+    // Three pages, each fixed to one list, rather than one panel plus two placeholders.
+    //
+    // The old shape had a currentChanged handler calling effectsPanel_->setTab(), which
+    // did nothing visible: switching tabs switched the frame to a placeholder page, so
+    // the panel whose tab had changed was not the one on screen. Dead code that looked
+    // load-bearing.
+    //
+    // Three pages also means the tabs can be dragged apart and still work, which is the
+    // whole point of the tab system, and each one shows its own empty state rather than a
+    // generic placeholder.
+    effectsPanel_ = new EffectsPanel;
+    effectsPanel_->setTab(EffectsPanel::Tab::Effects);
+
+    auto* presetsPanel = new EffectsPanel;
+    presetsPanel->setTab(EffectsPanel::Tab::Presets);
+
+    auto* ccPanel = new EffectsPanel;
+    ccPanel->setTab(EffectsPanel::Tab::ColorCorrection);
+
+    effectsTabs_->addPage(effectsPanel_);
+    effectsTabs_->addPage(presetsPanel);
+    effectsTabs_->addPage(ccPanel);
+
+    // A stack, not two docks. The toolbar's Project and fx buttons choose which of these
+    // the left column shows: they are the same reach for the same space, and having both
+    // visible at once would halve a column that is already the narrowest thing on screen.
+    leftDock_ = new QStackedWidget;
+    leftDock_->addWidget(projectTabs_);
+    leftDock_->addWidget(effectsTabs_);
+
+    // All three, because any of them can end up holding effects once presets exist.
+    for (EffectsPanel* panel : {effectsPanel_, presetsPanel, ccPanel}) {
+        connect(panel, &EffectsPanel::effectActivated, this,
+                [this](const std::string& id) { applyEffect(id); });
+    }
+
+
 
     core::Composition& comp = project_.compositions().front();
     activeComp_ = comp.id;
@@ -1903,21 +2335,34 @@ QWidget* MainWindow::buildBody() {
 
     viewerTabs_ = new PanelFrame({QStringLiteral("Composition: %1").arg(compName),
                                   QStringLiteral("Footage"), QStringLiteral("Layer")});
-    viewerTabs_->addPage(makeViewerPage(&viewerTimecode_, &viewport_));
+    viewerPage_ = makeViewerPage(&viewerTimecode_, &viewport_);
+    viewerTabs_->addPage(viewerPage_);
     viewerTabs_->addPage(makePlaceholder(QStringLiteral("footage viewer")));
     viewerTabs_->addPage(makePlaceholder(QStringLiteral("layer viewer")));
 
     // Transform and the effect stack share one inspector rather than letting two
     // panels fight for the same dock.
-    auto* inspector = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
+    inspectorTabs_ = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
     inspector_ = new InspectorView;
     inspector_->setComposition(&comp);
-    inspector->addPage(inspector_);
-    inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
+    inspectorTabs_->addPage(inspector_);
+    alignPanel_ = new AlignPanel;
+    inspectorTabs_->addPage(alignPanel_);
+    connect(alignPanel_, &AlignPanel::alignRequested, this,
+            &MainWindow::alignSelectedLayer);
+    updateAlignAvailability();
 
-    bodySplit_->addWidget(project);
+    bodySplit_->addWidget(leftDock_);
     bodySplit_->addWidget(viewerTabs_);
-    bodySplit_->addWidget(inspector);
+    bodySplit_->addWidget(inspectorTabs_);
+
+    // Every frame that can gain or lose a tab reports it, and visibility is worked out
+    // from the whole layout each time rather than from whichever frame spoke.
+    for (PanelFrame* frame :
+         {projectTabs_, effectsTabs_, viewerTabs_, inspectorTabs_}) {
+        connect(frame, &PanelFrame::tabsChanged, this,
+                &MainWindow::updatePanelVisibility);
+    }
     bodySplit_->setStretchFactor(1, 1);
     bodySplit_->setSizes({metrics::kProjectPanelW, 900, metrics::kInspectorPanelW});
 
@@ -1928,6 +2373,10 @@ QWidget* MainWindow::buildBody() {
 
     auto* timeline = new PanelFrame({compName});
     timelineTabs_ = timeline;
+    // The timeline's tabs are open compositions over one shared page, not panels. They
+    // name something inside the panel rather than naming panels, so they do not move and
+    // the strip does not accept anything either.
+    timeline->setTabsMovable(false);
     auto* timelinePanel = new TimelinePanel;
     timelinePanel_ = timelinePanel;
     timelinePanel->setComposition(&comp);
@@ -1947,7 +2396,10 @@ QWidget* MainWindow::buildBody() {
     }
 
     connect(timelinePanel, &TimelinePanel::selectionChanged, inspector_,
-            [this](core::LayerId id) { inspector_->setSelectedLayer(id); });
+            [this](core::LayerId id) {
+                inspector_->setSelectedLayer(id);
+                updateAlignAvailability();
+            });
     connect(timelinePanel, &TimelinePanel::currentTimeChanged, inspector_,
             [this](double seconds) { inspector_->setCurrentTime(seconds); });
     inspector_->setSelectedLayer(comp.layers.empty()
@@ -2002,6 +2454,9 @@ QWidget* MainWindow::buildBody() {
         if (viewport_ != nullptr) {
             viewport_->update();
         }
+        // Locking the selected layer has to grey the align buttons out too, and locking
+        // arrives here rather than through selectionChanged.
+        updateAlignAvailability();
         // Moving or trimming a bar changes when its sound plays. The mixer holds its own
         // copy of those times, so it has to be told on every step of the drag, not at the
         // end: a drag you are listening to should stay in sync while you do it.
@@ -2022,6 +2477,38 @@ QWidget* MainWindow::buildBody() {
     connect(toolBar_, &EditorToolBar::snappingToggled, timelinePanel,
             &TimelinePanel::setSnapping);
 
+    connect(toolBar_, &EditorToolBar::featureTriggered, this, [this](int index) {
+        if (index == 0) {
+            runBeatAnalyzer();
+        } else {
+            // Audio Studio is specified but not built. See NOTEBOOK F6.
+            statusBar()->showMessage(
+                QStringLiteral("Audio Studio is not built yet"), 4000);
+        }
+    });
+
+    // Workspaces collapse to a menu rather than a permanent row of names. Ruby has one
+    // layout; the row that After Effects spends on workspace names is worth more spent on
+    // the modes that are specific to this app.
+    connect(toolBar_, &EditorToolBar::workspaceMenuRequested, this,
+            [this](const QPoint& at) {
+                QMenu menu(this);
+                QAction* def = menu.addAction(QStringLiteral("Default"));
+                def->setCheckable(true);
+                def->setChecked(true);
+                menu.addSeparator();
+                addPending(&menu, {QStringLiteral("Save Workspace..."),
+                                   QStringLiteral("Reset Workspace")});
+                menu.exec(at);
+            });
+
+    // The two panel buttons choose what the left column shows.
+    connect(toolBar_, &EditorToolBar::panelSelected, this, [this](int index) {
+        if (leftDock_ != nullptr) {
+            leftDock_->setCurrentIndex(index);
+        }
+    });
+
     connect(this, &MainWindow::mediaImported, projectPanel_, &ProjectPanel::refresh);
     connect(projectPanel_, &ProjectPanel::compositionActivated, this,
             &MainWindow::setActiveComposition);
@@ -2033,10 +2520,28 @@ QWidget* MainWindow::buildBody() {
     });
     connect(projectPanel_, &ProjectPanel::mediaActivated, this,
             &MainWindow::addMediaToComposition);
+    connect(projectPanel_, &ProjectPanel::newCompositionRequested, this,
+            &MainWindow::newComposition);
+    connect(projectPanel_, &ProjectPanel::compositionFromMediaRequested, this,
+            &MainWindow::compositionFromMedia);
+    connect(projectPanel_, &ProjectPanel::deleteRequested, this,
+            &MainWindow::deleteProjectItem);
     connect(timelinePanel, &TimelinePanel::mediaDropped, this,
             &MainWindow::dropMediaIntoComposition);
     connect(timelinePanel, &TimelinePanel::layerContextMenuRequested, this,
             &MainWindow::showLayerContextMenu);
+    // Dropped onto a specific layer, which is not necessarily the selected one, so it
+    // selects that layer first and then applies. Applying to whatever happened to be
+    // selected while the user is pointing at something else is the same mistake the
+    // right-click menu avoids.
+    connect(timelinePanel, &TimelinePanel::effectDropped, this,
+            [this](core::LayerId layer, const std::string& id) {
+                if (timelinePanel_ != nullptr) {
+                    timelinePanel_->selectLayer(layer);
+                }
+                applyEffect(id);
+            });
+
     connect(timelinePanel, &TimelinePanel::effectContextMenuRequested, this,
             [this](int index, const QPoint& at) {
                 QMenu menu(this);

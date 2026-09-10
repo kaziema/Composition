@@ -1,17 +1,49 @@
 #include "ruby/ui/PanelFrame.h"
 
+#include <QApplication>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFontMetrics>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QStackedWidget>
 #include <QStringList>
+#include <QToolTip>
 #include <QVBoxLayout>
+
+#include <map>
 
 #include "ruby/ui/Theme.h"
 
 namespace ruby::ui {
 
 using namespace theme;
+
+namespace {
+
+constexpr const char* kTabMime = "application/x-ruby-tab";
+
+// Live frames, by id.
+//
+// A drag has to name its source frame, and the obvious way is to put the pointer in the
+// mime data. That works right up until the source is destroyed mid-drag, and then it is a
+// crash nobody can reproduce. An id looked up in a registry of frames that are definitely
+// alive cannot dangle: the worst case is a lookup that finds nothing, which is a drop that
+// does nothing.
+std::map<quintptr, PanelFrame*>& registry() {
+    static std::map<quintptr, PanelFrame*> frames;
+    return frames;
+}
+
+quintptr nextFrameId() {
+    static quintptr next = 1;
+    return next++;
+}
+
+}  // namespace
 
 // --- Tab strip ---------------------------------------------------------------
 
@@ -21,6 +53,7 @@ public:
         : QWidget(parent), labels_(labels) {
         setFixedHeight(metrics::kTabStripH);
         setMouseTracking(true);
+        setAcceptDrops(true);
         QFont f = font();
         f.setPixelSize(type::kTabLabel);
         setFont(f);
@@ -28,6 +61,9 @@ public:
     }
 
     [[nodiscard]] int current() const { return current_; }
+    [[nodiscard]] int count() const { return static_cast<int>(labels_.size()); }
+    [[nodiscard]] QString labelAt(int i) const { return labels_.value(i); }
+    [[nodiscard]] QRect rectAt(int i) const { return tabRects_.value(i); }
 
     void setLabels(const QStringList& labels) {
         labels_ = labels;
@@ -46,7 +82,38 @@ public:
         update();
     }
 
+    void setLabelAt(int index, const QString& label) {
+        if (index < 0 || index >= labels_.size()) {
+            return;
+        }
+        labels_[index] = label;
+        layoutTabs();
+        update();
+    }
+
+    void insertLabel(int index, const QString& label) {
+        labels_.insert(std::clamp(index, 0, static_cast<int>(labels_.size())), label);
+        layoutTabs();
+        update();
+    }
+
+    QString removeLabel(int index) {
+        if (index < 0 || index >= labels_.size()) {
+            return {};
+        }
+        const QString gone = labels_.takeAt(index);
+        if (current_ >= labels_.size()) {
+            current_ = labels_.isEmpty() ? 0 : static_cast<int>(labels_.size()) - 1;
+        }
+        layoutTabs();
+        update();
+        return gone;
+    }
+
+    quintptr frameId = 0;
+    bool movable = true;
     std::function<void(int)> onActivate;
+    std::function<void(quintptr, int, int)> onDropTab;  // source id, source tab, at
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -73,7 +140,18 @@ protected:
 
             p.setPen(active ? kTabActiveText : kTabInactiveText);
             const QRect textRect = r.adjusted(kPadX + kDotW, 0, -kPadX, 0);
-            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, labels_.at(i));
+            p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                       QFontMetrics(p.font()).elidedText(labels_.at(i), Qt::ElideRight,
+                                                         textRect.width()));
+        }
+
+        // Where a dragged tab would land. One line, at the seam it would be inserted at,
+        // rather than a grid of zones asking you to pick a side of the panel.
+        if (dropAt_ >= 0) {
+            const int x = dropAt_ < tabRects_.size() ? tabRects_.at(dropAt_).left()
+                          : tabRects_.isEmpty()      ? 0
+                                                     : tabRects_.last().right();
+            p.fillRect(QRect(x - 1, 2, 2, height() - 6), kAccent);
         }
 
         // Hard rule under the strip.
@@ -82,7 +160,10 @@ protected:
     }
 
     void mousePressEvent(QMouseEvent* e) override {
-        const int hit = tabAt(e->position().toPoint());
+        pressAt_ = e->position().toPoint();
+        pressedTab_ = tabAt(pressAt_);
+
+        const int hit = pressedTab_;
         if (hit >= 0 && hit != current_) {
             setCurrent(hit);
             if (onActivate) {
@@ -92,12 +173,22 @@ protected:
     }
 
     void mouseMoveEvent(QMouseEvent* e) override {
-        const int hit = tabAt(e->position().toPoint());
+        const QPoint pos = e->position().toPoint();
+
+        if (movable && pressedTab_ >= 0 && (e->buttons() & Qt::LeftButton) != 0 &&
+            (pos - pressAt_).manhattanLength() >= QApplication::startDragDistance()) {
+            startDrag(pressedTab_);
+            return;
+        }
+
+        const int hit = tabAt(pos);
         if (hit != hover_) {
             hover_ = hit;
             update();
         }
     }
+
+    void mouseReleaseEvent(QMouseEvent*) override { pressedTab_ = -1; }
 
     void leaveEvent(QEvent*) override {
         if (hover_ != -1) {
@@ -106,16 +197,186 @@ protected:
         }
     }
 
+    void dragEnterEvent(QDragEnterEvent* e) override {
+        if (e->mimeData() != nullptr && e->mimeData()->hasFormat(kTabMime)) {
+            e->acceptProposedAction();
+        }
+    }
+
+    void dragMoveEvent(QDragMoveEvent* e) override {
+        if (e->mimeData() == nullptr || !e->mimeData()->hasFormat(kTabMime)) {
+            return;
+        }
+        const int at = seamAt(e->position().toPoint());
+        if (at != dropAt_) {
+            dropAt_ = at;
+            update();
+        }
+        e->acceptProposedAction();
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent*) override {
+        dropAt_ = -1;
+        update();
+    }
+
+    // How much room the tabs have is now part of how wide they are, so the strip has to
+    // lay them out again when the panel is resized. Without this the fit is only correct
+    // until the first time the window changes size.
+    void resizeEvent(QResizeEvent* e) override {
+        QWidget::resizeEvent(e);
+        layoutTabs();
+        update();
+    }
+
+    // A squeezed tab reads "Pooled M…", and the only other place the full name appears is
+    // the panel it opens. Say it on hover rather than making someone click to find out.
+    bool event(QEvent* e) override {
+        if (e->type() != QEvent::ToolTip) {
+            return QWidget::event(e);
+        }
+        auto* help = static_cast<QHelpEvent*>(e);
+        const int hit = tabAt(help->pos());
+        const QString label = labels_.value(hit);
+        const QRect r = hit >= 0 ? tabRects_.at(hit) : QRect();
+        const int room = r.width() - (kPadX + kDotW) - kPadX;
+        const bool clipped =
+            hit >= 0 && QFontMetrics(font()).horizontalAdvance(label) > room;
+        QToolTip::showText(help->globalPos(), clipped ? label : QString(), this);
+        e->accept();
+        return true;
+    }
+
+    void dropEvent(QDropEvent* e) override {
+        const int at = dropAt_;
+        dropAt_ = -1;
+        update();
+        if (e->mimeData() == nullptr || !e->mimeData()->hasFormat(kTabMime) || at < 0) {
+            return;
+        }
+        const QByteArray payload = e->mimeData()->data(kTabMime);
+        const QList<QByteArray> parts = payload.split(':');
+        if (parts.size() != 2) {
+            return;
+        }
+        e->acceptProposedAction();
+        if (onDropTab) {
+            onDropTab(static_cast<quintptr>(parts.at(0).toULongLong()),
+                      parts.at(1).toInt(), at);
+        }
+    }
+
 private:
     static constexpr int kPadX = 9;
+    // The narrowest a tab is allowed to get before the others start giving up width:
+    // the dot, both pads, and enough room for a couple of characters and the ellipsis.
+    static constexpr int kMinTabW = 46;
     static constexpr int kDotW = 10;
 
+    void startDrag(int index) {
+        pressedTab_ = -1;
+        if (index < 0 || index >= labels_.size()) {
+            return;
+        }
+        auto* mime = new QMimeData;
+        mime->setData(kTabMime, QByteArray::number(static_cast<qulonglong>(frameId)) +
+                                    ':' + QByteArray::number(index));
+
+        // The tab itself under the cursor, drawn the way it looks in the strip. A drag
+        // that shows you what you picked up is a drag you can trust before you release.
+        const QRect r = tabRects_.at(index);
+        QPixmap badge(r.size());
+        badge.fill(kTabActiveBg);
+        {
+            QPainter bp(&badge);
+            bp.setFont(font());
+            bp.setRenderHint(QPainter::Antialiasing, true);
+            bp.setPen(Qt::NoPen);
+            bp.setBrush(kTabDotActive);
+            bp.drawEllipse(QPointF(kPadX + 2.0, badge.height() / 2.0 + 0.5), 2.0, 2.0);
+            bp.setRenderHint(QPainter::Antialiasing, false);
+            bp.setPen(kTabActiveText);
+            const QRect textRect(kPadX + kDotW, 0, badge.width() - kPadX * 2 - kDotW,
+                                 badge.height());
+            bp.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                        QFontMetrics(bp.font())
+                            .elidedText(labels_.at(index), Qt::ElideRight,
+                                        textRect.width()));
+        }
+
+        auto* drag = new QDrag(this);
+        drag->setMimeData(mime);
+        drag->setPixmap(badge);
+        drag->setHotSpot(QPoint(pressAt_.x() - r.left(), badge.height() / 2));
+        drag->exec(Qt::MoveAction);
+    }
+
+    // Tabs are laid out at their natural width until they stop fitting, and then they
+    // share out the strip instead.
+    //
+    // They used to keep their natural width whatever happened, which meant a tab dragged
+    // into a full panel was painted past the right edge: still there, still in the stack,
+    // but invisible and impossible to click. A tab you cannot get back is a tab you lost.
     void layoutTabs() {
         const QFontMetrics fm(font());
         tabRects_.clear();
-        int x = 0;
+        if (labels_.isEmpty()) {
+            return;
+        }
+
+        QList<int> natural;
+        natural.reserve(labels_.size());
+        int total = 0;
         for (const QString& label : labels_) {
             const int w = kPadX + kDotW + fm.horizontalAdvance(label) + kPadX;
+            natural.append(w);
+            total += w;
+        }
+
+        const int avail = std::max(1, width());
+        QList<int> widths = natural;
+
+        if (total > avail) {
+            // Shrink the wide ones first. Every tab keeps a floor wide enough to stay a
+            // target you can hit and drag, and whatever is left over is shared out in
+            // proportion to how much each tab wanted above that floor. Squeezing them
+            // all by the same percentage would take as much off "fx" as off "Pooled
+            // Media", and "fx" has nothing to give.
+            int floors = 0;
+            int wanted = 0;
+            for (const int w : natural) {
+                floors += std::min(w, kMinTabW);
+                wanted += std::max(0, w - kMinTabW);
+            }
+
+            if (floors >= avail || wanted <= 0) {
+                // More tabs than the strip has room for even at the floor. Split it
+                // evenly: past this point every tab is a dot and a sliver, and the only
+                // thing left worth preserving is that all of them are still reachable.
+                for (int i = 0; i < widths.size(); ++i) {
+                    widths[i] = avail / widths.size();
+                }
+            } else {
+                const int slack = avail - floors;
+                for (int i = 0; i < widths.size(); ++i) {
+                    const int base = std::min(natural.at(i), kMinTabW);
+                    const int extra = std::max(0, natural.at(i) - kMinTabW);
+                    widths[i] = base + static_cast<int>(
+                                           static_cast<qint64>(extra) * slack / wanted);
+                }
+            }
+
+            // Integer division loses a few pixels across the run. Give them to the last
+            // tab so the strip ends exactly at its right edge rather than a gap short.
+            int laid = 0;
+            for (const int w : widths) {
+                laid += w;
+            }
+            widths.last() += avail - laid;
+        }
+
+        int x = 0;
+        for (const int w : widths) {
             tabRects_.append(QRect(x, 0, w, metrics::kTabStripH));
             x += w;
         }
@@ -130,10 +391,26 @@ private:
         return -1;
     }
 
+    // Which seam between tabs a drop at this x belongs to. Past the halfway point of a
+    // tab means after it, which is what makes dropping on the right half of the last tab
+    // put the new one at the end rather than before it.
+    [[nodiscard]] int seamAt(const QPoint& pos) const {
+        for (int i = 0; i < tabRects_.size(); ++i) {
+            const QRect r = tabRects_.at(i);
+            if (pos.x() < r.center().x()) {
+                return i;
+            }
+        }
+        return static_cast<int>(tabRects_.size());
+    }
+
     QStringList labels_;
     QList<QRect> tabRects_;
     int current_ = 0;
     int hover_ = -1;
+    int dropAt_ = -1;
+    int pressedTab_ = -1;
+    QPoint pressAt_;
 };
 
 // --- PanelFrame --------------------------------------------------------------
@@ -152,6 +429,10 @@ PanelFrame::PanelFrame(const QStringList& tabs, QWidget* parent) : QWidget(paren
     layout->addWidget(strip_);
     layout->addWidget(stack_, 1);
 
+    const quintptr id = nextFrameId();
+    strip_->frameId = id;
+    registry().emplace(id, this);
+
     strip_->onActivate = [this](int index) {
         // Only follow the tab when there is a page for it. Panels whose tabs describe
         // one shared page (the timeline) just get the signal.
@@ -160,6 +441,36 @@ PanelFrame::PanelFrame(const QStringList& tabs, QWidget* parent) : QWidget(paren
         }
         emit currentChanged(index);
     };
+
+    strip_->onDropTab = [this](quintptr sourceId, int sourceTab, int at) {
+        const auto found = registry().find(sourceId);
+        if (found == registry().end()) {
+            return;  // the source is gone; a drop that does nothing beats a crash
+        }
+        PanelFrame* source = found->second;
+
+        // Reordering inside one frame. Taking the tab out first shifts everything after
+        // it down by one, so a drop meant for a later seam has to come back by one too.
+        // Getting this wrong makes a tab dragged one place to the right not move at all.
+        if (source == this && sourceTab < at) {
+            --at;
+        }
+        DetachedTab moved = source->takeTab(sourceTab);
+        if (moved.page == nullptr) {
+            return;
+        }
+        insertTab(at, moved.label, moved.page);
+        setCurrentIndex(std::clamp(at, 0, tabCount() - 1));
+    };
+}
+
+PanelFrame::~PanelFrame() {
+    for (auto it = registry().begin(); it != registry().end(); ++it) {
+        if (it->second == this) {
+            registry().erase(it);
+            return;
+        }
+    }
 }
 
 void PanelFrame::paintEvent(QPaintEvent*) {
@@ -173,11 +484,76 @@ void PanelFrame::addPage(QWidget* page) { stack_->addWidget(page); }
 
 void PanelFrame::setTabs(const QStringList& tabs) { strip_->setLabels(tabs); }
 
+void PanelFrame::setTabsMovable(bool movable) {
+    movable_ = movable;
+    strip_->movable = movable;
+    // A frame whose tabs are not pages must not accept them either. Dropping the Inspector
+    // onto the timeline's composition list would leave a tab with no page behind it.
+    strip_->setAcceptDrops(movable);
+}
+
+int PanelFrame::tabCount() const { return strip_->count(); }
+
+QString PanelFrame::tabLabel(int index) const { return strip_->labelAt(index); }
+
+void PanelFrame::setTabLabel(int index, const QString& label) {
+    if (index < 0 || index >= strip_->count() || strip_->labelAt(index) == label) {
+        return;
+    }
+    strip_->setLabelAt(index, label);
+}
+
+PanelFrame* PanelFrame::frameHolding(QWidget* page, int* indexOut) {
+    if (page == nullptr) {
+        return nullptr;
+    }
+    for (const auto& [id, frame] : registry()) {
+        for (int i = 0; i < frame->stack_->count(); ++i) {
+            if (frame->stack_->widget(i) == page) {
+                if (indexOut != nullptr) {
+                    *indexOut = i;
+                }
+                return frame;
+            }
+        }
+    }
+    return nullptr;
+}
+
 int PanelFrame::currentIndex() const { return strip_->current(); }
 
 void PanelFrame::setCurrentIndex(int index) {
     strip_->setCurrent(index);
-    stack_->setCurrentIndex(index);
+    if (index >= 0 && index < stack_->count()) {
+        stack_->setCurrentIndex(index);
+    }
+}
+
+PanelFrame::DetachedTab PanelFrame::takeTab(int index) {
+    DetachedTab out;
+    if (index < 0 || index >= strip_->count() || index >= stack_->count()) {
+        return out;
+    }
+    out.page = stack_->widget(index);
+    stack_->removeWidget(out.page);
+    out.page->setParent(nullptr);
+    out.label = strip_->removeLabel(index);
+
+    setCurrentIndex(std::clamp(strip_->current(), 0, std::max(0, tabCount() - 1)));
+    emit tabsChanged();
+    return out;
+}
+
+QRect PanelFrame::tabRect(int index) const { return strip_->rectAt(index); }
+
+void PanelFrame::insertTab(int index, const QString& label, QWidget* page) {
+    if (page == nullptr) {
+        return;
+    }
+    const int at = std::clamp(index, 0, tabCount());
+    stack_->insertWidget(at, page);
+    strip_->insertLabel(at, label);
+    emit tabsChanged();
 }
 
 }  // namespace ruby::ui

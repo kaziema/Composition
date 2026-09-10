@@ -168,6 +168,7 @@ struct EffectInstance {
     int schema = 1;
     std::string displayName;  // cached from the registry for the inspector
     bool enabled = true;
+    bool expanded = true;  // its parameters showing under it in the timeline
     std::vector<Property> params;
 
     [[nodiscard]] Property* find(std::string_view key) noexcept;
@@ -203,6 +204,13 @@ struct Layer {
     bool audioEnabled = true;  // the speaker: whether it is heard
     bool solo = false;
 
+    // The padlock. Refuses everything that would change the layer: selecting it, moving
+    // or trimming its bar, its blend mode, its parent, its keyframes. Visibility, audio,
+    // solo and twirling it open stay live, because none of those change what the layer
+    // is, and half of why you lock a layer is to keep looking at it while you work
+    // around it.
+    bool locked = false;
+
     // Text layers only.
     //
     // A structured model rather than a blob of HTML. Olive stores rich text as HTML, which
@@ -231,6 +239,14 @@ struct Layer {
     int solidWidth = 0;
     int solidHeight = 0;
     bool expanded = false;  // twirled open in the timeline
+
+    // Whether the Transform group under the twirl is open. Separate from `expanded`
+    // because they answer different questions: one is "show me this layer's insides",
+    // the other is "show me the five transform rows in particular". A layer with four
+    // effects on it is mostly Transform rows you are not looking at.
+    //
+    // Defaults open so a project made before groups collapsed opens looking the same.
+    bool transformExpanded = true;
 
     std::vector<Property> properties;
     std::vector<EffectInstance> effects;  // applied in order, top to bottom
@@ -317,6 +333,17 @@ public:
                         bool hasAudio);
 
     [[nodiscard]] const std::vector<MediaItem>& media() const noexcept { return media_; }
+
+    // Removes a media item and clears every layer that referenced it.
+    //
+    // A layer whose media id points at nothing is worse than a layer with no media: the
+    // second draws a placeholder and the first tries to resolve a path that is not there.
+    // Returns how many layers were affected, so the caller can warn before doing it.
+    std::size_t removeMedia(MediaId media);
+
+    // How many layers, across every composition, use this item. The count you have to show
+    // someone before you delete something out from under them.
+    [[nodiscard]] std::size_t usageCount(MediaId media) const noexcept;
     [[nodiscard]] const MediaItem* findMedia(MediaId id) const noexcept;
     [[nodiscard]] const MediaItem* findMediaByPath(std::string_view path) const noexcept;
 

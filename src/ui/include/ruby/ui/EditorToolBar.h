@@ -20,6 +20,15 @@ public:
 
 signals:
     void toolSelected(int index);
+
+    // Which panel group the left dock should show. 0 is Project, 1 is Effects & Presets.
+    void panelSelected(int index);
+
+    // A named mode from the right side of the bar. 0 is Beat Analyzer, 1 is Audio Studio.
+    void featureTriggered(int index);
+
+    // The workspace menu, collapsed to three dashes at the far right.
+    void workspaceMenuRequested(const QPoint& globalPos);
     void snappingToggled(bool on);
     void motionBlurToggled(bool on);
 
@@ -43,10 +52,26 @@ private:
     void paintSwitch(QPainter& p, const Switch& sw) const;
 
     QList<QRect> toolRects_;
+    QList<QRect> panelRects_;
     QList<Switch> switches_;
     QRect dividerRect_;
+    QRect panelDividerRect_;
+    QRect homeRect_;
+    QRect homeDividerRect_;
+
+    // The right side of the bar: named modes where After Effects puts workspace names,
+    // then the workspace menu itself collapsed to three dashes.
+    QList<QRect> featureRects_;
+    QRect workspaceRect_;
+    int hoverFeature_ = -1;
+    bool hoverWorkspace_ = false;
     int activeTool_ = 0;
     int hoverTool_ = -1;
+
+    // Which panel group is showing, and which one the cursor is over. Separate from the
+    // tool state on purpose: picking a panel must not deselect your tool.
+    int activePanel_ = 0;
+    int hoverPanel_ = -1;
 };
 
 }  // namespace ruby::ui

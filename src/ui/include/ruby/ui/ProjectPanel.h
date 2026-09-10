@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QPoint>
+#include <QRect>
 #include <QString>
 #include <QWidget>
 #include <cstdint>
@@ -32,6 +33,14 @@ signals:
     void mediaActivated(core::MediaId media);
     void compositionActivated(core::CompId comp);
 
+    // Footer buttons. The window owns all three, because all three are undoable document
+    // edits and the panel does not do those.
+    void newCompositionRequested();
+
+    // Footage dropped on the New Composition button: make a composition that matches it.
+    void compositionFromMediaRequested(core::MediaId media);
+    void deleteRequested(bool isComposition, std::uint64_t id);
+
 public:
     // MIME type carrying a MediaId, so the timeline can accept a drop from here and
     // reject a drop from anywhere else. Needs its own access specifier: everything after
@@ -40,10 +49,15 @@ public:
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    bool event(QEvent* e) override;
     void mousePressEvent(QMouseEvent* e) override;
     void mouseMoveEvent(QMouseEvent* e) override;
     void mouseDoubleClickEvent(QMouseEvent* e) override;
     void resizeEvent(QResizeEvent* e) override;
+    void dragEnterEvent(QDragEnterEvent* e) override;
+    void dragMoveEvent(QDragMoveEvent* e) override;
+    void dragLeaveEvent(QDragLeaveEvent* e) override;
+    void dropEvent(QDropEvent* e) override;
 
 private:
     struct Row {
@@ -54,10 +68,25 @@ private:
         QString duration;
         QColor swatch;
         qint64 bytes = 0;
+
+        // Everything the columns do not have room for: resolution, frame rate, path.
+        // Shown on hover, because the panel is narrow and most of this is only wanted
+        // occasionally.
+        QString detail;
     };
 
     [[nodiscard]] int rowAt(int y) const;
     void rebuild();
+    void layoutFooter();
+
+    // Left to right along the footer. Deliberately few: AE has six and two of them have
+    // nothing to say in Ruby. See NOTEBOOK 6.11.
+    QRect newCompRect_;
+    QRect deleteRect_;
+    QRect countRect_;
+    QRect sizeRect_;
+    int hoverButton_ = -1;
+    bool dropOnNewComp_ = false;
 
     const core::Project* project_ = nullptr;
     std::vector<Row> rows_;

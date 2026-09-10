@@ -253,6 +253,37 @@ int Composition::totalKeyframes() const noexcept {
     return total;
 }
 
+std::size_t Project::usageCount(MediaId media) const noexcept {
+    std::size_t used = 0;
+    for (const Composition& comp : comps_) {
+        for (const Layer& layer : comp.layers) {
+            if (layer.media.has_value() && *layer.media == media) {
+                ++used;
+            }
+        }
+    }
+    return used;
+}
+
+std::size_t Project::removeMedia(MediaId media) {
+    const std::size_t affected = usageCount(media);
+
+    // The layers stay; only the link goes. Deleting them would turn "remove this clip from
+    // my project" into "delete my edit", and those are not the same request. A layer with
+    // no media draws a placeholder, which is visible and recoverable.
+    for (Composition& comp : comps_) {
+        for (Layer& layer : comp.layers) {
+            if (layer.media.has_value() && *layer.media == media) {
+                layer.media.reset();
+            }
+        }
+    }
+    media_.erase(std::remove_if(media_.begin(), media_.end(),
+                                [media](const MediaItem& item) { return item.id == media; }),
+                 media_.end());
+    return affected;
+}
+
 bool Composition::removeLayer(LayerId layer) noexcept {
     const auto at = std::find_if(layers.begin(), layers.end(),
                                  [layer](const Layer& l) { return l.id == layer; });

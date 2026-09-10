@@ -15,14 +15,23 @@ namespace ruby::ui {
 // construction, correct at any DPI.
 
 enum class ToolIcon {
+    // Reserved for the project selector window. Drawn but inert for now, and dimmed so
+    // that reads as "not yet" rather than as a button that ignores you.
+    Home,
+
     Selection,
-    Pan,
+    Hand,
+    Zoom,
+    Rotation,
+    Anchor,
     Text,
     Shape,
     Pen,
-    Mask,
-    Hand,
-    Anchor,
+
+    // Panel switches rather than tools: they change what the left dock shows instead of
+    // changing what a click in the viewer means. Same bar because they are the same kind
+    // of reach, and separated from the tools by a divider so the difference is visible.
+    Project,
     Effects,
 };
 

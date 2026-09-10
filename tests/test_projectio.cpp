@@ -57,6 +57,8 @@ core::Project makeProject() {
     // "visible but muted" and have that mean something after a reload.
     layer.enabled = true;
     layer.audioEnabled = false;
+    layer.locked = true;
+    layer.transformExpanded = false;
 
     const core::TimeContext ctx = comp.timeContext();
     if (core::Property* pos = layer.find("position"); pos != nullptr) {
@@ -177,6 +179,12 @@ int main() {
     check(layer.expanded, "twirl state survives");
     check(layer.enabled, "the eye survives");
     check(!layer.audioEnabled, "and the speaker survives independently of it");
+    // A locked layer that comes back unlocked is worse than one that never locked: the
+    // user thinks it is protected and it is not.
+    check(layer.locked, "the padlock survives a save and reopen");
+    // Group expansion is per layer and per effect, so reopening a project puts the
+    // timeline back the way it was left rather than fully twirled open every time.
+    check(!layer.transformExpanded, "a shut Transform group stays shut");
 
     // A project written before the speaker switch existed has no audioEnabled key. It
     // must open audible: defaulting to false would silently mute every old project.

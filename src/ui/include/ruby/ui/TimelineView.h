@@ -16,6 +16,8 @@ class QSlider;
 #include "ruby/core/Document.h"
 #include "ruby/media/PeakCache.h"
 
+class QMimeData;
+
 namespace ruby::ui {
 
 // Identifies one keyframe. Positional for now, which is fine while keys cannot be
@@ -146,6 +148,9 @@ signals:
     // stack. The window owns creating the layer; the view only decides where.
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);
 
+    // An effect was dragged from the Effects panel onto a layer.
+    void effectDropped(core::LayerId layer, const std::string& effectId);
+
 protected:
     bool event(QEvent* e) override;
     void dragEnterEvent(QDragEnterEvent* e) override;
@@ -186,7 +191,15 @@ private:
     void rebuildRows();
     [[nodiscard]] int trackLeft() const noexcept;
     [[nodiscard]] int trackWidth() const noexcept;
+    [[nodiscard]] int navLeft() const noexcept;
+    [[nodiscard]] int parentLeft() const noexcept;
+    [[nodiscard]] int trkMatLeft() const noexcept;
+    [[nodiscard]] int preserveLeft() const noexcept;
+    [[nodiscard]] int modeLeft() const noexcept;
+    [[nodiscard]] int switchesLeft() const noexcept;
     [[nodiscard]] QRect trackRect() const noexcept;
+    [[nodiscard]] core::LayerId layerAtDrop(const QPoint& pos) const;
+    [[nodiscard]] static bool carriesEffect(const QMimeData* mime);
     [[nodiscard]] double xForTime(double seconds) const noexcept;
     [[nodiscard]] double timeForX(int x) const noexcept;
     [[nodiscard]] double duration() const noexcept;
@@ -199,14 +212,39 @@ private:
     [[nodiscard]] double tickInterval() const noexcept;
 
     void paintHeader(QPainter& p) const;
+
+    // The eight switches AE keeps between the layer name and the Mode column. Two of
+    // them do something in Ruby today; the rest are drawn because the column has to read
+    // correctly, and are inert because there is nothing behind them yet. See
+    // paintSwitches for which is which.
+    void paintSwitches(QPainter& p, const Row& row, const core::Layer& layer) const;
+    [[nodiscard]] int switchAt(int x) const noexcept;
+
     void paintLayerRow(QPainter& p, const Row& row, const core::Layer& layer) const;
     void paintPropertyRow(QPainter& p, const Row& row, const core::Layer& layer,
                           const core::Property& prop) const;
     void paintEffectHeader(QPainter& p, const Row& row, const core::Layer& layer) const;
+    void paintGroupKeys(QPainter& p, const Row& row, const core::Layer& layer) const;
+
+    // The group twirl's column, one step in from the layer's own.
+    [[nodiscard]] static constexpr int groupTwirlLeft() noexcept { return 22; }
+    static constexpr int kGroupTwirlW = 12;
+
+    // Opens or shuts the Transform group or one effect's parameters. `effect` is
+    // kTransformGroup for the former.
+    void toggleGroup(core::LayerId layer, int effect);
 
     // Resolves a row's property, whether it lives on the layer or on one of its effects.
     [[nodiscard]] static const core::Property* propertyFor(const core::Layer& layer,
                                                            int effect, int index);
+    void paintKeyNavigator(QPainter& p, const Row& row, bool hasKeyHere, bool canGoBack,
+                           bool canGoForward) const;
+
+    // The nearest keyframe on this layer before or after the playhead, across its own
+    // properties and every effect's. `onKey` is set when one sits exactly here.
+    [[nodiscard]] bool nearestKey(const core::Layer& layer, bool forward, double& out,
+                                  bool& onKey) const;
+
     void paintRhythm(QPainter& p) const;
     void paintPlayhead(QPainter& p) const;
     static void paintDiamond(QPainter& p, double cx, double cy, bool selected);
@@ -246,6 +284,10 @@ private:
     // be. AE treats it the same way.
     std::set<core::LayerId> revealAnimated_;
     const AudioPeaks* audioPeaks_ = nullptr;
+
+    // The layer an effect drag is currently over, or 0. Highlighted so the drop is not a
+    // guess.
+    core::LayerId dropEffectLayer_ = 0;
 
     // The visible time window. Span of 0 means "not set yet"; setComposition fits it.
     double viewStart_ = 0.0;
@@ -309,6 +351,7 @@ signals:
     void layersChanged();
     void compositionResized(double seconds);
     void audioChanged();
+    void effectDropped(core::LayerId layer, const std::string& effectId);
     void effectContextMenuRequested(int effectIndex, const QPoint& globalPos);
     void layerContextMenuRequested(const QPoint& globalPos);
     void mediaDropped(core::MediaId media, double seconds, int layerIndex);

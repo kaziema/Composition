@@ -33,6 +33,25 @@ struct Transform2D {
 
     [[nodiscard]] double applyX(double x, double y) const noexcept;
     [[nodiscard]] double applyY(double x, double y) const noexcept;
+
+    // The transform that undoes this one. Identity when this one is degenerate, which is
+    // what a zero scale produces: a layer scaled to nothing has collapsed to a point and
+    // there is no answer to "where did this pixel come from".
+    //
+    // Needed to go the other way through a parent chain. A parented layer's Position is
+    // in its parent's space, so moving it a known distance in composition space means
+    // asking the parent what that distance is worth to it.
+    [[nodiscard]] Transform2D inverse() const noexcept;
+};
+
+// An axis-aligned box in composition pixels.
+struct Bounds {
+    double left = 0.0, top = 0.0, right = 0.0, bottom = 0.0;
+
+    [[nodiscard]] double width() const noexcept { return right - left; }
+    [[nodiscard]] double height() const noexcept { return bottom - top; }
+    [[nodiscard]] double centerX() const noexcept { return (left + right) / 2.0; }
+    [[nodiscard]] double centerY() const noexcept { return (top + bottom) / 2.0; }
 };
 
 // How deep a parent chain may go before we stop walking it.
@@ -74,6 +93,19 @@ using SizeOf = std::function<LayerSize(const Layer&)>;
                                             double seconds, const TimeContext& ctx,
                                             double compWidth, double compHeight,
                                             const SizeOf& sizeOf);
+
+// Where a layer actually lands, as a box around it in composition pixels.
+//
+// The corners of the layer run through the same transform the compositor draws them with,
+// including scale, rotation, anchor and every parent, and the box is drawn around wherever
+// those four corners ended up. A rotated layer therefore reports the box that contains it,
+// not its own tilted rectangle, which is what aligning to an edge means.
+//
+// Bounds at a moment in time, not for the layer as a whole: an animated layer is in a
+// different place on every frame, so aligning it can only mean aligning it here.
+[[nodiscard]] Bounds layerBounds(const Composition& comp, const Layer& layer,
+                                 double seconds, const TimeContext& ctx, double compWidth,
+                                 double compHeight, const SizeOf& sizeOf);
 
 // Whether following this layer's parents leads back to itself, or runs deeper than the
 // cap. The UI wants this to refuse a bad parenting BEFORE it is stored, which is the only

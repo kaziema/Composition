@@ -29,17 +29,6 @@ void drawArrowhead(QPainterPath& path, qreal cx, qreal cy, qreal dx, qreal dy) {
     path.closeSubpath();
 }
 
-void drawPan(QPainter& p) {
-    p.drawLine(QPointF(8.0, 3.6), QPointF(8.0, 12.4));
-    p.drawLine(QPointF(3.6, 8.0), QPointF(12.4, 8.0));
-
-    QPainterPath heads;
-    drawArrowhead(heads, 8.0, 3.4, 0.0, -1.0);
-    drawArrowhead(heads, 8.0, 12.6, 0.0, 1.0);
-    drawArrowhead(heads, 3.4, 8.0, -1.0, 0.0);
-    drawArrowhead(heads, 12.6, 8.0, 1.0, 0.0);
-    p.fillPath(heads, p.pen().color());
-}
 
 void drawText(QPainter& p) {
     p.drawLine(QPointF(3.8, 3.6), QPointF(12.2, 3.6));
@@ -65,14 +54,27 @@ void drawPen(QPainter& p) {
     p.fillPath(hole, p.pen().color());
 }
 
-void drawMask(QPainter& p) {
-    p.drawRect(QRectF(3.4, 3.4, 9.2, 9.2));
-    QPainterPath fill;
-    fill.moveTo(3.4, 12.6);
-    fill.lineTo(12.6, 12.6);
-    fill.lineTo(3.4, 3.4);
-    fill.closeSubpath();
-    p.fillPath(fill, p.pen().color());
+
+// A magnifier. The plus inside is what separates it from a search field at 16px, and
+// zoom is the only tool in the bar whose icon is also a very common non-tool.
+void drawZoom(QPainter& p) {
+    p.drawEllipse(QPointF(7.0, 7.0), 3.9, 3.9);
+    p.drawLine(QPointF(9.9, 9.9), QPointF(13.2, 13.2));
+    p.drawLine(QPointF(5.2, 7.0), QPointF(8.8, 7.0));
+    p.drawLine(QPointF(7.0, 5.2), QPointF(7.0, 8.8));
+}
+
+// An arc with an arrowhead: rotation as a motion rather than as a circle, because a plain
+// circle reads as a radio button or a record light.
+void drawRotation(QPainter& p) {
+    QPainterPath arc;
+    arc.arcMoveTo(QRectF(3.4, 3.4, 9.2, 9.2), 60.0);
+    arc.arcTo(QRectF(3.4, 3.4, 9.2, 9.2), 60.0, 280.0);
+    p.drawPath(arc);
+
+    QPainterPath head;
+    drawArrowhead(head, 10.7, 4.6, 0.72, -0.69);
+    p.fillPath(head, p.pen().color());
 }
 
 void drawHand(QPainter& p) {
@@ -100,6 +102,45 @@ void drawAnchor(QPainter& p) {
     p.drawLine(QPointF(8.0, 11.8), QPointF(8.0, 14.2));
     p.drawLine(QPointF(1.8, 8.0), QPointF(4.2, 8.0));
     p.drawLine(QPointF(11.8, 8.0), QPointF(14.2, 8.0));
+}
+
+// A media bin: a folder with two strips of content in it. Reads as "the place your stuff
+// lives" at 16px, which a plain folder does not: a folder alone says "files", and this
+// panel holds compositions and clips rather than a directory.
+// A house. Deliberately the most literal icon in the bar: it is the way back out to the
+// project selector, and the one control that should need no learning.
+void drawHome(QPainter& p) {
+    QPainterPath roof;
+    roof.moveTo(2.6, 7.8);
+    roof.lineTo(8.0, 3.0);
+    roof.lineTo(13.4, 7.8);
+    p.drawPath(roof);
+
+    QPainterPath walls;
+    walls.moveTo(4.4, 7.0);
+    walls.lineTo(4.4, 13.0);
+    walls.lineTo(11.6, 13.0);
+    walls.lineTo(11.6, 7.0);
+    p.drawPath(walls);
+
+    // A door, so it reads as a house rather than an arrow over a box.
+    p.drawRect(QRectF(6.9, 9.4, 2.2, 3.6));
+}
+
+void drawProject(QPainter& p) {
+    QPainterPath folder;
+    folder.moveTo(2.4, 4.2);
+    folder.lineTo(6.4, 4.2);
+    folder.lineTo(7.4, 5.6);
+    folder.lineTo(13.6, 5.6);
+    folder.lineTo(13.6, 12.8);
+    folder.lineTo(2.4, 12.8);
+    folder.closeSubpath();
+    p.drawPath(folder);
+
+    // Two rows inside, the way the panel itself lists items.
+    p.drawLine(QPointF(4.4, 8.2), QPointF(11.6, 8.2));
+    p.drawLine(QPointF(4.4, 10.4), QPointF(9.2, 10.4));
 }
 
 void drawEffects(QPainter& p) {
@@ -135,13 +176,15 @@ void paintToolIcon(QPainter& p, const QRect& box, ToolIcon icon, const QColor& c
 
     switch (icon) {
         case ToolIcon::Selection: drawSelection(p); break;
-        case ToolIcon::Pan:       drawPan(p);       break;
         case ToolIcon::Text:      drawText(p);      break;
         case ToolIcon::Shape:     drawShape(p);     break;
         case ToolIcon::Pen:       drawPen(p);       break;
-        case ToolIcon::Mask:      drawMask(p);      break;
+        case ToolIcon::Zoom:      drawZoom(p);      break;
+        case ToolIcon::Rotation:  drawRotation(p);  break;
         case ToolIcon::Hand:      drawHand(p);      break;
         case ToolIcon::Anchor:    drawAnchor(p);    break;
+        case ToolIcon::Home:      drawHome(p);      break;
+        case ToolIcon::Project:   drawProject(p);   break;
         case ToolIcon::Effects:   drawEffects(p);   break;
     }
 

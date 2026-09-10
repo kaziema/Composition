@@ -7,6 +7,8 @@ class QAction;
 class QCloseEvent;
 
 #include "ruby/core/Document.h"
+#include "ruby/core/Transform.h"
+#include "ruby/ui/AlignPanel.h"
 #include <map>
 #include <optional>
 
@@ -19,6 +21,7 @@ class QCloseEvent;
 
 class QLabel;
 class QSplitter;
+class QStackedWidget;
 
 namespace ruby::ui {
 
@@ -28,6 +31,7 @@ class Playback;
 class PanelFrame;
 class ProjectPanel;
 class PooledMediaPanel;
+class EffectsPanel;
 class StatusReadout;
 class TimelinePanel;
 class InspectorView;
@@ -48,6 +52,17 @@ public:
     explicit MainWindow(gpu::GpuDevice* device = nullptr, QWidget* parent = nullptr);
 
     [[nodiscard]] const core::Project& project() const noexcept { return project_; }
+
+    // How big a layer is, before its own scale. The compositor works this out from decoded
+    // frames; the window works it out from the media pool and a text layout, which agree
+    // for everything the align panel can act on.
+    [[nodiscard]] core::SizeOf layerSizes();
+
+    // Moves the selected layer so one of its edges or centres meets the composition's.
+    void alignSelectedLayer(AlignPanel::Align edge);
+
+    // Turns the align buttons on or off for whatever is selected now.
+    void updateAlignAvailability();
 
 signals:
     // The pool changed. The project panel listens; nothing else needs to yet.
@@ -83,6 +98,14 @@ public slots:
     void applyEffect(const std::string& effectId);
     void removeAllEffects();
     void removeEffect(int index);
+
+    // Beat Analyzer: pick a lane, run the detector over this composition's audio, and put
+    // the result on the timeline.
+    void runBeatAnalyzer();
+
+    // Project panel footer.
+    void compositionFromMedia(core::MediaId media);
+    void deleteProjectItem(bool isComposition, std::uint64_t id);
 
     // Layer > New. Both land above the selected layer, as AE does, so a new layer arrives
     // where you were looking rather than at the top of a twenty layer stack.
@@ -189,10 +212,24 @@ private:
     Playback* playback_ = nullptr;
     ProjectPanel* projectPanel_ = nullptr;
     PooledMediaPanel* pooledPanel_ = nullptr;
+    EffectsPanel* effectsPanel_ = nullptr;
+    AlignPanel* alignPanel_ = nullptr;
+    QStackedWidget* leftDock_ = nullptr;
     StatusReadout* readout_ = nullptr;
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
     PanelFrame* viewerTabs_ = nullptr;
+    PanelFrame* projectTabs_ = nullptr;
+    PanelFrame* effectsTabs_ = nullptr;
+    PanelFrame* inspectorTabs_ = nullptr;
+
+    // The composition viewer's page, so its tab can be renamed wherever it ends up.
+    QWidget* viewerPage_ = nullptr;
+
+    // A frame that loses its last tab disappears and the rest take the space. Recomputed
+    // rather than toggled per event, because a tab move is a removal and an insertion and
+    // the state in between is not one anybody should see.
+    void updatePanelVisibility();
     core::CompId activeComp_ = 0;
     QString projectPath_;
     bool dirty_ = false;
