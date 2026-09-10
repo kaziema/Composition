@@ -1,0 +1,144 @@
+// Tests for moving tabs between panel frames.
+//
+// The interesting cases are the ones with off-by-one errors hiding in them: reordering
+// inside one frame, and dropping past the end. Both are removal-then-insertion, and the
+// index means something different on either side of the removal.
+
+#include <QApplication>
+#include <QLabel>
+#include <cstdio>
+#include <cstdlib>
+
+#include "ruby/ui/PanelFrame.h"
+
+using namespace ruby;
+
+namespace {
+
+int failures = 0;
+
+void check(bool cond, const char* what) {
+    if (!cond) {
+        std::fprintf(stderr, "FAIL: %s\n", what);
+        ++failures;
+    }
+}
+
+void checkLabels(ui::PanelFrame& frame, const QStringList& want, const char* what) {
+    QStringList got;
+    for (int i = 0; i < frame.tabCount(); ++i) {
+        got << frame.tabLabel(i);
+    }
+    if (got != want) {
+        std::fprintf(stderr, "FAIL: %s\n   got  [%s]\n   want [%s]\n", what,
+                     qPrintable(got.join(QStringLiteral(", "))),
+                     qPrintable(want.join(QStringLiteral(", "))));
+        ++failures;
+    }
+}
+
+ui::PanelFrame* makeFrame(const QStringList& tabs) {
+    auto* frame = new ui::PanelFrame(tabs);
+    for (const QString& tab : tabs) {
+        frame->addPage(new QLabel(tab));
+    }
+    return frame;
+}
+
+void a_tab_moves_between_frames() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("Project"), QStringLiteral("Pooled")});
+    ui::PanelFrame* b = makeFrame({QStringLiteral("Inspector")});
+
+    const ui::PanelFrame::DetachedTab moved = a->takeTab(0);
+    check(moved.page != nullptr, "the page came with the tab");
+    check(moved.label == QStringLiteral("Project"), "and its label");
+    check(a->tabCount() == 1, "the source lost one");
+
+    b->insertTab(1, moved.label, moved.page);
+    checkLabels(*b, {QStringLiteral("Inspector"), QStringLiteral("Project")},
+                "the target gained it at the index asked for");
+    checkLabels(*a, {QStringLiteral("Pooled")}, "and the source kept the rest");
+
+    delete a;
+    delete b;
+}
+
+// The page has to travel with the tab, or the tab arrives showing whatever page happened
+// to be at that index in the new frame.
+void the_page_travels_with_the_tab() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("One"), QStringLiteral("Two")});
+    ui::PanelFrame* b = makeFrame({QStringLiteral("Other")});
+
+    const ui::PanelFrame::DetachedTab moved = a->takeTab(1);
+    auto* label = qobject_cast<QLabel*>(moved.page);
+    check(label != nullptr && label->text() == QStringLiteral("Two"),
+          "the page taken is the one that belonged to that tab");
+
+    b->insertTab(0, moved.label, moved.page);
+    b->setCurrentIndex(0);
+    check(b->tabLabel(0) == QStringLiteral("Two"), "and it lands under its own label");
+
+    delete a;
+    delete b;
+}
+
+void a_frame_can_be_emptied() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("Only")});
+    const ui::PanelFrame::DetachedTab moved = a->takeTab(0);
+    check(moved.page != nullptr, "the last tab comes out");
+    check(a->tabCount() == 0, "leaving the frame empty rather than refusing");
+
+    // Emptying must not leave the frame pointing at a tab that is not there, which is the
+    // shape of every "index out of range" crash in a widget like this.
+    check(a->currentIndex() == 0, "and its current index is not past the end");
+
+    delete moved.page;
+    delete a;
+}
+
+void out_of_range_is_refused_rather_than_crashing() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("One")});
+
+    check(a->takeTab(-1).page == nullptr, "a negative index takes nothing");
+    check(a->takeTab(9).page == nullptr, "and so does one past the end");
+    check(a->tabCount() == 1, "and neither removed anything");
+
+    a->insertTab(0, QStringLiteral("Null"), nullptr);
+    check(a->tabCount() == 1, "inserting a null page does nothing");
+
+    // Clamped rather than refused: a drop past the end means "at the end", which is what
+    // dropping on empty strip space should do.
+    a->insertTab(99, QStringLiteral("Far"), new QLabel(QStringLiteral("Far")));
+    checkLabels(*a, {QStringLiteral("One"), QStringLiteral("Far")},
+                "an index past the end clamps to the end");
+
+    delete a;
+}
+
+// A frame whose tabs are not pages, like the timeline listing open compositions.
+void a_frame_can_refuse_to_give_tabs_up() {
+    ui::PanelFrame* a = makeFrame({QStringLiteral("Comp 1")});
+    a->setTabsMovable(false);
+    check(!a->tabsMovable(), "the flag sticks");
+    check(a->tabCount() == 1, "and its tab is still there");
+    delete a;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+
+    a_tab_moves_between_frames();
+    the_page_travels_with_the_tab();
+    a_frame_can_be_emptied();
+    out_of_range_is_refused_rather_than_crashing();
+    a_frame_can_refuse_to_give_tabs_up();
+
+    if (failures != 0) {
+        std::fprintf(stderr, "\n%d check(s) failed\n", failures);
+        return EXIT_FAILURE;
+    }
+    std::puts("panelframe: all checks passed");
+    return EXIT_SUCCESS;
+}

@@ -205,6 +205,14 @@ private:
     TimelinePanel* timelinePanel_ = nullptr;
     PanelFrame* timelineTabs_ = nullptr;
     PanelFrame* viewerTabs_ = nullptr;
+    PanelFrame* projectTabs_ = nullptr;
+    PanelFrame* effectsTabs_ = nullptr;
+    PanelFrame* inspectorTabs_ = nullptr;
+
+    // A frame that loses its last tab disappears and the rest take the space. Recomputed
+    // rather than toggled per event, because a tab move is a removal and an insertion and
+    // the state in between is not one anybody should see.
+    void updatePanelVisibility();
     core::CompId activeComp_ = 0;
     QString projectPath_;
     bool dirty_ = false;

@@ -1296,6 +1296,36 @@ void MainWindow::deleteProjectItem(bool isComposition, std::uint64_t id) {
     markDirty();
 }
 
+// A frame with no tabs left has nothing to show, so it goes and the rest take the space.
+//
+// Recomputed from scratch rather than toggled per event: a tab move is a removal followed
+// by an insertion, and the state in between is one where the source looks empty. Reacting
+// to each half separately would flash a panel out and back in.
+void MainWindow::updatePanelVisibility() {
+    if (viewerTabs_ != nullptr) {
+        viewerTabs_->setVisible(viewerTabs_->tabCount() > 0);
+    }
+    if (inspectorTabs_ != nullptr) {
+        inspectorTabs_->setVisible(inspectorTabs_->tabCount() > 0);
+    }
+
+    // The left dock is two frames stacked behind the toolbar's Project and fx buttons, so
+    // an empty one is not a gap in the layout, it is a button that leads nowhere. The dock
+    // itself only disappears once both are empty.
+    if (leftDock_ != nullptr) {
+        const int project = projectTabs_ != nullptr ? projectTabs_->tabCount() : 0;
+        const int effects = effectsTabs_ != nullptr ? effectsTabs_->tabCount() : 0;
+        leftDock_->setVisible(project > 0 || effects > 0);
+
+        // Do not leave the dock parked on an empty half when the other one has something.
+        if (project == 0 && effects > 0) {
+            leftDock_->setCurrentWidget(effectsTabs_);
+        } else if (effects == 0 && project > 0) {
+            leftDock_->setCurrentWidget(projectTabs_);
+        }
+    }
+}
+
 void MainWindow::deselectAll() {
     if (timelinePanel_ != nullptr) {
         timelinePanel_->clearSelection();
@@ -2069,45 +2099,50 @@ QWidget* MainWindow::buildBody() {
     bodySplit_->setHandleWidth(metrics::kGutter);
     bodySplit_->setChildrenCollapsible(false);
 
-    auto* project = new PanelFrame({QStringLiteral("Project"),
+    projectTabs_ = new PanelFrame({QStringLiteral("Project"),
                                     QStringLiteral("Pooled Media"),
                                     QStringLiteral("Comp Map")});
     projectPanel_ = new ProjectPanel;
     projectPanel_->setProject(&project_);
     pooledPanel_ = new PooledMediaPanel;
     pooledPanel_->setPool(&pool_);
-    project->addPage(projectPanel_);
-    project->addPage(pooledPanel_);
-    project->addPage(makePlaceholder(QStringLiteral("composition map")));
+    projectTabs_->addPage(projectPanel_);
+    projectTabs_->addPage(pooledPanel_);
+    projectTabs_->addPage(makePlaceholder(QStringLiteral("composition map")));
 
     // Effects and presets, one panel with three tabs. Presets and colour correction have
     // nothing behind them yet and say so rather than being blank.
-    auto* effects = new PanelFrame({QStringLiteral("Effects"), QStringLiteral("Presets"),
+    effectsTabs_ = new PanelFrame({QStringLiteral("Effects"), QStringLiteral("Presets"),
                                     QStringLiteral("CC")});
     effectsPanel_ = new EffectsPanel;
-    effects->addPage(effectsPanel_);
-    effects->addPage(makePlaceholder(QStringLiteral("presets")));
-    effects->addPage(makePlaceholder(QStringLiteral("colour correction presets")));
+    effectsTabs_->addPage(effectsPanel_);
+    effectsTabs_->addPage(makePlaceholder(QStringLiteral("presets")));
+    effectsTabs_->addPage(makePlaceholder(QStringLiteral("colour correction presets")));
 
     // A stack, not two docks. The toolbar's Project and fx buttons choose which of these
     // the left column shows: they are the same reach for the same space, and having both
     // visible at once would halve a column that is already the narrowest thing on screen.
     leftDock_ = new QStackedWidget;
-    leftDock_->addWidget(project);
-    leftDock_->addWidget(effects);
+    leftDock_->addWidget(projectTabs_);
+    leftDock_->addWidget(effectsTabs_);
 
     connect(effectsPanel_, &EffectsPanel::effectActivated, this,
             [this](const std::string& id) { applyEffect(id); });
 
     // The panel's own tabs drive which list it shows, so the three tabs and the three
     // pages cannot disagree about which one is up.
-    connect(effects, &PanelFrame::currentChanged, this, [this](int index) {
+    connect(effectsTabs_, &PanelFrame::currentChanged, this, [this](int index) {
         if (effectsPanel_ == nullptr) {
             return;
         }
-        effectsPanel_->setTab(index == 1   ? EffectsPanel::Tab::Presets
-                              : index == 2 ? EffectsPanel::Tab::ColorCorrection
-                                           : EffectsPanel::Tab::Effects);
+        // Keyed off the label, not the index. Tabs move between panels now, so index 1
+        // stops meaning "Presets" the moment anything is inserted before it.
+        const QString label = effectsTabs_->tabLabel(index);
+        effectsPanel_->setTab(label == QStringLiteral("Presets")
+                                  ? EffectsPanel::Tab::Presets
+                              : label == QStringLiteral("CC")
+                                  ? EffectsPanel::Tab::ColorCorrection
+                                  : EffectsPanel::Tab::Effects);
     });
 
     core::Composition& comp = project_.compositions().front();
@@ -2122,15 +2157,23 @@ QWidget* MainWindow::buildBody() {
 
     // Transform and the effect stack share one inspector rather than letting two
     // panels fight for the same dock.
-    auto* inspector = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
+    inspectorTabs_ = new PanelFrame({QStringLiteral("Inspector"), QStringLiteral("Align")});
     inspector_ = new InspectorView;
     inspector_->setComposition(&comp);
-    inspector->addPage(inspector_);
-    inspector->addPage(makePlaceholder(QStringLiteral("align tools")));
+    inspectorTabs_->addPage(inspector_);
+    inspectorTabs_->addPage(makePlaceholder(QStringLiteral("align tools")));
 
     bodySplit_->addWidget(leftDock_);
     bodySplit_->addWidget(viewerTabs_);
-    bodySplit_->addWidget(inspector);
+    bodySplit_->addWidget(inspectorTabs_);
+
+    // Every frame that can gain or lose a tab reports it, and visibility is worked out
+    // from the whole layout each time rather than from whichever frame spoke.
+    for (PanelFrame* frame :
+         {projectTabs_, effectsTabs_, viewerTabs_, inspectorTabs_}) {
+        connect(frame, &PanelFrame::tabsChanged, this,
+                &MainWindow::updatePanelVisibility);
+    }
     bodySplit_->setStretchFactor(1, 1);
     bodySplit_->setSizes({metrics::kProjectPanelW, 900, metrics::kInspectorPanelW});
 
@@ -2141,6 +2184,10 @@ QWidget* MainWindow::buildBody() {
 
     auto* timeline = new PanelFrame({compName});
     timelineTabs_ = timeline;
+    // The timeline's tabs are open compositions over one shared page, not panels. They
+    // name something inside the panel rather than naming panels, so they do not move and
+    // the strip does not accept anything either.
+    timeline->setTabsMovable(false);
     auto* timelinePanel = new TimelinePanel;
     timelinePanel_ = timelinePanel;
     timelinePanel->setComposition(&comp);
