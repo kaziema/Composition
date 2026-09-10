@@ -68,15 +68,13 @@ enum class Switch {
     ThreeD,       // treat the layer as a 3D layer
 };
 
-// Which of those Ruby actually does something with today.
+// fx is the only one of the eight Ruby does anything with today. The rest are drawn and
+// inert, and each says so in its tooltip below.
 //
-// The rest are drawn and inert. A column that is simply missing teaches the wrong shape:
-// people learn where things are by position, and a timeline that grows two columns later
-// moves everything they learned. Drawing it grey and doing nothing is honest about the
-// state of the app in a way that leaving a gap is not.
-constexpr bool kSwitchLive[] = {false, false, false, true, false, false, false, false};
-static_assert(std::size(kSwitchLive) == metrics::kSwitchCount);
-
+// A column that is simply missing teaches the wrong shape: people learn where things are
+// by position, and a timeline that grows two columns later moves everything they learned.
+// Drawing it grey and doing nothing is honest about the state of the app in a way that
+// leaving a gap is not.
 const char* switchTip(Switch s) {
     switch (s) {
         case Switch::Shy:
@@ -271,6 +269,16 @@ void TimelineView::setScrollY(int y) {
 void TimelineView::setSnapping(bool on) { snapping_ = on; }
 
 void TimelineView::selectLayer(core::LayerId layer) {
+    // A locked layer refuses selection here, not only in the click handler.
+    //
+    // Refusing it in mousePressEvent alone was not a lock: right clicking a locked layer
+    // ran through here to open its menu, and every layer command in the window acts on
+    // whatever is selected, so delete, duplicate, split and precompose all worked on a
+    // layer whose padlock was shut. One guard at the one place selection is set.
+    const core::Layer* target = comp_ != nullptr ? comp_->find(layer) : nullptr;
+    if (target != nullptr && target->locked) {
+        return;
+    }
     selected_ = layer;
     rebuildRows();
     update();
@@ -1908,6 +1916,13 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
             return;
         }
 
+        // Preserve Transparency and Track Matte. Both are drawn as controls and neither
+        // does anything yet, so both swallow the click. Falling through to selecting the
+        // layer would be the app answering a click on a checkbox with something else.
+        if (pos.x() >= preserveLeft() && pos.x() < parentLeft()) {
+            return;
+        }
+
         // The keyframe navigator. Previous and next step the playhead; the diamond is a
         // readout only. On a property row it means "put a key here", but a layer has many
         // properties and "add a keyframe to the layer" is not a thing, so it does not
@@ -2067,7 +2082,11 @@ core::LayerId TimelineView::layerAtDrop(const QPoint& pos) const {
     for (const Row& row : rows_) {
         if (row.kind == RowKind::Layer && contentY >= row.top &&
             contentY < row.top + row.height) {
-            return row.layer;
+            // Applying an effect is an edit, so a locked layer is not a target. Returning
+            // nothing here also means the drop highlight never lights up on it, which is
+            // the refusal arriving before the release rather than after.
+            const core::Layer* layer = comp_->find(row.layer);
+            return (layer != nullptr && layer->locked) ? 0 : row.layer;
         }
     }
     return 0;

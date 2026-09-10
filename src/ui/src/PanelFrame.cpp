@@ -296,8 +296,12 @@ private:
             bp.drawEllipse(QPointF(kPadX + 2.0, badge.height() / 2.0 + 0.5), 2.0, 2.0);
             bp.setRenderHint(QPainter::Antialiasing, false);
             bp.setPen(kTabActiveText);
-            bp.drawText(QRect(kPadX + kDotW, 0, badge.width(), badge.height()),
-                        Qt::AlignVCenter | Qt::AlignLeft, labels_.at(index));
+            const QRect textRect(kPadX + kDotW, 0, badge.width() - kPadX * 2 - kDotW,
+                                 badge.height());
+            bp.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                        QFontMetrics(bp.font())
+                            .elidedText(labels_.at(index), Qt::ElideRight,
+                                        textRect.width()));
         }
 
         auto* drag = new QDrag(this);

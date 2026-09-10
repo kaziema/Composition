@@ -239,6 +239,41 @@ void shutting_a_group_does_not_select_the_layer() {
     check(!f.view.selectedLayer().has_value(), "the twirl is not a selection");
 }
 
+// The lock has to hold against every way of selecting a layer, not only a left click on
+// its name. The right-click menu selects the row it was opened on before showing itself,
+// and every layer command in the window acts on the selection, so a locked layer that
+// could be selected that way could still be deleted.
+void nothing_selects_a_locked_layer() {
+    Fixture f;
+    click(f.view, 64, firstRowY());
+    check(f.layer().locked, "locked");
+
+    f.view.selectLayer(f.id);
+    check(!f.view.selectedLayer().has_value(),
+          "selectLayer refuses it, so the context menu cannot get in that way either");
+
+    f.layer().locked = false;
+    f.view.selectLayer(f.id);
+    check(f.view.selectedLayer().has_value(), "and takes it once the padlock is open");
+}
+
+// Preserve Transparency and Track Matte are drawn as controls and do nothing yet. Like
+// the seven inert switches, they must swallow the click rather than selecting the layer.
+void the_inert_mode_cells_swallow_their_clicks() {
+    Fixture f;
+    const int preserve = kPreserve + kPreserveW / 2;
+    const int trkMat = kTrkMat + kTrkMatW / 2;
+
+    click(f.view, preserve, firstRowY());
+    check(!f.view.selectedLayer().has_value(), "T swallows the click");
+
+    click(f.view, trkMat, firstRowY());
+    check(!f.view.selectedLayer().has_value(), "Track Matte swallows the click");
+
+    // Not tested here: the Mode cell next door. It opens a blocking menu, so clicking it
+    // from a test hangs the test rather than failing it.
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -254,6 +289,8 @@ int main(int argc, char** argv) {
     a_group_collapses_and_reopens();
     the_group_label_is_not_a_button();
     shutting_a_group_does_not_select_the_layer();
+    nothing_selects_a_locked_layer();
+    the_inert_mode_cells_swallow_their_clicks();
 
     if (failures == 0) {
         std::puts("layerswitches: all checks passed");
