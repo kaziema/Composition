@@ -254,7 +254,7 @@ json write(const Layer& l) {
              {"label", name(l.label)}, {"in", write(l.inPoint)},
              {"out", write(l.outPoint)}, {"blend", name(l.blend)},
              {"enabled", l.enabled}, {"audioEnabled", l.audioEnabled},
-             {"solo", l.solo}, {"expanded", l.expanded}};
+             {"solo", l.solo}, {"locked", l.locked}, {"expanded", l.expanded}};
 
 
     // Only on text layers, for the same reason solids only write their own fields.
@@ -509,6 +509,7 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 layer.solidWidth = get<int>(l, "solidWidth", 0);
                 layer.solidHeight = get<int>(l, "solidHeight", 0);
                 layer.solo = get<bool>(l, "solo", false);
+                layer.locked = get<bool>(l, "locked", false);
                 layer.expanded = get<bool>(l, "expanded", false);
                 if (l.contains("parent") && l.at("parent").is_number()) {
                     layer.parent = l.at("parent").get<LayerId>();

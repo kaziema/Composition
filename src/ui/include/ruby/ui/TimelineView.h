@@ -193,7 +193,10 @@ private:
     [[nodiscard]] int trackWidth() const noexcept;
     [[nodiscard]] int navLeft() const noexcept;
     [[nodiscard]] int parentLeft() const noexcept;
+    [[nodiscard]] int trkMatLeft() const noexcept;
+    [[nodiscard]] int preserveLeft() const noexcept;
     [[nodiscard]] int modeLeft() const noexcept;
+    [[nodiscard]] int switchesLeft() const noexcept;
     [[nodiscard]] QRect trackRect() const noexcept;
     [[nodiscard]] core::LayerId layerAtDrop(const QPoint& pos) const;
     [[nodiscard]] static bool carriesEffect(const QMimeData* mime);
@@ -209,6 +212,14 @@ private:
     [[nodiscard]] double tickInterval() const noexcept;
 
     void paintHeader(QPainter& p) const;
+
+    // The eight switches AE keeps between the layer name and the Mode column. Two of
+    // them do something in Ruby today; the rest are drawn because the column has to read
+    // correctly, and are inert because there is nothing behind them yet. See
+    // paintSwitches for which is which.
+    void paintSwitches(QPainter& p, const Row& row, const core::Layer& layer) const;
+    [[nodiscard]] int switchAt(int x) const noexcept;
+
     void paintLayerRow(QPainter& p, const Row& row, const core::Layer& layer) const;
     void paintPropertyRow(QPainter& p, const Row& row, const core::Layer& layer,
                           const core::Property& prop) const;

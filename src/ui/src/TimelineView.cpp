@@ -19,6 +19,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 
 #include "ruby/ui/Format.h"
@@ -36,12 +37,162 @@ using core::Property;
 namespace {
 
 // Layer-column sub-widths, straight from the design.
-constexpr int kAvW = metrics::kAvToggleW;   // 62: eye, audio dot, solo
+constexpr int kAvW = metrics::kAvToggleW;   // 78: eye, audio dot, solo, lock
 constexpr int kIndexW = metrics::kIndexW;   // 20
 constexpr int kModeW = metrics::kModeW;     // 56
 constexpr int kParentW = metrics::kParentW; // 52
 constexpr int kPropIndent = 62;             // property rows indent one A/V-column step
 constexpr int kNavW = metrics::kKeyNavW;     // the ◂ ◇ ▸ keyframe navigator
+constexpr int kSwitchW = metrics::kSwitchW;
+constexpr int kSwitchesW = metrics::kSwitchesW;
+constexpr int kPreserveW = metrics::kPreserveW;
+constexpr int kTrkMatW = metrics::kTrkMatW;
+
+// Where each A/V toggle sits, as a half-open span. Written down once because the painter
+// and the hit test each used to carry their own copy of these numbers and they had
+// already drifted apart by two pixels.
+constexpr int kEyeX = 6, kEyeEnd = 24;
+constexpr int kAudioX = 24, kAudioEnd = 40;
+constexpr int kSoloX = 40, kSoloEnd = 56;
+constexpr int kLockX = 56, kLockEnd = kAvW;
+
+// The eight switches AE puts between the layer name and Mode, in AE's order.
+enum class Switch {
+    Shy,          // hide this layer when "hide shy layers" is on
+    Collapse,     // collapse a precomp's transforms / continuously rasterise vectors
+    Quality,      // best vs draft sampling for this layer
+    Effects,      // all effects on this layer, on or off
+    FrameBlend,   // blend frames when the layer is retimed
+    MotionBlur,   // per-layer motion blur, when the comp has it on
+    Adjustment,   // treat the layer as an adjustment layer
+    ThreeD,       // treat the layer as a 3D layer
+};
+
+// Which of those Ruby actually does something with today.
+//
+// The rest are drawn and inert. A column that is simply missing teaches the wrong shape:
+// people learn where things are by position, and a timeline that grows two columns later
+// moves everything they learned. Drawing it grey and doing nothing is honest about the
+// state of the app in a way that leaving a gap is not.
+constexpr bool kSwitchLive[] = {false, false, false, true, false, false, false, false};
+static_assert(std::size(kSwitchLive) == metrics::kSwitchCount);
+
+const char* switchTip(Switch s) {
+    switch (s) {
+        case Switch::Shy:
+            return "Shy — hide this layer from the timeline while keeping it in the "
+                   "render. Not wired up yet.";
+        case Switch::Collapse:
+            return "Collapse Transformations — render a precomp's layers in this comp's "
+                   "space instead of through its own frame. Not wired up yet.";
+        case Switch::Quality:
+            return "Quality and Sampling — draft or best sampling for this layer. Ruby "
+                   "renders everything at best, so this does nothing yet.";
+        case Switch::Effects:
+            return "Effects — turn every effect on this layer off and back on.";
+        case Switch::FrameBlend:
+            return "Frame Blending — blend frames when the layer is retimed. Arrives with "
+                   "time stretch.";
+        case Switch::MotionBlur:
+            return "Motion Blur — blur this layer along its own movement. Arrives with "
+                   "the comp-wide motion blur.";
+        case Switch::Adjustment:
+            return "Adjustment Layer — apply this layer's effects to everything beneath "
+                   "it. Not wired up yet.";
+        case Switch::ThreeD:
+            return "3D Layer — give this layer depth. Arrives with the 3D update.";
+    }
+    return "";
+}
+
+// A 14px switch glyph. Drawn from primitives rather than a font, because at this size a
+// glyph from a font is whatever the platform decided it was.
+void drawSwitchGlyph(QPainter& p, Switch which, const QRect& box, const QColor& ink) {
+    const double cx = box.center().x() + 0.5;
+    const double cy = box.center().y() + 0.5;
+    p.save();
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(ink, 1.0));
+    p.setBrush(Qt::NoBrush);
+
+    switch (which) {
+        case Switch::Shy: {
+            // Head and shoulders.
+            p.drawEllipse(QPointF(cx, cy - 2.5), 1.8, 1.8);
+            p.drawArc(QRectF(cx - 4.0, cy - 0.5, 8.0, 8.0), 0, 180 * 16);
+            break;
+        }
+        case Switch::Collapse: {
+            // A four-armed burst, AE's "collapse / continuously rasterise" mark.
+            for (int i = 0; i < 4; ++i) {
+                const double a = i * (M_PI / 4.0);
+                const double dx = std::cos(a) * 4.0;
+                const double dy = std::sin(a) * 4.0;
+                p.drawLine(QPointF(cx - dx, cy - dy), QPointF(cx + dx, cy + dy));
+            }
+            break;
+        }
+        case Switch::Quality: {
+            // A stepped diagonal: the same line drawn well and drawn cheaply.
+            QPolygonF steps;
+            steps << QPointF(cx - 4.0, cy + 4.0) << QPointF(cx - 1.0, cy + 4.0)
+                  << QPointF(cx - 1.0, cy + 1.0) << QPointF(cx + 2.0, cy + 1.0)
+                  << QPointF(cx + 2.0, cy - 2.0) << QPointF(cx + 4.0, cy - 2.0);
+            p.drawPolyline(steps);
+            break;
+        }
+        case Switch::Effects: {
+            p.setRenderHint(QPainter::Antialiasing, false);
+            QFont f = p.font();
+            f.setPixelSize(9);
+            f.setItalic(true);
+            p.setFont(f);
+            p.drawText(box, Qt::AlignCenter, QStringLiteral("fx"));
+            break;
+        }
+        case Switch::FrameBlend: {
+            // Three frames stacked back into each other.
+            for (int i = 0; i < 3; ++i) {
+                const double o = i * 2.0;
+                p.drawRect(QRectF(cx - 4.5 + o, cy - 4.5 + o, 5.0, 5.0));
+            }
+            break;
+        }
+        case Switch::MotionBlur: {
+            // A dot with a trail, fading behind it.
+            p.setPen(Qt::NoPen);
+            for (int i = 0; i < 3; ++i) {
+                QColor trail = ink;
+                trail.setAlphaF(ink.alphaF() * (1.0F - static_cast<float>(i) * 0.32F));
+                p.setBrush(trail);
+                p.drawEllipse(QPointF(cx + 2.5 - i * 3.0, cy), 2.0 - i * 0.4,
+                              2.0 - i * 0.4);
+            }
+            break;
+        }
+        case Switch::Adjustment: {
+            // A circle with one half filled: the layer that changes what is under it.
+            const QRectF disc(cx - 4.0, cy - 4.0, 8.0, 8.0);
+            p.drawEllipse(disc);
+            p.setPen(Qt::NoPen);
+            p.setBrush(ink);
+            p.drawPie(disc, 90 * 16, 180 * 16);
+            break;
+        }
+        case Switch::ThreeD: {
+            // A cube, drawn as two squares and the struts between them.
+            const QRectF front(cx - 4.5, cy - 2.5, 6.0, 6.0);
+            const QPointF off(3.0, -3.0);
+            p.drawRect(front);
+            p.drawRect(front.translated(off));
+            p.drawLine(front.topLeft(), front.topLeft() + off);
+            p.drawLine(front.topRight(), front.topRight() + off);
+            p.drawLine(front.bottomRight(), front.bottomRight() + off);
+            break;
+        }
+    }
+    p.restore();
+}
 
 const LayerLabel& labelColors(core::LabelColor c) {
     switch (c) {
@@ -218,12 +369,25 @@ QString rulerLabel(double seconds, double step) {
 
 int TimelineView::trackLeft() const noexcept { return metrics::kLayerColumnW; }
 
-// The right-hand columns, laid out from the track edge inward: Mode, Parent, then the
-// keyframe navigator against the track. Computed in one place because they were
-// previously computed at eight call sites, and two of them disagreed.
+// The right-hand columns, laid out from the track edge inward. Computed in one place
+// because they were previously computed at eight call sites, and two of them disagreed.
+//
+// Read backwards this is AE's order: switches, Mode, T, Track Matte, Parent, keys, track.
 int TimelineView::navLeft() const noexcept { return trackLeft() - kNavW; }
 int TimelineView::parentLeft() const noexcept { return navLeft() - kParentW; }
-int TimelineView::modeLeft() const noexcept { return parentLeft() - kModeW; }
+int TimelineView::trkMatLeft() const noexcept { return parentLeft() - kTrkMatW; }
+int TimelineView::preserveLeft() const noexcept { return trkMatLeft() - kPreserveW; }
+int TimelineView::modeLeft() const noexcept { return preserveLeft() - kModeW; }
+int TimelineView::switchesLeft() const noexcept { return modeLeft() - kSwitchesW; }
+
+// Which switch is under x, or -1. The same arithmetic the painter uses, so a click lands
+// on the glyph it looks like it landed on.
+int TimelineView::switchAt(int x) const noexcept {
+    const int index = (x - switchesLeft() - 2) / kSwitchW;
+    return (x >= switchesLeft() + 2 && index >= 0 && index < metrics::kSwitchCount)
+               ? index
+               : -1;
+}
 
 // The track region. Everything drawn on the time axis is clipped to this, because with
 // a scrolled view a bar's left edge lands at a negative x and would otherwise paint
@@ -576,7 +740,9 @@ double TimelineView::snapTime(double seconds, core::LayerId ignore) const {
 
 TimelineView::DragMode TimelineView::hitTestBar(const Layer& layer, const QPoint& pos,
                                                 const Row& row) const {
-    if (comp_ == nullptr || pos.x() < trackLeft()) {
+    // A locked layer has no grab handles at all, which is the whole of "move and trim
+    // are refused": there is nothing to say no to later because nothing was picked up.
+    if (comp_ == nullptr || layer.locked || pos.x() < trackLeft()) {
         return DragMode::None;
     }
     if (pos.y() < row.top || pos.y() >= row.top + row.height) {
@@ -618,8 +784,22 @@ void TimelineView::paintHeader(QPainter& p) const {
     p.drawText(QRect(kAvW, 0, kIndexW, h), Qt::AlignCenter, QStringLiteral("#"));
     p.drawText(QRect(kAvW + kIndexW + 20, 0, 160, h), Qt::AlignVCenter | Qt::AlignLeft,
                QStringLiteral("Source Name"));
+
+    // The switches column heads itself with the glyphs, because that is the only label
+    // that would fit and because the icon is the thing you have to learn anyway.
+    for (int i = 0; i < metrics::kSwitchCount; ++i) {
+        drawSwitchGlyph(p, static_cast<Switch>(i),
+                        QRect(switchesLeft() + 2 + i * kSwitchW, 0, kSwitchW, h),
+                        kColumnHeaderText);
+    }
+    p.setFont(small);
+
     p.drawText(QRect(modeLeft(), 0, kModeW, h),
                Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Mode"));
+    p.drawText(QRect(preserveLeft(), 0, kPreserveW, h), Qt::AlignCenter,
+               QStringLiteral("T"));
+    p.drawText(QRect(trkMatLeft() + 2, 0, kTrkMatW - 4, h),
+               Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Track Matte"));
     p.drawText(QRect(parentLeft(), 0, kParentW, h),
                Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("Parent"));
     // A diamond rather than the word "Keys": the column is 52px and the control under it
@@ -731,6 +911,32 @@ void TimelineView::paintKeyNavigator(QPainter& p, const Row& row, bool hasKeyHer
                QStringLiteral("\u25b8"));
 }
 
+void TimelineView::paintSwitches(QPainter& p, const Row& row, const Layer& layer) const {
+    const int left = switchesLeft() + 2;
+
+    for (int i = 0; i < metrics::kSwitchCount; ++i) {
+        const auto which = static_cast<Switch>(i);
+        const QRect box(left + i * kSwitchW, row.top, kSwitchW, row.height);
+
+        // fx only exists on a layer that has effects, the way it does in AE. An fx mark
+        // on a layer with nothing applied would be a switch for a thing that is not there.
+        if (which == Switch::Effects && layer.effects.empty()) {
+            continue;
+        }
+
+        QColor ink = QColor("#4d4d4d");
+        if (which == Switch::Effects) {
+            // Green when at least one effect is running, grey when they are all off. The
+            // same green the effects panel and the inspector use for an effect.
+            const bool anyOn = std::any_of(
+                layer.effects.begin(), layer.effects.end(),
+                [](const core::EffectInstance& e) { return e.enabled; });
+            ink = anyOn ? kExpressionText : QColor("#5f5f5f");
+        }
+        drawSwitchGlyph(p, which, box, ink);
+    }
+}
+
 void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer) const {
     const bool isSelected = selected_.has_value() && *selected_ == layer.id;
     const QRect r(0, row.top, width(), row.height);
@@ -742,7 +948,8 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
 
     // Eye, audio dot, solo box.
     p.setPen(layer.enabled ? kTextTertiary : kTextFaint);
-    p.drawText(QRect(6, row.top, 16, row.height), Qt::AlignCenter, QStringLiteral("◉"));
+    p.drawText(QRect(kEyeX, row.top, kEyeEnd - kEyeX, row.height), Qt::AlignCenter,
+               QStringLiteral("◉"));
 
     // The speaker. Drawn only on layers that actually carry audio, and absent otherwise,
     // which is how AE says "this layer has no sound" without spending a pixel on it. It
@@ -758,8 +965,28 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
 
     p.setPen(QPen(QColor("#555555"), 1.0));
     p.setBrush(layer.solo ? kTextTertiary : Qt::NoBrush);
-    p.drawRect(QRect(44, cy - 3, 7, 7));
+    p.drawRect(QRect(kSoloX + 4, cy - 3, 7, 7));
     p.setBrush(Qt::NoBrush);
+
+    // The padlock. Shackle plus body, and only the body when it is open, which is the
+    // difference you can read at 11 pixels. A closed padlock drawn faint would be the
+    // same picture twice.
+    {
+        const double lx = kLockX + 5.5;
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(QPen(layer.locked ? kTextPrimary : QColor("#555555"), 1.0));
+        if (layer.locked) {
+            p.setBrush(kTextPrimary);
+            p.drawRect(QRectF(lx, cy - 1.0, 7.0, 5.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawArc(QRectF(lx + 1.5, cy - 5.0, 4.0, 6.0), 0, 180 * 16);
+        } else {
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(QRectF(lx, cy - 1.0, 7.0, 5.0));
+        }
+        p.restore();
+    }
 
     // Index.
     const auto index = static_cast<int>(
@@ -792,16 +1019,33 @@ void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer
     p.fillRect(QRect(nameX + 13, cy - 7, 3, 14), colors.stripe);
 
     p.setPen(isSelected ? kTextSelectedLayer : kTextBody);
-    p.drawText(QRect(nameX + 21, row.top, modeLeft() - nameX - 21,
-                     row.height),
-               Qt::AlignVCenter | Qt::AlignLeft, QString::fromStdString(layer.name));
+    p.drawText(QRect(nameX + 21, row.top, switchesLeft() - nameX - 25, row.height),
+               Qt::AlignVCenter | Qt::AlignLeft,
+               QFontMetrics(p.font()).elidedText(QString::fromStdString(layer.name),
+                                                 Qt::ElideMiddle,
+                                                 switchesLeft() - nameX - 25));
 
-    // Mode and parent.
+    paintSwitches(p, row, layer);
+
+    // Mode, preserve transparency, track matte, parent.
     p.setPen(kTextDim);
     p.drawText(QRect(modeLeft(), row.top, kModeW, row.height),
                Qt::AlignVCenter | Qt::AlignLeft,
                layer.kind == core::LayerKind::Audio ? QStringLiteral("—")
                                                     : blendName(layer.blend));
+
+    // Preserve Underlying Transparency: an empty box, and it stays empty. Nothing in the
+    // compositor reads a per-layer alpha rule yet, so this is the column, not the feature.
+    p.setPen(QPen(QColor("#4a4a4a"), 1.0));
+    p.drawRect(QRect(preserveLeft() + 3, cy - 4, 8, 8));
+
+    // Track Matte. A dropdown in AE; here it is the word "None" and no menu, for the same
+    // reason: mattes are not implemented, and offering the choices would be offering to
+    // do something Ruby cannot do.
+    p.setPen(kTextFaint);
+    p.drawText(QRect(trkMatLeft() + 2, row.top, kTrkMatW - 4, row.height),
+               Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("None"));
+    p.setPen(kTextDim);
     // The real parent, not a hardcoded "None". This column has said None on every row
     // since it was drawn, including on layers that were parented.
     QString parentName = QStringLiteral("None");
@@ -1150,8 +1394,8 @@ bool TimelineView::event(QEvent* e) {
 
     if (comp_ != nullptr && pos.y() < metrics::kColumnHeaderH) {
         text = (pos.x() < trackLeft())
-                   ? QStringLiteral("Layer columns — visibility, audio, solo, blend mode "
-                                    "and parent")
+                   ? QStringLiteral("Layer columns — visibility, audio, solo, lock, the "
+                                    "switch run, blend mode, matte and parent")
                    : QStringLiteral("Time ruler — click or drag to scrub");
     } else if (comp_ != nullptr) {
         for (const Row& row : rows_) {
@@ -1171,13 +1415,34 @@ bool TimelineView::event(QEvent* e) {
                                             "across everything animated on this layer")
                            : QString();
             } else if (row.kind == RowKind::Layer && pos.x() < trackLeft()) {
-                // The A/V column is three unlabelled dots. Nobody guesses these.
-                if (pos.x() < 24) {
+                // The A/V column is four unlabelled marks and the switches column is
+                // eight more. Nobody guesses these, and seven of the switches do nothing
+                // yet, which is worth saying out loud rather than leaving to be
+                // discovered by clicking.
+                if (pos.x() < kEyeEnd) {
                     text = QStringLiteral("Visibility — hide this layer without deleting it");
-                } else if (pos.x() < 38) {
+                } else if (pos.x() < kAudioEnd) {
                     text = QStringLiteral("Audio — whether this layer contributes sound");
-                } else if (pos.x() < 56) {
+                } else if (pos.x() < kSoloEnd) {
                     text = QStringLiteral("Solo — show only the soloed layers");
+                } else if (pos.x() < kLockEnd) {
+                    text = QStringLiteral("Lock — refuse every change to this layer. "
+                                          "Visibility, audio and solo still work.");
+                } else if (const int sw = switchAt(pos.x());
+                           sw >= 0 && pos.x() < modeLeft()) {
+                    text = QString::fromUtf8(switchTip(static_cast<Switch>(sw)));
+                } else if (pos.x() >= modeLeft() && pos.x() < preserveLeft()) {
+                    text = QStringLiteral("Mode — how this layer blends with what is "
+                                          "under it");
+                } else if (pos.x() >= preserveLeft() && pos.x() < trkMatLeft()) {
+                    text = QStringLiteral("Preserve Underlying Transparency — show this "
+                                          "layer only where the layers below are opaque. "
+                                          "Not wired up yet.");
+                } else if (pos.x() >= trkMatLeft() && pos.x() < parentLeft()) {
+                    text = QStringLiteral("Track Matte — use the layer above as this "
+                                          "layer's alpha. Not wired up yet.");
+                } else if (pos.x() >= parentLeft() && pos.x() < navLeft()) {
+                    text = QStringLiteral("Parent — follow another layer's transform");
                 } else if (pos.x() >= kAvW + kIndexW && pos.x() < kAvW + kIndexW + 13) {
                     text = QStringLiteral("Twirl — show this layer's animated properties "
                                           "and effects");
@@ -1309,6 +1574,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
             if (owner == nullptr || pos.x() < navX || pos.x() >= trackLeft()) {
                 return;
             }
+            // Stepping between keys is reading, not editing, so it stays available on a
+            // locked layer. Adding and removing one does not, and that is handled below
+            // at the diamond rather than here.
             Property* prop = nullptr;
             if (row.effect < 0) {
                 if (row.propertyIndex < static_cast<int>(owner->properties.size())) {
@@ -1355,6 +1623,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
                                  return std::fabs(to_seconds(k.time, ctx) - currentTime_) <
                                         1e-6;
                              });
+            if (owner->locked) {
+                return;  // the diamond is a readout on a locked layer
+            }
             emit editBegan(existing != prop->keys.end() ? QStringLiteral("Remove Keyframe")
                                                         : QStringLiteral("Add Keyframe"));
             if (existing != prop->keys.end()) {
@@ -1384,7 +1655,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         }
 
         // The eye. The compositor has always honoured `enabled`; nothing could set it.
-        if (pos.x() < 24) {
+        if (pos.x() < kEyeEnd) {
             emit editBegan(QStringLiteral("Hide Layer"));
             layer->enabled = !layer->enabled;
             emit editEnded();
@@ -1394,7 +1665,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         }
 
         // Solo. Same story, except the compositor did not honour it either.
-        if (pos.x() >= 40 && pos.x() < 56) {
+        if (pos.x() >= kSoloX && pos.x() < kSoloEnd) {
             emit editBegan(QStringLiteral("Solo Layer"));
             layer->solo = !layer->solo;
             emit editEnded();
@@ -1403,10 +1674,49 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
             return;
         }
 
+        // The padlock. Locking a selected layer deselects it, because the selection is
+        // what every keyboard edit acts on and leaving it selected would mean a locked
+        // layer still answering to Delete.
+        if (pos.x() >= kLockX && pos.x() < kLockEnd) {
+            emit editBegan(layer->locked ? QStringLiteral("Unlock Layer")
+                                         : QStringLiteral("Lock Layer"));
+            layer->locked = !layer->locked;
+            emit editEnded();
+            if (layer->locked && selected_.has_value() && *selected_ == layer->id) {
+                selected_.reset();
+                emit selectionChanged(0);
+            }
+            emit layersChanged();
+            update();
+            return;
+        }
+
+        // The eight switches. fx toggles every effect on the layer; the other seven are
+        // drawn and do nothing, and swallow the click rather than falling through to
+        // selecting the layer, which would make an inert switch feel like a misfire.
+        if (const int index = switchAt(pos.x());
+            index >= 0 && pos.x() < modeLeft()) {
+            if (static_cast<Switch>(index) == Switch::Effects && !layer->locked &&
+                !layer->effects.empty()) {
+                const bool anyOn = std::any_of(
+                    layer->effects.begin(), layer->effects.end(),
+                    [](const core::EffectInstance& e) { return e.enabled; });
+                emit editBegan(anyOn ? QStringLiteral("Disable Effects")
+                                     : QStringLiteral("Enable Effects"));
+                for (core::EffectInstance& effect : layer->effects) {
+                    effect.enabled = !anyOn;
+                }
+                emit editEnded();
+                emit layersChanged();
+                update();
+            }
+            return;
+        }
+
         // The Parent cell. Parenting has worked in the compositor since the transform
         // work and there has been no way to reach it.
         const int parentX = parentLeft();
-        if (pos.x() >= parentX && pos.x() < trackLeft()) {
+        if (!layer->locked && pos.x() >= parentX && pos.x() < navLeft()) {
             QMenu menu(this);
             QAction* none = menu.addAction(QStringLiteral("None"));
             none->setCheckable(true);
@@ -1461,7 +1771,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // with no way to change it, which is the same lie as a mode the compositor
         // ignored, just from the other end.
         const int modeX = modeLeft();
-        if (pos.x() >= modeX && pos.x() < modeX + kModeW) {
+        if (!layer->locked && pos.x() >= modeX && pos.x() < modeX + kModeW) {
             QMenu menu(this);
             const core::BlendMode modes[] = {
                 core::BlendMode::Normal,    core::BlendMode::Add,
@@ -1521,7 +1831,7 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         // The speaker mutes. Only hit-testable where one is actually drawn, so clicking
         // the empty slot on a silent layer does nothing rather than toggling a switch the
         // user cannot see.
-        if (pos.x() >= 24 && pos.x() < 38 && peaksFor(*layer) != nullptr) {
+        if (pos.x() >= kAudioX && pos.x() < kAudioEnd && peaksFor(*layer) != nullptr) {
             emit editBegan(QStringLiteral("Mute Layer"));
             layer->audioEnabled = !layer->audioEnabled;
             emit editEnded();
@@ -1534,6 +1844,12 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
         const int twirlX = kAvW + kIndexW;
         if (pos.x() >= twirlX && pos.x() < twirlX + 13) {
             toggleExpanded(layer->id);
+            return;
+        }
+
+        // A locked layer cannot be selected. Everything that edits a layer works off the
+        // selection, so refusing it here is one guard instead of one per edit.
+        if (layer->locked) {
             return;
         }
 

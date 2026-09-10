@@ -203,6 +203,13 @@ struct Layer {
     bool audioEnabled = true;  // the speaker: whether it is heard
     bool solo = false;
 
+    // The padlock. Refuses everything that would change the layer: selecting it, moving
+    // or trimming its bar, its blend mode, its parent, its keyframes. Visibility, audio,
+    // solo and twirling it open stay live, because none of those change what the layer
+    // is, and half of why you lock a layer is to keep looking at it while you work
+    // around it.
+    bool locked = false;
+
     // Text layers only.
     //
     // A structured model rather than a blob of HTML. Olive stores rich text as HTML, which

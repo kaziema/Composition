@@ -126,13 +126,25 @@ inline constexpr int kBrowserPanelW = 494;
 // printed straight over the word "None". Two things sharing a column is not a layout, it
 // is two layouts that happen not to have collided yet.
 inline constexpr int kKeyNavW = 52;
-inline constexpr int kLayerColumnW = 372 + kKeyNavW;
 
-// Layer column sub-widths
-inline constexpr int kAvToggleW = 62;
+// Layer column sub-widths, left to right, matching the order AE lays them out in:
+//   A/V | # | Layer Name | switches | Mode | T | Track Matte | Parent | keys
+inline constexpr int kAvToggleW = 78;  // eye, audio, solo, lock
 inline constexpr int kIndexW = 20;
+inline constexpr int kLayerNameW = 182;
+inline constexpr int kSwitchW = 14;
+inline constexpr int kSwitchCount = 8;  // shy, collapse, quality, fx, blend, blur, adj, 3D
+inline constexpr int kSwitchesW = kSwitchW * kSwitchCount + 4;
 inline constexpr int kModeW = 56;
+inline constexpr int kPreserveW = 16;  // the "T" box
+inline constexpr int kTrkMatW = 74;
 inline constexpr int kParentW = 52;
+
+// Summed rather than written down. The number used to be a literal, and every column
+// added since has meant editing a total by hand and hoping it still matched what the
+// painter did. It does not have to match: it can be derived.
+inline constexpr int kLayerColumnW = kAvToggleW + kIndexW + kLayerNameW + kSwitchesW +
+                                     kModeW + kPreserveW + kTrkMatW + kParentW + kKeyNavW;
 
 inline constexpr int kToolButtonW = 24;
 inline constexpr int kToolButtonH = 22;
