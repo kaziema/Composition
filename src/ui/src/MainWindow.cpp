@@ -442,65 +442,54 @@ core::SizeOf MainWindow::layerSizes() {
     };
 }
 
+// Which selected layers can actually be aligned: they need a picture and an unlocked one.
+std::vector<core::LayerId> MainWindow::alignableSelection() {
+    std::vector<core::LayerId> out;
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr || timelinePanel_ == nullptr) {
+        return out;
+    }
+    for (const core::LayerId id : timelinePanel_->selectedLayers()) {
+        const core::Layer* layer = comp->find(id);
+        // A locked layer is not alignable for the same reason it is not draggable, and an
+        // audio layer has no picture to line up.
+        if (layer != nullptr && !layer->locked &&
+            layer->kind != core::LayerKind::Audio) {
+            out.push_back(id);
+        }
+    }
+    return out;
+}
+
 void MainWindow::updateAlignAvailability() {
     if (alignPanel_ == nullptr) {
         return;
     }
-    const core::Layer* layer = selectedLayer();
-    // A locked layer is not alignable for the same reason it is not draggable, and an
-    // audio layer has no picture to line up. Both would otherwise be a button that looks
-    // live and does nothing when pressed.
-    alignPanel_->setAlignable(layer != nullptr && !layer->locked &&
-                              layer->kind != core::LayerKind::Audio);
+    alignPanel_->setSelectionCount(static_cast<int>(alignableSelection().size()));
 }
 
-void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
+bool MainWindow::nudgeLayerBy(core::Layer& layer, double dx, double dy, double seconds,
+                              const core::SizeOf& sizes) {
     core::Composition* comp = activeComposition();
-    core::Layer* layer = selectedLayer();
-    if (comp == nullptr || layer == nullptr || layer->locked) {
-        return;
+    core::Property* position = layer.find("position");
+    if (comp == nullptr || position == nullptr) {
+        return false;
     }
-    core::Property* position = layer->find("position");
-    if (position == nullptr) {
-        return;
-    }
-
     const double compW = static_cast<double>(comp->width);
     const double compH = static_cast<double>(comp->height);
     const core::TimeContext ctx = comp->timeContext();
-    const double seconds = playback_ != nullptr ? playback_->time() : 0.0;
-    const core::SizeOf sizes = layerSizes();
 
-    const core::Bounds box =
-        core::layerBounds(*comp, *layer, seconds, ctx, compW, compH, sizes);
-    if (box.width() <= 0.0 && box.height() <= 0.0) {
-        return;  // nothing with an edge to align
-    }
-
-    // How far the layer has to travel, in composition pixels.
-    double dx = 0.0;
-    double dy = 0.0;
-    switch (edge) {
-        case AlignPanel::Align::Left:    dx = -box.left; break;
-        case AlignPanel::Align::HCenter: dx = compW / 2.0 - box.centerX(); break;
-        case AlignPanel::Align::Right:   dx = compW - box.right; break;
-        case AlignPanel::Align::Top:     dy = -box.top; break;
-        case AlignPanel::Align::VCenter: dy = compH / 2.0 - box.centerY(); break;
-        case AlignPanel::Align::Bottom:  dy = compH - box.bottom; break;
-    }
-
-    // Position is stored in the PARENT's space, so a distance in composition pixels is
-    // not the number to add to it. Ask the parent chain what that distance is worth: for
-    // an unparented layer this is the identity and dx stays dx, and for a layer parented
-    // to something rotated or scaled it is the difference between landing on the edge and
-    // landing near it.
-    if (layer->parent.has_value()) {
-        if (const core::Layer* owner = comp->find(*layer->parent); owner != nullptr) {
-            const core::Transform2D toComp = core::resolvedTransform(
-                *comp, *owner, seconds, ctx, compW, compH, sizes);
-            const core::Transform2D back = toComp.inverse();
-            // The linear part only. A delta is a direction and a distance, not a point,
-            // so the translation must not come along.
+    // Position is stored in the PARENT's space, so a distance in composition pixels is not
+    // the number to add to it. Ask the parent chain what that distance is worth: for an
+    // unparented layer this is the identity, and under a parent scaled to 50% it is the
+    // difference between landing on the edge and landing half way there.
+    if (layer.parent.has_value()) {
+        if (const core::Layer* owner = comp->find(*layer.parent); owner != nullptr) {
+            const core::Transform2D back =
+                core::resolvedTransform(*comp, *owner, seconds, ctx, compW, compH, sizes)
+                    .inverse();
+            // The linear part only. A delta is a direction and a distance, not a point, so
+            // the translation must not come along.
             const double ux = back.applyX(dx, dy) - back.applyX(0.0, 0.0);
             const double uy = back.applyY(dx, dy) - back.applyY(0.0, 0.0);
             dx = ux;
@@ -508,16 +497,15 @@ void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
         }
     }
 
-    // Back into the percentages Position is stored in.
     const double px = compW > 0.0 ? dx / compW * 100.0 : 0.0;
     const double py = compH > 0.0 ? dy / compH * 100.0 : 0.0;
     if (std::fabs(px) < 1e-9 && std::fabs(py) < 1e-9) {
-        return;  // already there; do not put a no-op on the undo stack
+        return false;
     }
 
-    // An animated Position moves as a whole. Aligning is a statement about where the
-    // layer sits, and setting one key at the playhead would align this frame by breaking
-    // every other one: the move you asked for plus a move you did not.
+    // An animated Position moves as a whole. Aligning is a statement about where the layer
+    // sits, and setting one key at the playhead would align this frame by breaking every
+    // other one: the move you asked for plus a move you did not.
     const auto shift = [px, py](core::Property& prop) {
         if (prop.animated()) {
             for (core::Keyframe& k : prop.keys) {
@@ -530,29 +518,180 @@ void MainWindow::alignSelectedLayer(AlignPanel::Align edge) {
     };
 
     // Tried on a copy first, because writing to Position does not always move the layer.
-    // An expression that returns an absolute value ignores what is underneath it, so the
+    // An expression returning an absolute value ignores what is underneath it, so the
     // layer would stay put while the file was marked dirty and an undo entry appeared for
     // a move that never happened. Rather than special-casing expressions, ask the only
     // question that matters: does the box end up somewhere else?
-    core::Layer trial = *layer;
+    const core::Bounds before =
+        core::layerBounds(*comp, layer, seconds, ctx, compW, compH, sizes);
+    core::Layer trial = layer;
     if (core::Property* trialPos = trial.find("position"); trialPos != nullptr) {
         shift(*trialPos);
     }
-    const core::Bounds moved =
+    const core::Bounds after =
         core::layerBounds(*comp, trial, seconds, ctx, compW, compH, sizes);
-    if (std::fabs(moved.left - box.left) < 1e-6 &&
-        std::fabs(moved.top - box.top) < 1e-6) {
-        return;  // Position is not what decides where this layer is
+    if (std::fabs(after.left - before.left) < 1e-6 &&
+        std::fabs(after.top - before.top) < 1e-6) {
+        return false;  // Position is not what decides where this layer is
     }
 
-    recordEdit(QStringLiteral("Align Layer"));
     shift(*position);
+    return true;
+}
 
-    // The inspector reads Position too, so it is refreshed along with the timeline and
-    // the viewer. An align that moves the layer on screen while the Position field still
-    // reads the old number looks like two different apps.
+void MainWindow::alignSelectedLayer(AlignPanel::Align edge, AlignPanel::Target target) {
+    core::Composition* comp = activeComposition();
+    const std::vector<core::LayerId> ids = alignableSelection();
+    if (comp == nullptr || ids.empty()) {
+        return;
+    }
+
+    const double compW = static_cast<double>(comp->width);
+    const double compH = static_cast<double>(comp->height);
+    const core::TimeContext ctx = comp->timeContext();
+    const double seconds = playback_ != nullptr ? playback_->time() : 0.0;
+    const core::SizeOf sizes = layerSizes();
+
+    // What everything lines up against: the frame, or the box around the whole selection.
+    core::Bounds against{0.0, 0.0, compW, compH};
+    if (target == AlignPanel::Target::Selection) {
+        bool first = true;
+        for (const core::LayerId id : ids) {
+            const core::Layer* layer = comp->find(id);
+            if (layer == nullptr) {
+                continue;
+            }
+            const core::Bounds b =
+                core::layerBounds(*comp, *layer, seconds, ctx, compW, compH, sizes);
+            against = first ? b
+                            : core::Bounds{std::min(against.left, b.left),
+                                           std::min(against.top, b.top),
+                                           std::max(against.right, b.right),
+                                           std::max(against.bottom, b.bottom)};
+            first = false;
+        }
+        if (first) {
+            return;
+        }
+    }
+
+    // One undo step for the gesture, recorded before anything moves and dropped again if
+    // nothing did. Aligning four layers and pressing undo four times is an undo stack that
+    // remembers the implementation rather than the act.
+    recordEdit(QStringLiteral("Align Layers"));
+    bool movedAny = false;
+
+    for (const core::LayerId id : ids) {
+        core::Layer* layer = comp->find(id);
+        if (layer == nullptr) {
+            continue;
+        }
+        const core::Bounds box =
+            core::layerBounds(*comp, *layer, seconds, ctx, compW, compH, sizes);
+        if (box.width() <= 0.0 && box.height() <= 0.0) {
+            continue;  // nothing with an edge to align
+        }
+
+        double dx = 0.0;
+        double dy = 0.0;
+        switch (edge) {
+            case AlignPanel::Align::Left:    dx = against.left - box.left; break;
+            case AlignPanel::Align::HCenter: dx = against.centerX() - box.centerX(); break;
+            case AlignPanel::Align::Right:   dx = against.right - box.right; break;
+            case AlignPanel::Align::Top:     dy = against.top - box.top; break;
+            case AlignPanel::Align::VCenter: dy = against.centerY() - box.centerY(); break;
+            case AlignPanel::Align::Bottom:  dy = against.bottom - box.bottom; break;
+        }
+        movedAny = nudgeLayerBy(*layer, dx, dy, seconds, sizes) || movedAny;
+    }
+
+    if (!movedAny) {
+        return;
+    }
     timelinePanel_->setComposition(comp);
-    inspector_->setSelectedLayer(layer->id);
+    inspector_->setSelectedLayer(timelinePanel_->selectedLayer());
+    if (viewport_ != nullptr) {
+        viewport_->update();
+    }
+    markDirty();
+}
+
+// Even gaps between the outermost two, which stay put.
+//
+// Sorted by where the layers actually are, not by their order in the stack. "Spread these
+// out" is a statement about the picture, and a layer's position in the layer list has
+// nothing to do with where it sits on screen.
+void MainWindow::distributeSelectedLayers(AlignPanel::Align axis) {
+    core::Composition* comp = activeComposition();
+    const std::vector<core::LayerId> ids = alignableSelection();
+    if (comp == nullptr || ids.size() < 3) {
+        return;  // with two there is nothing between them to space out
+    }
+
+    const double compW = static_cast<double>(comp->width);
+    const double compH = static_cast<double>(comp->height);
+    const core::TimeContext ctx = comp->timeContext();
+    const double seconds = playback_ != nullptr ? playback_->time() : 0.0;
+    const core::SizeOf sizes = layerSizes();
+    const bool vertical = axis == AlignPanel::Align::Top ||
+                          axis == AlignPanel::Align::VCenter ||
+                          axis == AlignPanel::Align::Bottom;
+
+    // The point on each layer the spacing is measured from: its near edge, its centre, or
+    // its far edge, which is what makes the six buttons six different answers.
+    const auto anchorOf = [&](const core::Bounds& b) {
+        switch (axis) {
+            case AlignPanel::Align::Left:    return b.left;
+            case AlignPanel::Align::HCenter: return b.centerX();
+            case AlignPanel::Align::Right:   return b.right;
+            case AlignPanel::Align::Top:     return b.top;
+            case AlignPanel::Align::VCenter: return b.centerY();
+            case AlignPanel::Align::Bottom:  return b.bottom;
+        }
+        return b.left;
+    };
+
+    struct Placed {
+        core::Layer* layer = nullptr;
+        double anchor = 0.0;
+    };
+    std::vector<Placed> placed;
+    for (const core::LayerId id : ids) {
+        core::Layer* layer = comp->find(id);
+        if (layer == nullptr) {
+            continue;
+        }
+        placed.push_back({layer, anchorOf(core::layerBounds(*comp, *layer, seconds, ctx,
+                                                            compW, compH, sizes))});
+    }
+    if (placed.size() < 3) {
+        return;
+    }
+    std::sort(placed.begin(), placed.end(),
+              [](const Placed& a, const Placed& b) { return a.anchor < b.anchor; });
+
+    const double first = placed.front().anchor;
+    const double last = placed.back().anchor;
+    const double step = (last - first) / static_cast<double>(placed.size() - 1);
+
+    recordEdit(QStringLiteral("Distribute Layers"));
+    bool movedAny = false;
+
+    // The ends do not move. They define the span, and moving them would mean the result
+    // depends on which of them you think of as fixed.
+    for (std::size_t i = 1; i + 1 < placed.size(); ++i) {
+        const double want = first + step * static_cast<double>(i);
+        const double delta = want - placed[i].anchor;
+        movedAny = nudgeLayerBy(*placed[i].layer, vertical ? 0.0 : delta,
+                                vertical ? delta : 0.0, seconds, sizes) ||
+                   movedAny;
+    }
+
+    if (!movedAny) {
+        return;
+    }
+    timelinePanel_->setComposition(comp);
+    inspector_->setSelectedLayer(timelinePanel_->selectedLayer());
     if (viewport_ != nullptr) {
         viewport_->update();
     }
@@ -1042,21 +1181,38 @@ void MainWindow::noteCompositionGrew() {
 
 void MainWindow::removeSelectedLayer(const QString& undoLabel) {
     core::Composition* comp = activeComposition();
-    core::Layer* layer = selectedLayer();
-    if (comp == nullptr || layer == nullptr) {
+    if (comp == nullptr || timelinePanel_ == nullptr) {
         return;
     }
-    const core::LayerId going = layer->id;
+    // Everything selected, not just the primary. Selecting three layers and pressing
+    // Delete has exactly one reasonable outcome and it is not "one of them".
+    const std::vector<core::LayerId> going = timelinePanel_->selectedLayers();
+    if (going.empty()) {
+        return;
+    }
 
-    // Work out what to select next BEFORE removing, while the indices still mean
-    // something. The layer that slides up into this slot is the natural next choice,
-    // and the one above it when we just deleted the bottom of the stack.
-    const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
-                                 [going](const core::Layer& l) { return l.id == going; });
-    const auto index = static_cast<std::size_t>(std::distance(comp->layers.begin(), at));
+    // Work out what to select next BEFORE removing anything, while the indices still mean
+    // something. The layer that slides up into the topmost deleted slot is the natural
+    // next choice, and the one above it when the bottom of the stack just went.
+    std::size_t index = comp->layers.size();
+    for (const core::LayerId id : going) {
+        const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
+                                     [id](const core::Layer& l) { return l.id == id; });
+        if (at != comp->layers.end()) {
+            index = std::min(index,
+                             static_cast<std::size_t>(
+                                 std::distance(comp->layers.begin(), at)));
+        }
+    }
 
+    // One undo step for the whole gesture. Deleting four layers and having to press undo
+    // four times is an undo stack that remembers the implementation rather than the act.
     recordEdit(undoLabel);
-    if (!comp->removeLayer(going)) {
+    bool removedAny = false;
+    for (const core::LayerId id : going) {
+        removedAny = comp->removeLayer(id) || removedAny;
+    }
+    if (!removedAny) {
         return;
     }
 
@@ -1154,27 +1310,42 @@ void MainWindow::pasteLayer() {
 
 void MainWindow::duplicateLayer() {
     core::Composition* comp = activeComposition();
-    const core::Layer* layer = selectedLayer();
-    if (comp == nullptr || layer == nullptr) {
+    if (comp == nullptr || timelinePanel_ == nullptr ||
+        timelinePanel_->selectedLayers().empty()) {
         statusBar()->showMessage(QStringLiteral("Select a layer to duplicate"), 4000);
         return;
     }
+    const std::vector<core::LayerId> sources = timelinePanel_->selectedLayers();
     recordEdit(QStringLiteral("Duplicate Layer"));
 
-    core::Layer copy = *layer;
-    copy.id = comp->nextLayerId();
-    // The parent is KEPT. A duplicate is always in the same composition, so the link is
-    // still valid, and a copy of a parented layer that quietly loses its parent is a copy
-    // that behaves differently from the thing it copied.
+    core::LayerId made = 0;
+    for (const core::LayerId id : sources) {
+        const core::Layer* layer = comp->find(id);
+        if (layer == nullptr) {
+            continue;
+        }
+        core::Layer copy = *layer;
+        copy.id = comp->nextLayerId();
+        // The parent is KEPT. A duplicate is always in the same composition, so the link
+        // is still valid, and a copy of a parented layer that quietly loses its parent is
+        // a copy that behaves differently from the thing it copied.
+        //
+        // Note this means duplicating a parent AND its child gives you a copied child
+        // still following the ORIGINAL parent. Right for one layer, arguably wrong for a
+        // whole hierarchy, and rewiring copies to point at each other is its own decision
+        // rather than something to slip in here.
+        copy.locked = false;  // a copy you cannot touch is not a useful copy
 
-    // Directly above the original, not on top of the stack. A duplicate that jumps to
-    // the top of a twenty layer comp is a duplicate you then have to go and find.
-    const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
-                                 [id = layer->id](const core::Layer& l) {
-                                     return l.id == id;
-                                 });
-    const core::LayerId made = copy.id;
-    comp->layers.insert(at, std::move(copy));
+        // Directly above the original, not on top of the stack. A duplicate that jumps to
+        // the top of a twenty layer comp is a duplicate you then have to go and find.
+        const auto at = std::find_if(comp->layers.begin(), comp->layers.end(),
+                                     [id](const core::Layer& l) { return l.id == id; });
+        made = copy.id;
+        comp->layers.insert(at, std::move(copy));
+    }
+    if (made == 0) {
+        return;
+    }
 
     if (timelinePanel_ != nullptr) {
         timelinePanel_->setComposition(comp);
@@ -1228,12 +1399,13 @@ void MainWindow::showLayerContextMenu(const QPoint& globalPos) {
 
 void MainWindow::applyEffect(const std::string& effectId) {
     core::Composition* comp = activeComposition();
-    core::Layer* layer = selectedLayer();
-    if (comp == nullptr || layer == nullptr) {
+    if (comp == nullptr || timelinePanel_ == nullptr ||
+        timelinePanel_->selectedLayers().empty()) {
         statusBar()->showMessage(QStringLiteral("Select a layer to apply an effect to"),
                                  4000);
         return;
     }
+    const std::vector<core::LayerId> targets = timelinePanel_->selectedLayers();
     const engine::EffectRegistry& registry = engine::EffectRegistry::instance();
     const engine::EffectDef* def = registry.find(effectId);
     if (def == nullptr) {
@@ -1243,14 +1415,20 @@ void MainWindow::applyEffect(const std::string& effectId) {
     recordEdit(QStringLiteral("Apply %1")
                    .arg(QString::fromStdString(def->schema.display_name)));
 
-    // Effects apply in order, top to bottom, so a new one goes on the END of the stack:
+    // Effects apply in order, top to bottom, so a new one goes on the END of each stack:
     // it acts on the result of everything already there, which is what "apply an effect
     // to this layer" means when the layer already has some.
-    layer->effects.push_back(registry.instantiate(effectId));
+    for (const core::LayerId id : targets) {
+        core::Layer* target = comp->find(id);
+        if (target == nullptr || target->locked) {
+            continue;
+        }
+        target->effects.push_back(registry.instantiate(effectId));
 
-    // Twirled open, so what you just added is visible rather than hidden behind an arrow
-    // you have to know to click.
-    layer->expanded = true;
+        // Twirled open, so what was just added is visible rather than hidden behind an
+        // arrow you have to know to click.
+        target->expanded = true;
+    }
 
     if (timelinePanel_ != nullptr) {
         timelinePanel_->setComposition(comp);
@@ -2425,6 +2603,8 @@ QWidget* MainWindow::buildBody() {
     inspectorTabs_->addPage(alignPanel_);
     connect(alignPanel_, &AlignPanel::alignRequested, this,
             &MainWindow::alignSelectedLayer);
+    connect(alignPanel_, &AlignPanel::distributeRequested, this,
+            &MainWindow::distributeSelectedLayers);
     updateAlignAvailability();
 
     bodySplit_->addWidget(leftDock_);
@@ -2475,6 +2655,10 @@ QWidget* MainWindow::buildBody() {
                 inspector_->setSelectedLayer(id);
                 updateAlignAvailability();
             });
+    // Cmd-clicking a second layer changes the set without changing the primary, so the
+    // align panel would never hear about it through selectionChanged alone.
+    connect(timelinePanel, &TimelinePanel::selectionSetChanged, this,
+            &MainWindow::updateAlignAvailability);
     connect(timelinePanel, &TimelinePanel::currentTimeChanged, inspector_,
             [this](double seconds) { inspector_->setCurrentTime(seconds); });
     inspector_->setSelectedLayer(comp.layers.empty()

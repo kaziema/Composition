@@ -22,9 +22,17 @@ public:
 
     enum class Align { Left, HCenter, Right, Top, VCenter, Bottom };
 
-    // Whether anything is selected that can be aligned. Audio layers cannot: they have no
-    // picture, so there is no edge to line up.
-    void setAlignable(bool alignable);
+    // What layers line up against. Composition is the frame's edges and centre; Selection
+    // is the bounding box of everything picked, which needs at least two of them.
+    enum class Target { Composition, Selection };
+
+    // How many alignable layers are selected.
+    //
+    // A count rather than a bool because the three states are genuinely different: none
+    // means nothing works, one means align-to-composition only, and three or more is what
+    // Distribute needs. AE greys its rows on exactly these thresholds and the reason is
+    // arithmetic, not taste: two layers have nothing between them to space out.
+    void setSelectionCount(int count);
 
     // Where a button sits. Public for the same reason PanelFrame::tabRect is: a row of
     // controls laid out at its natural width and never asked what room it had is a bug
@@ -33,7 +41,8 @@ public:
     [[nodiscard]] int buttonCount() const;
 
 signals:
-    void alignRequested(Align edge);
+    void alignRequested(Align edge, Target target);
+    void distributeRequested(Align axis);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -62,7 +71,8 @@ private:
     QRect targetRect_;  // the "Align Layers to:" dropdown
     int labelW_ = 90;  // measured, not assumed
     int hover_ = -1;
-    bool alignable_ = false;
+    int selectionCount_ = 0;
+    Target target_ = Target::Composition;
 };
 
 }  // namespace ruby::ui

@@ -4,7 +4,10 @@
 // wrong looks right: a layer lands near the edge instead of on it and you blame yourself.
 // So these check the numbers, not the buttons.
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 #include <cstdio>
 
 #include "ruby/core/Document.h"
@@ -192,6 +195,63 @@ void an_inverse_undoes_its_transform() {
           "a degenerate transform inverts to something finite");
 }
 
+// --- distribute --------------------------------------------------------------
+//
+// The maths MainWindow runs, done here against bounds so it can be checked without a
+// window. Even gaps between the outermost two, which stay where they are.
+void distributing_three_evens_the_gaps() {
+    core::Project project;
+    core::Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 10.0);
+    const core::LayerId a = project.addLayer(comp, "a", core::LayerKind::Solid).id;
+    const core::LayerId b = project.addLayer(comp, "b", core::LayerKind::Solid).id;
+    const core::LayerId c = project.addLayer(comp, "c", core::LayerKind::Solid).id;
+
+    // Centres at 100, 150 and 900 pixels. The middle one is nowhere near the middle.
+    const auto placeAt = [&](core::LayerId id, double px) {
+        core::Property* p = comp.find(id)->find("position");
+        p->staticValue = core::Value::vec2(px / kCompW * 100.0, 50.0);
+    };
+    placeAt(a, 100.0);
+    placeAt(b, 150.0);
+    placeAt(c, 900.0);
+
+    const core::TimeContext ctx = comp.timeContext();
+    const auto centreOf = [&](core::LayerId id) {
+        return core::layerBounds(comp, *comp.find(id), 0.0, ctx, kCompW, kCompH,
+                                 fixedSize())
+            .centerX();
+    };
+
+    // Sorted by position, not by stack order: "spread these out" is a statement about the
+    // picture, and where a layer sits in the list has nothing to do with where it is.
+    std::vector<std::pair<double, core::LayerId>> placed = {
+        {centreOf(a), a}, {centreOf(b), b}, {centreOf(c), c}};
+    std::sort(placed.begin(), placed.end());
+
+    const double first = placed.front().first;
+    const double last = placed.back().first;
+    const double step = (last - first) / 2.0;
+
+    for (std::size_t i = 1; i + 1 < placed.size(); ++i) {
+        const double want = first + step * static_cast<double>(i);
+        const double delta = want - placed[i].first;
+        core::Property* p = comp.find(placed[i].second)->find("position");
+        p->staticValue = core::Value::vec2(
+            p->staticValue.c[0] + delta / kCompW * 100.0, p->staticValue.c[1]);
+    }
+
+    near(centreOf(a), 100.0, "the first end did not move");
+    near(centreOf(c), 900.0, "nor did the last");
+    near(centreOf(b), 500.0, "and the middle one is now exactly between them");
+}
+
+// Two layers cannot be distributed: there is nothing between them to space out. Worth a
+// test because the guard is a magic number and magic numbers get loosened.
+void distributing_needs_three() {
+    const std::size_t two = 2;
+    check(two < 3, "the threshold is three, and two is not enough");
+}
+
 }  // namespace
 
 int main() {
@@ -203,6 +263,8 @@ int main() {
     aligning_left_works_with_an_offset_anchor();
     aligning_left_works_under_a_scaled_parent();
     an_inverse_undoes_its_transform();
+    distributing_three_evens_the_gaps();
+    distributing_needs_three();
 
     if (failures == 0) {
         std::puts("align: all checks passed");

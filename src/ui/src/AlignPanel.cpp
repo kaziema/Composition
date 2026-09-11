@@ -112,27 +112,46 @@ AlignPanel::AlignPanel(QWidget* parent) : QWidget(parent) {
     for (int i = 0; i < 6; ++i) {
         buttons_.push_back({QRect(), i, false, aligns[i].align, aligns[i].tip});
     }
+    const struct {
+        A axis;
+        const char* tip;
+    } spread[] = {
+        {A::Left, "Distribute horizontally by left edges"},
+        {A::HCenter, "Distribute horizontally by centres"},
+        {A::Right, "Distribute horizontally by right edges"},
+        {A::Top, "Distribute vertically by top edges"},
+        {A::VCenter, "Distribute vertically by centres"},
+        {A::Bottom, "Distribute vertically by bottom edges"},
+    };
     for (int i = 0; i < 6; ++i) {
-        buttons_.push_back({QRect(), i, true, A::Left,
-                            "Distribute — spaces three or more layers evenly. Ruby "
-                            "selects one layer at a time, so this is not available yet."});
+        buttons_.push_back({QRect(), i, true, spread[i].axis, spread[i].tip});
     }
     layoutButtons();
 }
 
-void AlignPanel::setAlignable(bool alignable) {
-    if (alignable_ == alignable) {
+void AlignPanel::setSelectionCount(int count) {
+    count = std::max(0, count);
+    if (selectionCount_ == count) {
         return;
     }
-    alignable_ = alignable;
+    selectionCount_ = count;
+    // Aligning to a selection of one is aligning a thing to itself: every button would be
+    // live and every one would do nothing. Falling back rather than greying out, because
+    // the user asked to align and there is still a sensible thing to align to.
+    if (target_ == Target::Selection && selectionCount_ < 2) {
+        target_ = Target::Composition;
+    }
     update();
 }
 
 bool AlignPanel::enabled(const Button& b) const {
-    // Distribute is never enabled. It needs three layers at once and Ruby has one-layer
-    // selection, so it is drawn greyed for the same reason AE greys it: the row is part of
-    // the panel's shape, and a panel that changes shape is a panel you have to re-learn.
-    return alignable_ && !b.distribute;
+    // Distribute needs three: with two there is nothing between them to space out. Align
+    // needs one against the composition, or two against a selection. The same thresholds
+    // AE uses, and for the same arithmetic reasons rather than as a convention.
+    if (b.distribute) {
+        return selectionCount_ >= 3;
+    }
+    return target_ == Target::Selection ? selectionCount_ >= 2 : selectionCount_ >= 1;
 }
 
 void AlignPanel::layoutButtons() {
@@ -211,7 +230,8 @@ void AlignPanel::paintEvent(QPaintEvent*) {
     p.setFont(font());
     p.setPen(kTextBody);
     p.drawText(targetRect_.adjusted(7, 0, -18, 0), Qt::AlignVCenter | Qt::AlignLeft,
-               QStringLiteral("Composition"));
+               target_ == Target::Selection ? QStringLiteral("Selection")
+                                            : QStringLiteral("Composition"));
     p.setPen(kTextDim);
     p.drawText(targetRect_.adjusted(0, 0, -7, 0), Qt::AlignVCenter | Qt::AlignRight,
                QStringLiteral("▾"));
@@ -237,13 +257,20 @@ void AlignPanel::paintEvent(QPaintEvent*) {
         }
     }
 
-    if (!alignable_) {
+    // Says which of the three states it is in, rather than leaving a row of grey buttons
+    // to be interpreted. A control that is off for a reason should give the reason.
+    QString note;
+    if (selectionCount_ == 0) {
+        note = QStringLiteral("Select a layer with a picture to align it.");
+    } else if (selectionCount_ < 3) {
+        note = QStringLiteral("Distribute needs three or more layers.");
+    }
+    if (!note.isEmpty()) {
         p.setFont(small);
         p.setPen(kTextFaint);
         p.drawText(QRect(kPad, buttons_[6].rect.bottom() + kRowGap * 2,
                          width() - kPad * 2, 40),
-                   Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap,
-                   QStringLiteral("Select a layer with a picture to align it."));
+                   Qt::AlignTop | Qt::AlignLeft | Qt::TextWordWrap, note);
     }
 }
 
@@ -254,10 +281,23 @@ void AlignPanel::mousePressEvent(QMouseEvent* e) {
         QMenu menu(this);
         QAction* comp = menu.addAction(QStringLiteral("Composition"));
         comp->setCheckable(true);
-        comp->setChecked(true);
+        comp->setChecked(target_ == Target::Composition);
+        connect(comp, &QAction::triggered, this, [this] {
+            target_ = Target::Composition;
+            update();
+        });
+
+        const bool canSelect = selectionCount_ >= 2;
         QAction* selection = menu.addAction(
-            QStringLiteral("Selection  (needs more than one layer)"));
-        selection->setEnabled(false);
+            canSelect ? QStringLiteral("Selection")
+                      : QStringLiteral("Selection  (needs more than one layer)"));
+        selection->setCheckable(true);
+        selection->setChecked(target_ == Target::Selection);
+        selection->setEnabled(canSelect);
+        connect(selection, &QAction::triggered, this, [this] {
+            target_ = Target::Selection;
+            update();
+        });
         menu.exec(e->globalPosition().toPoint());
         return;
     }
@@ -266,7 +306,16 @@ void AlignPanel::mousePressEvent(QMouseEvent* e) {
     if (hit < 0 || !enabled(buttons_[static_cast<std::size_t>(hit)])) {
         return;  // a disabled button swallows its click rather than doing nothing loudly
     }
-    emit alignRequested(buttons_[static_cast<std::size_t>(hit)].align);
+    const Button& b = buttons_[static_cast<std::size_t>(hit)];
+    if (b.distribute) {
+        // The distribute buttons reuse the align enum for their axis: left, centre and
+        // right all distribute horizontally, and the three below them vertically. Which
+        // edge the spacing is measured from is not drawable at 30x24 and is not worth a
+        // second enum to express something the icons cannot show.
+        emit distributeRequested(b.align);
+    } else {
+        emit alignRequested(b.align, target_);
+    }
 }
 
 void AlignPanel::mouseMoveEvent(QMouseEvent* e) {

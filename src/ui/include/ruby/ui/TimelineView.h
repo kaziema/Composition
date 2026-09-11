@@ -52,10 +52,33 @@ public:
     [[nodiscard]] double currentTime() const noexcept { return currentTime_; }
     void setCurrentTime(double seconds);
 
-    [[nodiscard]] std::optional<core::LayerId> selectedLayer() const noexcept {
+    // The selection, in the order it was built, with the most recently added last.
+    //
+    // Ordered rather than a set because the last one is the primary: the inspector shows
+    // one layer at a time, and "the one you just clicked" is the only answer to which one
+    // that nobody has to think about. AE works the same way.
+    [[nodiscard]] const std::vector<core::LayerId>& selectedLayers() const noexcept {
         return selected_;
     }
+
+    // The primary. Every command that genuinely acts on one layer uses this, and every
+    // caller that predates multi-selection keeps working unchanged.
+    [[nodiscard]] std::optional<core::LayerId> selectedLayer() const noexcept {
+        return selected_.empty() ? std::optional<core::LayerId>{}
+                                 : std::optional<core::LayerId>{selected_.back()};
+    }
+    [[nodiscard]] bool isSelected(core::LayerId layer) const noexcept;
+
+    // Replaces the selection with this one layer.
     void selectLayer(core::LayerId layer);
+
+    // How a click combines with what is already selected.
+    enum class SelectMode {
+        Replace,  // plain click: this layer and nothing else
+        Toggle,   // cmd-click: add it, or take it out if it is already in
+        Range,    // shift-click: everything between the primary and this one
+    };
+    void selectLayer(core::LayerId layer, SelectMode mode);
 
     // Nothing selected is a real state, not an error state: it is what Deselect All
     // leaves behind, and what deleting the last layer has to fall back to.
@@ -119,7 +142,17 @@ public:
 
 signals:
     void currentTimeChanged(double seconds);
+
+    // The PRIMARY layer, which is what the inspector and every single-layer command wants.
+    // Emitted with 0 when nothing is selected. Unchanged from before multi-selection so
+    // that every existing connection kept working rather than being rewritten to ignore a
+    // list it does not care about.
     void selectionChanged(core::LayerId layer);
+
+    // The whole selection changed: layers added, removed, or the set replaced. For things
+    // that act on all of it, like the align panel deciding whether Distribute is live.
+    void selectionSetChanged();
+
     void contentHeightChanged(int pixels);
 
     // A drag is one undo step, so the window brackets it rather than recording per move.
@@ -333,7 +366,7 @@ private:
     double currentTime_ = 3.14;
     int scrollY_ = 0;
     int contentHeight_ = 0;
-    std::optional<core::LayerId> selected_;
+    std::vector<core::LayerId> selected_;
     std::vector<KeyRef> selectedKeys_;
     bool scrubbing_ = false;
 
@@ -369,6 +402,7 @@ public:
     void setSnapping(bool on);
 
     [[nodiscard]] std::optional<core::LayerId> selectedLayer() const;
+    [[nodiscard]] const std::vector<core::LayerId>& selectedLayers() const;
     void selectLayer(core::LayerId layer);
     void clearSelection();
     void revealAnimated(core::LayerId layer);
@@ -378,6 +412,7 @@ public:
 signals:
     void currentTimeChanged(double seconds);
     void selectionChanged(core::LayerId layer);
+    void selectionSetChanged();
     void editBegan(const QString& label);
     void editEnded();
     void layersChanged();

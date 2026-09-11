@@ -241,9 +241,9 @@ void TimelineView::setComposition(core::Composition* comp) {
     const core::CompId incoming = comp != nullptr ? comp->id : 0;
 
     comp_ = comp;
-    selected_.reset();
+    selected_.clear();
     if (comp_ != nullptr && !comp_->layers.empty()) {
-        selected_ = comp_->layers.front().id;
+        selected_.push_back(comp_->layers.front().id);
     }
 
     if (incoming != previous || viewSpan_ <= 0.0) {
@@ -275,13 +275,92 @@ void TimelineView::selectLayer(core::LayerId layer) {
     // ran through here to open its menu, and every layer command in the window acts on
     // whatever is selected, so delete, duplicate, split and precompose all worked on a
     // layer whose padlock was shut. One guard at the one place selection is set.
+    selectLayer(layer, SelectMode::Replace);
+}
+
+bool TimelineView::isSelected(core::LayerId layer) const noexcept {
+    return std::find(selected_.begin(), selected_.end(), layer) != selected_.end();
+}
+
+void TimelineView::selectLayer(core::LayerId layer, SelectMode mode) {
+    // A locked layer refuses selection however it is asked, which is the guard that makes
+    // the padlock mean anything: every layer command in the window acts on the selection.
     const core::Layer* target = comp_ != nullptr ? comp_->find(layer) : nullptr;
-    if (target != nullptr && target->locked) {
+    if (target == nullptr || target->locked) {
         return;
     }
-    selected_ = layer;
+
+    switch (mode) {
+        case SelectMode::Replace:
+            selected_.assign(1, layer);
+            break;
+
+        case SelectMode::Toggle: {
+            const auto it = std::find(selected_.begin(), selected_.end(), layer);
+            if (it != selected_.end()) {
+                selected_.erase(it);
+            } else {
+                selected_.push_back(layer);  // last is the primary
+            }
+            break;
+        }
+
+        case SelectMode::Range: {
+            // Everything between the primary and this one, by row order rather than by id.
+            // Ids are creation order and a layer that has been dragged up the stack would
+            // otherwise select a run that does not match what the user is pointing at.
+            if (selected_.empty() || comp_ == nullptr) {
+                selected_.assign(1, layer);
+                break;
+            }
+            const auto indexOf = [this](core::LayerId id) {
+                for (std::size_t i = 0; i < comp_->layers.size(); ++i) {
+                    if (comp_->layers[i].id == id) return static_cast<int>(i);
+                }
+                return -1;
+            };
+            const int anchor = indexOf(selected_.back());
+            const int to = indexOf(layer);
+            if (anchor < 0 || to < 0) {
+                selected_.assign(1, layer);
+                break;
+            }
+            const int lo = std::min(anchor, to);
+            const int hi = std::max(anchor, to);
+
+            // The anchor stays the primary, so shift-clicking again re-extends from the
+            // same end rather than pivoting around wherever the range last happened to
+            // finish. Dragging a range out and then shortening it is one gesture.
+            std::vector<core::LayerId> run;
+            for (int i = lo; i <= hi; ++i) {
+                const core::Layer& l = comp_->layers[static_cast<std::size_t>(i)];
+                if (!l.locked) {
+                    run.push_back(l.id);
+                }
+            }
+            if (run.empty()) {
+                return;
+            }
+            // Primary last.
+            const core::LayerId keep = comp_->layers[static_cast<std::size_t>(anchor)].id;
+            run.erase(std::remove(run.begin(), run.end(), keep), run.end());
+            run.push_back(keep);
+            selected_ = std::move(run);
+            break;
+        }
+    }
+
+    // Keys belonging to layers that just left the selection would otherwise stay selected
+    // and invisible, which is how Delete ends up acting on something nobody can see.
+    selectedKeys_.erase(std::remove_if(selectedKeys_.begin(), selectedKeys_.end(),
+                                       [this](const KeyRef& k) {
+                                           return !isSelected(k.layer);
+                                       }),
+                        selectedKeys_.end());
+
     rebuildRows();
     update();
+    emit selectionSetChanged();
 }
 
 void TimelineView::revealAnimated(core::LayerId layer) {
@@ -345,7 +424,7 @@ const media::PeakPyramid* TimelineView::peaksFor(const Layer& layer) const {
 }
 
 void TimelineView::clearSelection() {
-    selected_.reset();
+    selected_.clear();
     // Keyframe selection goes with it. Leaving keys selected on a layer that is no
     // longer selected is how J/K and Delete end up acting on something invisible.
     selectedKeys_.clear();
@@ -1094,7 +1173,7 @@ void TimelineView::paintSwitches(QPainter& p, const Row& row, const Layer& layer
 }
 
 void TimelineView::paintLayerRow(QPainter& p, const Row& row, const Layer& layer) const {
-    const bool isSelected = selected_.has_value() && *selected_ == layer.id;
+    const bool isSelected = this->isSelected(layer.id);
     const QRect r(0, row.top, width(), row.height);
 
     p.fillRect(r, isSelected ? kRowSelected : kRowTimeline);
@@ -1738,7 +1817,9 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
                 dragOriginalOut_ = to_seconds(layer->outPoint, ctx);
                 dragGrabOffset_ = timeForX(pos.x()) - dragOriginalIn_;
 
-                selected_ = layer->id;
+                if (!isSelected(layer->id)) {
+                    selectLayer(layer->id, SelectMode::Replace);
+                }
                 emit selectionChanged(layer->id);
                 emit editBegan(mode == DragMode::MoveLayer
                                    ? QStringLiteral("Move Layer")
@@ -1893,9 +1974,13 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
                                          : QStringLiteral("Lock Layer"));
             layer->locked = !layer->locked;
             emit editEnded();
-            if (layer->locked && selected_.has_value() && *selected_ == layer->id) {
-                selected_.reset();
-                emit selectionChanged(0);
+            if (layer->locked && isSelected(layer->id)) {
+                // Out of the selection, not the whole selection cleared. Locking one of
+                // three selected layers should leave the other two selected.
+                selected_.erase(std::remove(selected_.begin(), selected_.end(), layer->id),
+                                selected_.end());
+                emit selectionChanged(selected_.empty() ? 0 : selected_.back());
+                emit selectionSetChanged();
             }
             emit layersChanged();
             update();
@@ -2071,8 +2156,17 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
             return;
         }
 
-        selected_ = layer->id;
-        emit selectionChanged(layer->id);
+        // Plain click replaces, cmd-click toggles, shift-click extends. Shift on the
+        // track side already means additive keyframe selection, and these never meet:
+        // that path returns inside the `x >= trackLeft()` branch long before here.
+        const SelectMode mode =
+            e->modifiers().testFlag(Qt::ControlModifier) ||
+                    e->modifiers().testFlag(Qt::MetaModifier)
+                ? SelectMode::Toggle
+            : e->modifiers().testFlag(Qt::ShiftModifier) ? SelectMode::Range
+                                                         : SelectMode::Replace;
+        selectLayer(layer->id, mode);
+        emit selectionChanged(selected_.empty() ? 0 : selected_.back());
         update();
         return;
     }
@@ -2370,7 +2464,10 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e) {
         for (const Row& row : rows_) {
             if (row.kind == RowKind::EffectHeader && row.effect != kTransformGroup &&
                 contentY >= row.top && contentY < row.top + row.height) {
-                if (!selected_.has_value() || *selected_ != row.layer) {
+                // Right-clicking inside an existing multi-selection keeps it, so "Delete
+                // Layer" on three selected layers deletes three. Right-clicking outside it
+                // selects just that one, which is what every list in every app does.
+                if (!isSelected(row.layer)) {
                     selectLayer(row.layer);
                     emit selectionChanged(row.layer);
                 }
@@ -2385,7 +2482,10 @@ void TimelineView::contextMenuEvent(QContextMenuEvent* e) {
                 continue;
             }
             if (contentY >= row.top && contentY < row.top + row.height) {
-                if (!selected_.has_value() || *selected_ != row.layer) {
+                // Right-clicking inside an existing multi-selection keeps it, so "Delete
+                // Layer" on three selected layers deletes three. Right-clicking outside it
+                // selects just that one, which is what every list in every app does.
+                if (!isSelected(row.layer)) {
                     selectLayer(row.layer);
                     emit selectionChanged(row.layer);
                 }
@@ -2540,6 +2640,8 @@ TimelinePanel::TimelinePanel(QWidget* parent) : QWidget(parent) {
     });
     connect(view_, &TimelineView::selectionChanged, this,
             &TimelinePanel::selectionChanged);
+    connect(view_, &TimelineView::selectionSetChanged, this,
+            &TimelinePanel::selectionSetChanged);
     connect(view_, &TimelineView::editBegan, this, &TimelinePanel::editBegan);
     connect(view_, &TimelineView::editEnded, this, &TimelinePanel::editEnded);
     connect(view_, &TimelineView::layersChanged, this, &TimelinePanel::layersChanged);
@@ -2627,6 +2729,10 @@ void TimelinePanel::setSnapping(bool on) { view_->setSnapping(on); }
 
 std::optional<core::LayerId> TimelinePanel::selectedLayer() const {
     return view_->selectedLayer();
+}
+
+const std::vector<core::LayerId>& TimelinePanel::selectedLayers() const {
+    return view_->selectedLayers();
 }
 
 void TimelinePanel::selectLayer(core::LayerId layer) { view_->selectLayer(layer); }

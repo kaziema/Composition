@@ -274,6 +274,112 @@ void the_inert_mode_cells_swallow_their_clicks() {
     // from a test hangs the test rather than failing it.
 }
 
+// --- multi-layer selection ---------------------------------------------------
+
+// A fixture with a stack, so range selection has something to range over.
+struct Stack {
+    core::Project project;
+    core::Composition* comp = nullptr;
+    std::vector<core::LayerId> ids;
+    ui::TimelineView view;
+
+    explicit Stack(int count) {
+        comp = &project.addComposition("c", 1080, 1920, 30.0, 10.0);
+        for (int i = 0; i < count; ++i) {
+            const core::LayerId id =
+                project.addLayer(*comp, "layer", core::LayerKind::Solid).id;
+            comp->find(id)->outPoint = core::TimeValue::seconds(5.0);
+            ids.push_back(id);
+        }
+        // Topmost first, so ids.front() is the BOTTOM of the stack: addLayer puts each new
+        // one on top. Worth stating because a range test that assumes otherwise passes for
+        // the wrong reason.
+        view.setComposition(comp);
+        view.clearSelection();
+        view.resize(kLayerColumnW + 400, 400);
+    }
+
+    core::Layer& layer(core::LayerId id) { return *comp->find(id); }
+    [[nodiscard]] std::size_t count() const { return view.selectedLayers().size(); }
+};
+
+using SelectMode = ui::TimelineView::SelectMode;
+
+void a_plain_click_replaces_the_selection() {
+    Stack s(3);
+    s.view.selectLayer(s.ids[0], SelectMode::Replace);
+    s.view.selectLayer(s.ids[1], SelectMode::Replace);
+    check(s.count() == 1, "one at a time");
+    check(s.view.selectedLayer() == s.ids[1], "and it is the one just clicked");
+}
+
+void toggling_adds_and_removes() {
+    Stack s(3);
+    s.view.selectLayer(s.ids[0], SelectMode::Replace);
+    s.view.selectLayer(s.ids[1], SelectMode::Toggle);
+    s.view.selectLayer(s.ids[2], SelectMode::Toggle);
+    check(s.count() == 3, "three selected");
+    check(s.view.selectedLayer() == s.ids[2], "the last one added is the primary");
+
+    s.view.selectLayer(s.ids[1], SelectMode::Toggle);
+    check(s.count() == 2, "toggling one out leaves the rest");
+    check(!s.view.isSelected(s.ids[1]), "and it is the right one that left");
+}
+
+// Range works by row order, not by id. Ids are creation order, and a layer dragged up the
+// stack would otherwise select a run that does not match what the user is pointing at.
+void a_range_follows_the_stack_not_the_ids() {
+    Stack s(5);
+    s.view.selectLayer(s.comp->layers[0].id, SelectMode::Replace);
+    s.view.selectLayer(s.comp->layers[3].id, SelectMode::Range);
+    check(s.count() == 4, "four rows between them inclusive");
+    for (int i = 0; i <= 3; ++i) {
+        check(s.view.isSelected(s.comp->layers[static_cast<std::size_t>(i)].id),
+              "every row in the run is selected");
+    }
+    check(!s.view.isSelected(s.comp->layers[4].id), "and nothing beyond it");
+}
+
+// Shift-clicking again re-extends from the same end rather than pivoting around wherever
+// the range last finished. Dragging a range out and then shortening it is one gesture.
+void the_range_anchor_stays_put() {
+    Stack s(5);
+    s.view.selectLayer(s.comp->layers[0].id, SelectMode::Replace);
+    s.view.selectLayer(s.comp->layers[4].id, SelectMode::Range);
+    check(s.count() == 5, "all five");
+
+    s.view.selectLayer(s.comp->layers[2].id, SelectMode::Range);
+    check(s.count() == 3, "shortened from the same anchor, not re-anchored at 4");
+    check(s.view.isSelected(s.comp->layers[0].id), "the anchor is still in");
+}
+
+// A locked layer refuses selection however it is asked, including from inside a range.
+// Every layer command works off the selection, so this is what the padlock means.
+void a_range_steps_over_locked_layers() {
+    Stack s(4);
+    s.layer(s.comp->layers[1].id).locked = true;
+
+    s.view.selectLayer(s.comp->layers[0].id, SelectMode::Replace);
+    s.view.selectLayer(s.comp->layers[3].id, SelectMode::Range);
+    check(s.count() == 3, "the locked one is not in the run");
+    check(!s.view.isSelected(s.comp->layers[1].id), "specifically that one");
+
+    s.view.selectLayer(s.comp->layers[1].id, SelectMode::Toggle);
+    check(!s.view.isSelected(s.comp->layers[1].id), "and toggling cannot let it in either");
+}
+
+// Locking a layer takes it OUT of the selection rather than clearing the whole thing.
+void locking_one_of_several_leaves_the_rest() {
+    Stack s(3);
+    s.view.selectLayer(s.ids[0], SelectMode::Replace);
+    s.view.selectLayer(s.ids[1], SelectMode::Toggle);
+    s.view.selectLayer(s.ids[2], SelectMode::Toggle);
+
+    click(s.view, 64, kColumnHeaderH + kLayerRowH / 2);  // padlock on the top row
+    check(s.comp->layers[0].locked, "locked");
+    check(s.count() == 2, "the other two are still selected");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -291,6 +397,12 @@ int main(int argc, char** argv) {
     shutting_a_group_does_not_select_the_layer();
     nothing_selects_a_locked_layer();
     the_inert_mode_cells_swallow_their_clicks();
+    a_plain_click_replaces_the_selection();
+    toggling_adds_and_removes();
+    a_range_follows_the_stack_not_the_ids();
+    the_range_anchor_stays_put();
+    a_range_steps_over_locked_layers();
+    locking_one_of_several_leaves_the_rest();
 
     if (failures == 0) {
         std::puts("layerswitches: all checks passed");

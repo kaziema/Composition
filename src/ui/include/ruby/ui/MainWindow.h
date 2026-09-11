@@ -59,7 +59,17 @@ public:
     [[nodiscard]] core::SizeOf layerSizes();
 
     // Moves the selected layer so one of its edges or centres meets the composition's.
-    void alignSelectedLayer(AlignPanel::Align edge);
+    void alignSelectedLayer(AlignPanel::Align edge, AlignPanel::Target target);
+    void distributeSelectedLayers(AlignPanel::Align axis);
+
+    // The selected layers that have a picture and are not locked.
+    [[nodiscard]] std::vector<core::LayerId> alignableSelection();
+
+    // Moves one layer by a distance in composition pixels, converting into the parent's
+    // space and into the percentages Position is stored in, and refusing when the write
+    // would not actually move it. Returns whether anything changed.
+    [[nodiscard]] bool nudgeLayerBy(core::Layer& layer, double dx, double dy,
+                                    double seconds, const core::SizeOf& sizes);
 
     // Turns the align buttons on or off for whatever is selected now.
     void updateAlignAvailability();
