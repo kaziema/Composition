@@ -32,6 +32,8 @@ core::Project makeProject() {
                    23.976, true);
 
     core::Composition& comp = p.addComposition("sneaker", 1080, 1920, 29.97, 14.5);
+    comp.workIn = core::TimeValue::seconds(2.0);
+    comp.workOut = core::TimeValue::seconds(9.0);
     comp.rhythm.setLane(core::MarkerLane::Vocal,
                         {{2.167, core::MarkerLane::Vocal, 0.84f, 0},
                          {3.083, core::MarkerLane::Vocal, 0.61f, 1}});
@@ -182,6 +184,9 @@ int main() {
     // A locked layer that comes back unlocked is worse than one that never locked: the
     // user thinks it is protected and it is not.
     check(layer.locked, "the padlock survives a save and reopen");
+    // The work area is the export range too, so losing it on save would silently change
+    // what an export writes.
+    check(comp.hasWorkArea(), "the work area survives a save and reopen");
 
     // Ranges are deliberately not written to the file, so a reloaded property arrives
     // with default ones. `adoptTransformRanges` is what puts them back, and a project

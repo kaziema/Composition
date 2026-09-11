@@ -167,11 +167,16 @@ void GpuViewport::paintEvent(QPaintEvent*) {
         refreshTextTextures();
 
         engine::Compositor::ExternalTextures external;
+        engine::ExternalKeys keys;
         for (const auto& [id, text] : textTextures_) {
             external.emplace(id, engine::Compositor::External{text.texture, text.width,
                                                               text.height});
+            // The graph cannot hash pixels it has never seen. This is the same number the
+            // re-rasterise check above uses, which is the point: if it did not change, the
+            // raster did not change, so the frame did not.
+            keys.emplace(id, static_cast<std::uint64_t>(text.key));
         }
-        compositor_->render(*project_, *comp_, currentTime_, backbuffer, &external);
+        compositor_->render(*project_, *comp_, currentTime_, backbuffer, &external, &keys);
     } else {
         auto commands = device_->begin_commands("viewport");
         commands->begin_pass(backbuffer, 0.008f, 0.008f, 0.008f, 1.0f);
@@ -180,6 +185,51 @@ void GpuViewport::paintEvent(QPaintEvent*) {
     }
 
     surface_->present();
+}
+
+std::vector<std::pair<double, bool>> GpuViewport::cachedFrames(double from,
+                                                               double to) const {
+    std::vector<std::pair<double, bool>> out;
+    if (compositor_ == nullptr || comp_ == nullptr || project_ == nullptr) {
+        return out;
+    }
+    const double fps = comp_->fps > 0.0 ? comp_->fps : 30.0;
+    const engine::FrameCache& cache = compositor_->cache();
+
+    engine::ExternalKeys keys;
+    for (const auto& [id, text] : textTextures_) {
+        keys.emplace(id, static_cast<std::uint64_t>(text.key));
+    }
+
+    // Capped. A three hour composition at 60fps is 648,000 frames and nobody is drawing
+    // 648,000 rectangles into a four pixel strip; past a few thousand the answer is the
+    // same and the work is not.
+    const auto first = static_cast<std::int64_t>(std::floor(from * fps));
+    const auto last = static_cast<std::int64_t>(std::ceil(to * fps));
+    constexpr std::int64_t kMaxFrames = 4000;
+    const std::int64_t stride = std::max<std::int64_t>(1, (last - first) / kMaxFrames);
+
+    for (std::int64_t f = first; f <= last; f += stride) {
+        const double t = static_cast<double>(f) / fps;
+        const engine::RenderGraph graph =
+            engine::Compositor::graphFor(*project_, *comp_, t, &keys);
+
+        // A frame is ready when every layer that needs a cached texture has one. A layer
+        // with no effects needs nothing: its source is its output and the decoder holds
+        // it, so it can never be the reason a frame is not ready.
+        bool ready = graph.root >= 0;
+        for (const int node : graph.nodes[static_cast<std::size_t>(graph.root)].inputs) {
+            const engine::RenderNode& n = graph.nodes[static_cast<std::size_t>(node)];
+            if (n.kind == engine::RenderNode::Kind::Effect && !cache.contains(n.hash)) {
+                ready = false;
+                break;
+            }
+        }
+        if (ready) {
+            out.emplace_back(t, false);  // RAM. There is no disk tier yet.
+        }
+    }
+    return out;
 }
 
 }  // namespace ruby::ui

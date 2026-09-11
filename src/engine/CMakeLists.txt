@@ -1,5 +1,7 @@
 add_library(ruby_engine STATIC
     src/Compositor.cpp
+    src/RenderGraph.cpp
+    src/FrameCache.cpp
     src/Transport.cpp
     src/EffectRegistry.cpp
 )

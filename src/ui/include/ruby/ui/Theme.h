@@ -77,6 +77,15 @@ inline const QColor kKeyframeBorder{"#111111"};
 inline const QColor kKeyConnector{"#4a4a4a"};
 inline const QColor kExpressionText{"#9fd18f"};
 inline const QColor kCacheReady{"#7cb342"};
+// Green for RAM, blue for disk, under the ruler. AE's colours on purpose: every person
+// this app is for has already learned them, and the entire value of a visible cache is
+// that it is read at a glance rather than studied.
+inline const QColor kCacheRam{"#4c8b2b"};
+inline const QColor kCacheDisk{"#2f6690"};
+// The work area's ends. Bright enough to grab, dim enough not to compete with the
+// playhead, which is the one thing on the ruler that must always win.
+inline const QColor kWorkAreaEdge{"#8a8a8a"};
+inline const QColor kWorkAreaOutside{"#000000"};
 inline const QColor kGraphBg{"#1b1b1b"};
 inline const QColor kGraphGrid{"#232323"};
 inline const QColor kTrackBg{"#232323"};
@@ -105,7 +114,19 @@ inline constexpr int kMenuBarH = 26;
 inline constexpr int kToolBarH = 30;
 inline constexpr int kTabStripH = 26;
 inline constexpr int kSubToolbarH = 26;
-inline constexpr int kColumnHeaderH = 20;
+// The ruler's text row: column names on the left, timecodes on the right.
+inline constexpr int kColumnLabelH = 20;
+// Under it, the work area and then what is cached. Green for RAM, blue for disk.
+inline constexpr int kWorkAreaH = 6;
+inline constexpr int kCacheBarH = 4;
+
+// The whole header, which is what every row offset below it is measured from.
+//
+// Summed rather than written down, and the bars added INSIDE it rather than below it, so
+// that every existing "content starts here" calculation stayed correct without being
+// touched. Two new strips across the top of a panel is exactly the change that produces
+// the overlap bugs this file keeps collecting comments about.
+inline constexpr int kColumnHeaderH = kColumnLabelH + kWorkAreaH + kCacheBarH;
 
 inline constexpr int kProjectRowH = 22;
 inline constexpr int kProjectFooterH = 22;

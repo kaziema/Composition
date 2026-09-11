@@ -196,6 +196,11 @@ MainWindow::MainWindow(gpu::GpuDevice* device, QWidget* parent)
         if (playback_ != nullptr && playback_->playing()) {
             updateStatus();
         }
+        // The cache bar on a timer rather than after every render. Rebuilding a graph per
+        // frame of the work area is cheap but not free, and four times a second is faster
+        // than anyone can watch a bar fill.
+        refreshCacheBar();
+        updateReadouts();
     });
     statusTick->start();
 }
@@ -2089,11 +2094,54 @@ void MainWindow::updateReadouts() {
     }
     std::vector<StatusReadout::Item> items;
 
-    // Placeholder until a render cache exists to measure. The slot and its wiring are
-    // the deliverable; the number becomes true when there is something behind it.
-    items.push_back({QStringLiteral("RAM cached 0-12s"), theme::kCacheReady, false});
+    // The real number. This line read "RAM cached 0-12s" as a hardcoded string for
+    // months: it had never measured anything and there was nothing behind it to measure.
+    // There is now.
+    if (viewport_ != nullptr && activeComposition() != nullptr) {
+        const engine::FrameCache::Stats s = viewport_->cacheStats();
+        const double mb = static_cast<double>(s.bytes) / (1024.0 * 1024.0);
+        const double budget = static_cast<double>(s.budget) / (1024.0 * 1024.0);
+        items.push_back({QStringLiteral("Cache %1 / %2 MB")
+                             .arg(mb, 0, 'f', 0)
+                             .arg(budget, 0, 'f', 0),
+                         s.bytes > 0 ? theme::kCacheReady : theme::kTextFaint, false});
+    }
 
     readout_->setItems(std::move(items));
+}
+
+// Recomputed from the cache after every render, and handed to the timeline as spans.
+//
+// Frames are coalesced into runs here rather than in the painter, because the bar wants
+// "this stretch is ready" and the cache answers "this frame is ready". Turning three
+// hundred adjacent frames into one rectangle is the difference between a strip you can
+// read and a picket fence.
+void MainWindow::refreshCacheBar() {
+    if (timelinePanel_ == nullptr || viewport_ == nullptr) {
+        return;
+    }
+    core::Composition* comp = activeComposition();
+    if (comp == nullptr) {
+        return;
+    }
+
+    double from = 0.0;
+    double to = 0.0;
+    comp->workRange(from, to);
+
+    const double fps = comp->fps > 0.0 ? comp->fps : 30.0;
+    const double frame = 1.0 / fps;
+    std::vector<TimelineView::CachedSpan> spans;
+
+    for (const auto& [t, onDisk] : viewport_->cachedFrames(from, to)) {
+        if (!spans.empty() && spans.back().onDisk == onDisk &&
+            t - spans.back().end < frame * 1.5) {
+            spans.back().end = t + frame;
+            continue;
+        }
+        spans.push_back({t, t + frame, onDisk});
+    }
+    timelinePanel_->setCachedSpans(std::move(spans));
 }
 
 void MainWindow::buildMenus() {

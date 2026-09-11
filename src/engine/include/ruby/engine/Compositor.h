@@ -10,6 +10,8 @@
 #include <unordered_map>
 
 #include "ruby/engine/EffectRegistry.h"
+#include "ruby/engine/FrameCache.h"
+#include "ruby/engine/RenderGraph.h"
 #include "ruby/gpu/GpuDevice.h"
 #include "ruby/media/VideoDecoder.h"
 
@@ -46,7 +48,23 @@ public:
 
     void render(const core::Project& project, const core::Composition& comp,
                 double seconds, const gpu::TextureHandle& target,
-                const ExternalTextures* external = nullptr);
+                const ExternalTextures* external = nullptr,
+                const ExternalKeys* externalKeys = nullptr);
+
+    // The preview cache's RAM tier: every layer's finished effect output, keyed on what
+    // that output depended on. Exposed so the window can report what is ready and so a
+    // resolution change can drop everything at once.
+    [[nodiscard]] FrameCache& cache() noexcept { return cache_; }
+    [[nodiscard]] const FrameCache& cache() const noexcept { return cache_; }
+
+    // The graph for one instant, without rendering it. For the cache bar, which has to
+    // answer "is this frame ready" for a whole second of timeline without drawing any of
+    // it.
+    [[nodiscard]] static RenderGraph graphFor(const core::Project& project,
+                                              const core::Composition& comp, double seconds,
+                                              const ExternalKeys* externalKeys = nullptr) {
+        return buildGraph(project, comp, seconds, externalKeys);
+    }
 
 private:
     struct QuadUniforms {
@@ -87,7 +105,12 @@ private:
                                                   const gpu::TextureHandle& source,
                                                   double seconds,
                                                   const core::TimeContext& ctx,
-                                                  std::size_t& slot);
+                                                  std::size_t& slot, NodeHash outputHash);
+
+    // A texture the cache can own, separate from the ping-pong pair a layer reuses every
+    // frame.
+    [[nodiscard]] gpu::TextureHandle createOutputTexture(std::uint32_t width,
+                                                         std::uint32_t height);
 
     // A layer's source material: the texture to sample plus the size it wants to be.
     // Size matters as much as the pixels; a 1920x1080 clip is not a 1080x1920 layer.
@@ -115,6 +138,11 @@ private:
     std::unordered_map<std::string, Source> sources_;
     std::unordered_map<std::string, gpu::RenderPipelineHandle> effectPipelines_;
     std::unordered_map<core::LayerId, Workspace> workspaces_;
+
+    // 768MB. Enough for roughly forty-eight 1080x1920 layer outputs, which is a couple of
+    // seconds of a busy composition. A number to tune against a real machine rather than
+    // one anybody derived.
+    FrameCache cache_{768u * 1024u * 1024u};
 };
 
 }  // namespace ruby::engine

@@ -238,6 +238,22 @@ void adoptTransformRanges(Layer& layer) {
 
 // --- Composition -------------------------------------------------------------
 
+bool Composition::hasWorkArea() const noexcept {
+    const TimeContext ctx = timeContext();
+    return to_seconds(workOut, ctx) > to_seconds(workIn, ctx);
+}
+
+void Composition::workRange(double& startSeconds, double& endSeconds) const noexcept {
+    const TimeContext ctx = timeContext();
+    if (hasWorkArea()) {
+        startSeconds = std::max(0.0, to_seconds(workIn, ctx));
+        endSeconds = std::min(duration, to_seconds(workOut, ctx));
+        return;
+    }
+    startSeconds = 0.0;
+    endSeconds = duration;
+}
+
 TimeContext Composition::timeContext() const noexcept {
     TimeContext ctx;
     ctx.fps = fps;

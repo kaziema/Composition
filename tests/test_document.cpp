@@ -409,6 +409,55 @@ void removing_media_clears_the_layers_that_used_it() {
     check(project.media().size() == 1, "and removes nothing");
 }
 
+// The work area bounds what the cache fills and what an export writes. One concept, not
+// two, so "no work area" and "a work area covering everything" have to behave identically
+// or every caller needs to know which it has.
+void the_work_area_defaults_to_the_whole_composition() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+
+    check(!comp.hasWorkArea(), "a fresh composition has no work area");
+    double from = -1.0;
+    double to = -1.0;
+    comp.workRange(from, to);
+    check(from == 0.0 && to == 12.0, "and reports the whole thing anyway");
+
+    comp.workIn = TimeValue::seconds(2.0);
+    comp.workOut = TimeValue::seconds(5.0);
+    check(comp.hasWorkArea(), "once set, it is set");
+    comp.workRange(from, to);
+    check(from == 2.0 && to == 5.0, "and reports itself");
+}
+
+// A range of no length is not a smaller selection, it is no selection.
+void a_work_area_of_no_length_is_no_work_area() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+    comp.workIn = TimeValue::seconds(4.0);
+    comp.workOut = TimeValue::seconds(4.0);
+    check(!comp.hasWorkArea(), "zero length does not count");
+
+    double from = 0.0;
+    double to = 0.0;
+    comp.workRange(from, to);
+    check(from == 0.0 && to == 12.0, "so the whole composition is live again");
+}
+
+// Clamped to the composition, because a work area that runs past the end would have the
+// cache trying to fill frames that do not exist.
+void the_work_area_is_clamped_to_the_composition() {
+    Project project;
+    Composition& comp = project.addComposition("c", 1080, 1920, 30.0, 12.0);
+    comp.workIn = TimeValue::seconds(-5.0);
+    comp.workOut = TimeValue::seconds(900.0);
+
+    double from = 0.0;
+    double to = 0.0;
+    comp.workRange(from, to);
+    check(from == 0.0, "the start cannot be negative");
+    check(to == 12.0, "and the end cannot be past the duration");
+}
+
 }  // namespace
 
 int main() {
@@ -424,6 +473,9 @@ int main() {
     new_layers_land_on_top();
     keyframe_counts_roll_up();
     time_context_falls_back_without_a_beat_map();
+    the_work_area_defaults_to_the_whole_composition();
+    a_work_area_of_no_length_is_no_work_area();
+    the_work_area_is_clamped_to_the_composition();
     a_composition_grows_to_hold_its_content();
     a_composition_never_shrinks_itself();
     a_manual_shrink_leaves_layers_overhanging();

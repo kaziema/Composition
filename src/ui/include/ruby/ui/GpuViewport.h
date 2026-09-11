@@ -59,6 +59,24 @@ private:
     gpu::GpuDevice* device_ = nullptr;
     gpu::SurfaceHandle surface_;
     std::unique_ptr<engine::Compositor> compositor_;
+
+public:
+    // Which frames in a range are already held in RAM.
+    //
+    // Answered by building each frame's graph and asking the cache whether it holds every
+    // layer that frame needs. Building a graph is pure and cheap, and `contains` is
+    // deliberately not a lookup: drawing the cache bar must not reorder the cache, or the
+    // act of looking at what is ready changes what is ready.
+    [[nodiscard]] std::vector<std::pair<double, bool>> cachedFrames(double from, double to)
+        const;
+
+    // How full the preview cache is. Empty when there is no compositor.
+    [[nodiscard]] engine::FrameCache::Stats cacheStats() const {
+        return compositor_ != nullptr ? compositor_->cache().stats()
+                                      : engine::FrameCache::Stats{};
+    }
+
+private:
     const core::Project* project_ = nullptr;
     const core::Composition* comp_ = nullptr;
     double currentTime_ = 0.0;

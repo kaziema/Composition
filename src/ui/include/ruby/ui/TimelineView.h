@@ -211,6 +211,29 @@ private:
     // Ruler spacing that survives both a 3 second comp and a 3 hour one.
     [[nodiscard]] double tickInterval() const noexcept;
 
+    // Which frames are ready, as spans of seconds. Set by the window from the
+    // compositor's cache; the timeline does not know what a texture is and should not.
+    //
+    // Deliberately a set of spans rather than a callback the painter calls per pixel:
+    // asking the cache a thousand questions while drawing would make looking at the cache
+    // change the cache, because a lookup counts as a hit and reorders eviction.
+public:
+    struct CachedSpan {
+        double start = 0.0;
+        double end = 0.0;
+        bool onDisk = false;  // green for RAM, blue for disk
+
+        [[nodiscard]] bool operator==(const CachedSpan& o) const noexcept {
+            return start == o.start && end == o.end && onDisk == o.onDisk;
+        }
+    };
+    void setCachedSpans(std::vector<CachedSpan> spans);
+
+private:
+    void paintCacheBar(QPainter& p) const;
+    void paintWorkArea(QPainter& p) const;
+    [[nodiscard]] int rulerBottom() const noexcept;
+
     void paintHeader(QPainter& p) const;
 
     // The eight switches AE keeps between the layer name and the Mode column. Two of
@@ -276,6 +299,12 @@ private:
 
     core::Composition* comp_ = nullptr;
     std::vector<Row> rows_;
+    std::vector<CachedSpan> cached_;
+
+    // Which end of the work area a drag has hold of. None when nothing is being dragged.
+    enum class WorkGrab { None, Start, End, Whole };
+    WorkGrab workGrab_ = WorkGrab::None;
+    double workGrabOffset_ = 0.0;
 
     bool snapping_ = true;
 
@@ -321,6 +350,9 @@ public:
     explicit TimelinePanel(QWidget* parent = nullptr);
 
     void setComposition(core::Composition* comp);
+
+    // What the viewer has rendered and kept, as spans of seconds. Drawn under the ruler.
+    void setCachedSpans(std::vector<TimelineView::CachedSpan> spans);
 
     // The inspector edits the same properties this panel draws, and an edit can add a
     // keyframe, so the counts in the sub-toolbar move too.

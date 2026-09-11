@@ -64,6 +64,9 @@ public:
     // Turns the align buttons on or off for whatever is selected now.
     void updateAlignAvailability();
 
+    // Reads the viewer's cache and redraws the bar under the ruler.
+    void refreshCacheBar();
+
 signals:
     // The pool changed. The project panel listens; nothing else needs to yet.
     void mediaImported();

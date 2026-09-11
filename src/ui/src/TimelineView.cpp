@@ -859,10 +859,76 @@ TimelineView::DragMode TimelineView::hitTestBar(const Layer& layer, const QPoint
     return DragMode::None;
 }
 
-void TimelineView::paintHeader(QPainter& p) const {
-    const int h = metrics::kColumnHeaderH;
+void TimelineView::setCachedSpans(std::vector<CachedSpan> spans) {
+    if (spans == cached_) {
+        return;  // repainting the ruler every frame of playback for no change is not free
+    }
+    cached_ = std::move(spans);
+    update();
+}
 
-    p.fillRect(QRect(0, 0, width(), h), kColumnHeader);
+int TimelineView::rulerBottom() const noexcept { return metrics::kColumnHeaderH; }
+
+// The work area: the part you are working on, and the part you will deliver.
+//
+// Drawn as a lighter bar over a darkened rest, rather than as two brackets on an unchanged
+// ruler. The question it answers is "which part of this is live", and shading the answer
+// reads at a glance where two small marks have to be looked for.
+void TimelineView::paintWorkArea(QPainter& p) const {
+    if (comp_ == nullptr) {
+        return;
+    }
+    const int top = metrics::kColumnLabelH;
+    const int h = metrics::kWorkAreaH;
+
+    double from = 0.0;
+    double to = 0.0;
+    comp_->workRange(from, to);
+
+    p.save();
+    p.setClipRect(QRect(trackLeft(), top, trackWidth(), h));
+    p.fillRect(QRect(trackLeft(), top, trackWidth(), h), kWorkAreaOutside);
+
+    const int x0 = static_cast<int>(xForTime(from));
+    const int x1 = static_cast<int>(xForTime(to));
+    p.fillRect(QRect(x0, top, std::max(1, x1 - x0), h), QColor("#2a2a2a"));
+
+    // The two ends, which are what you grab. Three pixels wide because one is not a
+    // target: every drag handle in this app that was one pixel wide got widened later.
+    p.fillRect(QRect(x0, top, 3, h), kWorkAreaEdge);
+    p.fillRect(QRect(x1 - 3, top, 3, h), kWorkAreaEdge);
+    p.restore();
+}
+
+// What is ready to play, under the ruler. Green for RAM, blue for disk.
+void TimelineView::paintCacheBar(QPainter& p) const {
+    const int top = metrics::kColumnLabelH + metrics::kWorkAreaH;
+    const int h = metrics::kCacheBarH;
+
+    p.save();
+    p.setClipRect(QRect(trackLeft(), top, trackWidth(), h));
+    p.fillRect(QRect(trackLeft(), top, trackWidth(), h), QColor("#1b1b1b"));
+
+    for (const CachedSpan& span : cached_) {
+        const int x0 = static_cast<int>(xForTime(span.start));
+        const int x1 = static_cast<int>(xForTime(span.end));
+        if (x1 < trackLeft() || x0 > width()) {
+            continue;
+        }
+        // At least a pixel. A single cached frame at a zoomed-out view rounds to nothing,
+        // and a cache that shows nothing while holding something is worse than no bar.
+        p.fillRect(QRect(x0, top, std::max(1, x1 - x0), h),
+                   span.onDisk ? kCacheDisk : kCacheRam);
+    }
+    p.restore();
+}
+
+void TimelineView::paintHeader(QPainter& p) const {
+    // The label row only. The work area and cache bar occupy the rest of the header and
+    // are drawn by their own functions, below.
+    const int h = metrics::kColumnLabelH;
+
+    p.fillRect(QRect(0, 0, width(), metrics::kColumnHeaderH), kColumnHeader);
     p.setFont(QFont(font().family(), -1));
     QFont small = font();
     small.setPixelSize(10);
@@ -1438,6 +1504,8 @@ void TimelineView::paintEvent(QPaintEvent*) {
     }
 
     paintHeader(p);
+    paintWorkArea(p);
+    paintCacheBar(p);
     paintRhythm(p);
     paintPlayhead(p);
 
@@ -1600,6 +1668,42 @@ bool TimelineView::event(QEvent* e) {
 void TimelineView::mousePressEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();
     const bool additive = e->modifiers().testFlag(Qt::ShiftModifier);
+
+    // The work area strip, before anything else in the header. Its two ends set the range;
+    // the middle drags the whole range without resizing it.
+    //
+    // Handled ahead of the ruler's scrub because they overlap in x and the strip is only
+    // six pixels tall: a click that lands on the work area and scrubs instead is a click
+    // that did the one thing the user was not aiming at.
+    if (comp_ != nullptr && pos.x() >= trackLeft() &&
+        pos.y() >= metrics::kColumnLabelH &&
+        pos.y() < metrics::kColumnLabelH + metrics::kWorkAreaH) {
+        double from = 0.0;
+        double to = 0.0;
+        comp_->workRange(from, to);
+        const double x0 = xForTime(from);
+        const double x1 = xForTime(to);
+        const double x = pos.x();
+
+        if (std::fabs(x - x0) <= 4.0) {
+            workGrab_ = WorkGrab::Start;
+        } else if (std::fabs(x - x1) <= 4.0) {
+            workGrab_ = WorkGrab::End;
+        } else if (x > x0 && x < x1) {
+            workGrab_ = WorkGrab::Whole;
+            workGrabOffset_ = timeForX(pos.x()) - from;
+        } else {
+            // Outside it: start a fresh work area here rather than doing nothing. The
+            // alternative is a control that ignores most of its own strip.
+            workGrab_ = WorkGrab::End;
+            const double at = std::max(0.0, timeForX(pos.x()));
+            comp_->workIn = core::TimeValue::seconds(at);
+            comp_->workOut = core::TimeValue::seconds(at);
+        }
+        emit editBegan(QStringLiteral("Work Area"));
+        update();
+        return;
+    }
 
     if (comp_ == nullptr) {
         return;
@@ -1977,6 +2081,37 @@ void TimelineView::mousePressEvent(QMouseEvent* e) {
 void TimelineView::mouseMoveEvent(QMouseEvent* e) {
     const QPoint pos = e->position().toPoint();
 
+    if (workGrab_ != WorkGrab::None && comp_ != nullptr) {
+        const core::TimeContext ctx = comp_->timeContext();
+        const double at = std::clamp(timeForX(pos.x()), 0.0, comp_->duration);
+        double from = to_seconds(comp_->workIn, ctx);
+        double to = to_seconds(comp_->workOut, ctx);
+
+        switch (workGrab_) {
+            case WorkGrab::Start:
+                from = at;
+                break;
+            case WorkGrab::End:
+                to = at;
+                break;
+            case WorkGrab::Whole: {
+                const double length = to - from;
+                from = std::clamp(at - workGrabOffset_, 0.0, comp_->duration - length);
+                to = from + length;
+                break;
+            }
+            case WorkGrab::None:
+                break;
+        }
+        // Dragging one end past the other swaps them rather than refusing. Pulling the
+        // start past the end is a perfectly clear intention and stopping dead at the
+        // crossing point is the app arguing with it.
+        comp_->workIn = core::TimeValue::seconds(std::min(from, to));
+        comp_->workOut = core::TimeValue::seconds(std::max(from, to));
+        update();
+        return;
+    }
+
     if (dragMode_ != DragMode::None && comp_ != nullptr) {
         Layer* layer = comp_->find(dragLayer_);
         if (layer == nullptr) {
@@ -2186,6 +2321,20 @@ void TimelineView::dropEvent(QDropEvent* e) {
 }
 
 void TimelineView::mouseReleaseEvent(QMouseEvent*) {
+    if (workGrab_ != WorkGrab::None) {
+        workGrab_ = WorkGrab::None;
+        // A work area dragged to nothing is cleared rather than left as a zero-length
+        // range, so `hasWorkArea` goes back to false and everything treats it as "all of
+        // it" again. A range of no length is not a smaller selection, it is no selection.
+        if (comp_ != nullptr && !comp_->hasWorkArea()) {
+            comp_->workIn = core::TimeValue::seconds(0.0);
+            comp_->workOut = core::TimeValue::seconds(0.0);
+        }
+        emit editEnded();
+        emit layersChanged();
+        update();
+        return;
+    }
     if (dragMode_ != DragMode::None) {
         dragMode_ = DragMode::None;
         dragLayer_ = 0;
@@ -2509,6 +2658,10 @@ void TimelinePanel::refresh() {
                        static_cast<int>(comp->layers.size()), comp->totalKeyframes());
     }
     view_->update();
+}
+
+void TimelinePanel::setCachedSpans(std::vector<TimelineView::CachedSpan> spans) {
+    view_->setCachedSpans(std::move(spans));
 }
 
 void TimelinePanel::setComposition(core::Composition* comp) {

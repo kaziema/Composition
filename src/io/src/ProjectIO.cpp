@@ -312,9 +312,16 @@ json write(const RhythmMap& r) {
 json write(const Composition& c) {
     json layers = json::array();
     for (const Layer& l : c.layers) layers.push_back(write(l));
-    return json{{"id", c.id}, {"name", c.name}, {"width", c.width},
-                {"height", c.height}, {"fps", c.fps}, {"duration", c.duration},
-                {"layers", std::move(layers)}, {"rhythm", write(c.rhythm)}};
+    json out{{"id", c.id}, {"name", c.name}, {"width", c.width},
+             {"height", c.height}, {"fps", c.fps}, {"duration", c.duration},
+             {"layers", std::move(layers)}, {"rhythm", write(c.rhythm)}};
+    // Only when it means something. A pair of zeroes in every file is noise, and it reads
+    // as a work area of no length rather than as the absence of one.
+    if (c.hasWorkArea()) {
+        out["workIn"] = write(c.workIn);
+        out["workOut"] = write(c.workOut);
+    }
+    return out;
 }
 
 json write(const MediaItem& m) {
@@ -457,6 +464,11 @@ LoadReport fromJson(Project& project, const std::string& text) {
                 get<double>(c, "duration", 12.0));
             comp.id = get<CompId>(c, "id", comp.id);
             loaded.noteUsedId(comp.id);
+
+            if (c.contains("workIn") && c.contains("workOut")) {
+                comp.workIn = readTime(c.at("workIn"));
+                comp.workOut = readTime(c.at("workOut"));
+            }
 
             if (c.contains("rhythm") && c.at("rhythm").is_object()) {
                 const json& r = c.at("rhythm");

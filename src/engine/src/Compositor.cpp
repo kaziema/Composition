@@ -233,20 +233,22 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
                                             const core::Layer& layer,
                                             const gpu::TextureHandle& source,
                                             double seconds, const core::TimeContext& ctx,
-                                            std::size_t& slot) {
+                                            std::size_t& slot, NodeHash outputHash) {
     if (source == nullptr || layer.effects.empty()) {
+        // A layer with no effects has nothing worth caching: its output IS its source, the
+        // decoder already holds that texture, and storing a second reference to it would
+        // spend the budget on the one thing that was already free.
         return source;
     }
 
-    const Workspace& ws = workspaceFor(layer.id, source->width(), source->height());
-    if (ws.a == nullptr || ws.b == nullptr) {
-        return source;
-    }
-
-    gpu::TextureHandle input = source;
-    bool toA = true;
-    bool ran = false;
-
+    // Everything that will actually draw, decided before anything does, so the last pass
+    // is known and can be sent somewhere the cache can keep.
+    struct Pass {
+        const core::EffectInstance* effect;
+        const EffectDef* def;
+        gpu::RenderPipelineHandle pipeline;
+    };
+    std::vector<Pass> passes;
     for (const core::EffectInstance& effect : layer.effects) {
         if (!effect.enabled) {
             continue;
@@ -259,6 +261,41 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
         if (pipeline == nullptr) {
             continue;
         }
+        passes.push_back({&effect, def, pipeline});
+    }
+    if (passes.empty()) {
+        return source;
+    }
+
+    // The cheapest render is the one that never starts. Asked before a texture is touched
+    // and before a single pass is recorded.
+    if (outputHash != 0) {
+        if (gpu::TextureHandle hit = cache_.find(outputHash); hit != nullptr) {
+            return hit;
+        }
+    }
+
+    const Workspace& ws = workspaceFor(layer.id, source->width(), source->height());
+    if (ws.a == nullptr || ws.b == nullptr) {
+        return source;
+    }
+
+    // The last pass draws into a texture of its own rather than into the ping-pong pair,
+    // because the pair is reused by this layer on the very next frame. A cached handle
+    // pointing at a workspace would be overwritten and the cache would start serving the
+    // wrong picture, confidently.
+    gpu::TextureHandle keep = outputHash != 0
+                                  ? createOutputTexture(source->width(), source->height())
+                                  : nullptr;
+
+    gpu::TextureHandle input = source;
+    bool toA = true;
+    bool ran = false;
+
+    for (std::size_t pass = 0; pass < passes.size(); ++pass) {
+        const core::EffectInstance& effect = *passes[pass].effect;
+        const EffectDef* def = passes[pass].def;
+        const gpu::RenderPipelineHandle pipeline = passes[pass].pipeline;
 
         // Parameters go into the uniform block in schema order, one vec4 each, so the
         // shader indexes them positionally and nothing here is effect-specific.
@@ -281,7 +318,9 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
         const gpu::BufferHandle buffer = uniformBuffer(slot++);
         device_.write_buffer(buffer, &u, sizeof(u));
 
-        const gpu::TextureHandle output = toA ? ws.a : ws.b;
+        const bool last = (pass + 1 == passes.size());
+        const gpu::TextureHandle output =
+            (last && keep != nullptr) ? keep : (toA ? ws.a : ws.b);
         commands.begin_pass(output, 0.0f, 0.0f, 0.0f, 0.0f);
         commands.draw(pipeline, buffer, input, 3);  // fullscreen triangle
         commands.end_pass();
@@ -291,12 +330,34 @@ gpu::TextureHandle Compositor::applyEffects(gpu::CommandRecorder& commands,
         ran = true;
     }
 
-    return ran ? input : source;
+    if (!ran) {
+        return source;
+    }
+    if (keep != nullptr && input == keep) {
+        // RGBA16Float: eight bytes a pixel. Counted honestly, because a budget measured in
+        // entries would let eight 1080x1920 textures quietly become a gigabyte.
+        const std::size_t bytes = static_cast<std::size_t>(source->width()) *
+                                  static_cast<std::size_t>(source->height()) * 8;
+        cache_.put(outputHash, input, bytes);
+    }
+    return input;
+}
+
+gpu::TextureHandle Compositor::createOutputTexture(std::uint32_t width,
+                                                   std::uint32_t height) {
+    gpu::TextureDesc desc;
+    desc.width = width;
+    desc.height = height;
+    desc.format = gpu::TextureFormat::RGBA16Float;
+    desc.usage = gpu::TextureUsage::Sampled | gpu::TextureUsage::RenderTo;
+    desc.debug_label = "cached layer output";
+    return device_.create_texture(desc);
 }
 
 void Compositor::render(const core::Project& project, const core::Composition& comp,
                         double seconds, const gpu::TextureHandle& target,
-                        const ExternalTextures* external) {
+                        const ExternalTextures* external,
+                        const ExternalKeys* externalKeys) {
     if (target == nullptr || quads_ == nullptr) {
         return;
     }
@@ -317,6 +378,22 @@ void Compositor::render(const core::Project& project, const core::Composition& c
     const float frameY = (viewH - frameH) * 0.5f;
 
     const core::TimeContext ctx = comp.timeContext();
+
+    // What this frame is made of, worked out before any of it is drawn. Pure, cheap, and
+    // the only thing that can answer "have we already got this".
+    const RenderGraph graph = buildGraph(project, comp, seconds, externalKeys);
+
+    // Everything below renders at the FRAME's time, not at wherever the playhead happens
+    // to sit inside it.
+    //
+    // The graph quantises time so that two scrubs landing on the same frame produce the
+    // same hash. If the render did not quantise with it, a cache hit would hand back a
+    // texture drawn at 1.0033s while claiming to be frame 30, and a scrub across one frame
+    // would show whichever sub-frame position happened to render first. A cache that is
+    // confidently wrong is worse than no cache, and this is the line that decides which
+    // one this is.
+    const double frameFps = comp.fps > 0.0 ? comp.fps : 30.0;
+    seconds = static_cast<double>(graph.frame) / frameFps;
 
     auto commands = device_.begin_commands("composite");
 
@@ -380,8 +457,15 @@ void Compositor::render(const core::Project& project, const core::Composition& c
                 content.height = supplied->second.height;
             }
         }
-        gpu::TextureHandle texture =
-            applyEffects(*commands, layer, content.texture, seconds, ctx, slot);
+        // The hash of this layer's finished output, from the graph. Zero when the graph
+        // does not have a node for it, which means "render it and do not cache it" rather
+        // than a guessed key.
+        NodeHash outputHash = 0;
+        if (const int node = graph.outputFor(layer.id); node >= 0) {
+            outputHash = graph.nodes[static_cast<std::size_t>(node)].hash;
+        }
+        gpu::TextureHandle texture = applyEffects(*commands, layer, content.texture,
+                                                  seconds, ctx, slot, outputHash);
         prepared.push_back({&layer, std::move(texture), content, in});
     }
 

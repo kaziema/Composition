@@ -96,6 +96,14 @@ target_link_libraries(test_timelinerows PRIVATE ruby::ui ruby_warnings)
 add_test(NAME test_timelinerows COMMAND test_timelinerows)
 set_tests_properties(test_timelinerows PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(test_framecache test_framecache.cpp)
+target_link_libraries(test_framecache PRIVATE ruby::engine ruby_warnings)
+add_test(NAME test_framecache COMMAND test_framecache)
+
+add_executable(test_rendergraph test_rendergraph.cpp)
+target_link_libraries(test_rendergraph PRIVATE ruby::engine ruby_warnings)
+add_test(NAME test_rendergraph COMMAND test_rendergraph)
+
 add_executable(test_migration test_migration.cpp)
 target_link_libraries(test_migration PRIVATE ruby::engine ruby_warnings)
 add_test(NAME test_migration COMMAND test_migration)

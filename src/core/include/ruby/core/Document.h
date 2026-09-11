@@ -287,6 +287,26 @@ struct Composition {
     std::vector<Layer> layers;  // index 0 is the topmost layer, as in AE
     RhythmMap rhythm;
 
+    // The part you are working on, and the part you are delivering.
+    //
+    // One concept rather than two, which is AE's answer and the right one: those are the
+    // same range often enough that splitting them would mean setting the same thing twice
+    // and then wondering which one the export used. So this bounds what the preview cache
+    // fills AND what an export writes.
+    //
+    // Zero width means the whole composition, which is what a composition that has never
+    // had one set should mean. Nobody should have to drag brackets to the ends before
+    // anything works.
+    TimeValue workIn = TimeValue::seconds(0.0);
+    TimeValue workOut = TimeValue::seconds(0.0);
+
+    [[nodiscard]] bool hasWorkArea() const noexcept;
+
+    // The work area if there is one, otherwise the whole composition. Every caller wants
+    // this rather than the raw pair, because "no work area" and "a work area covering
+    // everything" have to behave identically.
+    void workRange(double& startSeconds, double& endSeconds) const noexcept;
+
     [[nodiscard]] TimeContext timeContext() const noexcept;
     [[nodiscard]] FrameGeometry geometry() const noexcept { return {width, height}; }
 
